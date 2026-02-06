@@ -988,6 +988,42 @@ select.form-input {
 }
 
 /* ============================================
+   Continue Writing Bar
+   ============================================ */
+
+.continue-bar {
+  position: fixed;
+  bottom: calc(var(--status-height) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  max-width: 500px;
+  width: calc(100% - 40px);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.continue-bar .generating-text {
+  font-size: 0.85rem;
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+/* ============================================
    AI Generate Spinner
    ============================================ */
 
