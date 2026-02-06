@@ -128,6 +128,9 @@ class App {
     // Save current scene first
     await this._saveCurrentScene();
 
+    // Restore editor if welcome screen replaced it
+    this._restoreEditor();
+
     this.state.currentSceneId = sceneId;
     this.editor.setContent(scene.content || '');
 
@@ -370,6 +373,9 @@ class App {
 
     // Close any open panel so user can see the editor
     this._closeAllPanels();
+
+    // Restore editor if welcome screen replaced it
+    this._restoreEditor();
 
     // Accumulate streamed text, then set it on the editor directly
     const editorEl = this.editor.element;
@@ -822,7 +828,6 @@ class App {
   // --- Welcome Screen ---
 
   _showWelcome() {
-    const editorArea = document.querySelector('.editor-area');
     const container = document.querySelector('.editor-container');
     if (container) {
       container.innerHTML = `
@@ -840,6 +845,21 @@ class App {
       `;
     }
     document.getElementById('project-title').textContent = 'Genesis 2';
+  }
+
+  /** Restore the editor element if welcome screen replaced it */
+  _restoreEditor() {
+    const container = document.querySelector('.editor-container');
+    if (!container) return;
+    // Check if the editor div is still in the DOM
+    if (!container.querySelector('#editor')) {
+      container.innerHTML = '<div id="editor" class="editor" data-placeholder="Begin writing your story..."></div>';
+      const editorEl = container.querySelector('#editor');
+      this.editor = new Editor(editorEl, {
+        onChange: (content) => this._onEditorChange(content),
+        onWordCount: (count) => this._onWordCountUpdate(count)
+      });
+    }
   }
 
   // --- Event Binding ---
