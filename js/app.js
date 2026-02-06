@@ -9,6 +9,7 @@ import { ProseAnalyzer } from './prose.js';
 import { StructureManager } from './structure.js';
 import { ExportManager } from './export.js';
 import { Editor } from './editor.js';
+import { ProseGenerator } from './generate.js';
 
 class App {
   constructor() {
@@ -18,6 +19,7 @@ class App {
     this.structure = new StructureManager();
     this.exporter = null;
     this.editor = null;
+    this.generator = null;
 
     this.state = {
       currentProjectId: null,
@@ -36,6 +38,8 @@ class App {
     await this.storage.init();
     this.manuscript = new ManuscriptManager(this.storage);
     this.exporter = new ExportManager(this.storage, this.manuscript);
+    this.generator = new ProseGenerator(this.storage);
+    await this.generator.init();
 
     // Load settings
     this.state.theme = await this.storage.getSetting('theme', 'dark');
@@ -287,6 +291,123 @@ class App {
 
   async openExportPanel() {
     this._showPanel('export');
+  }
+
+  async openGeneratePanel() {
+    const noKeyEl = document.getElementById('generate-no-key');
+    const generateBtn = document.getElementById('btn-generate-prose');
+    const plotEl = document.getElementById('generate-plot');
+
+    if (noKeyEl && generateBtn) {
+      if (!this.generator.hasApiKey()) {
+        noKeyEl.style.display = 'block';
+        generateBtn.style.display = 'none';
+      } else {
+        noKeyEl.style.display = 'none';
+        generateBtn.style.display = '';
+      }
+    }
+
+    // Clear previous errors
+    const errEl = document.getElementById('generate-error');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+    this._setGenerateStatus(false);
+    this._showPanel('generate');
+
+    // Focus the plot textarea
+    setTimeout(() => plotEl?.focus(), 300);
+  }
+
+  async _runGeneration() {
+    const plot = document.getElementById('generate-plot')?.value?.trim();
+    if (!plot) {
+      alert('Please enter a story plot or description.');
+      return;
+    }
+
+    const wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 500;
+    const tone = document.getElementById('generate-tone')?.value?.trim() || '';
+    const style = document.getElementById('generate-style')?.value?.trim() || '';
+    const shouldContinue = document.getElementById('generate-continue')?.checked;
+    const useCharacters = document.getElementById('generate-use-characters')?.checked;
+
+    // Gather context
+    const existingContent = shouldContinue ? this.editor.getContent() : '';
+    let characters = [];
+    if (useCharacters && this.state.currentProjectId) {
+      characters = await this.storage.getProjectCharacters(this.state.currentProjectId);
+    }
+
+    // Get scene/chapter titles
+    let sceneTitle = '';
+    let chapterTitle = '';
+    if (this.state.currentSceneId) {
+      const scene = await this.storage.get(STORE_NAMES.scenes, this.state.currentSceneId);
+      if (scene) {
+        sceneTitle = scene.title;
+        const chapter = await this.storage.get(STORE_NAMES.chapters, scene.chapterId);
+        if (chapter) chapterTitle = chapter.title;
+      }
+    }
+
+    // Show generating state
+    this._setGenerateStatus(true);
+    const errEl = document.getElementById('generate-error');
+    if (errEl) { errEl.style.display = 'none'; }
+
+    // Close the panel so user can see the editor
+    this._closeAllPanels();
+
+    // Append a visual separator if continuing
+    if (shouldContinue && existingContent.trim()) {
+      this.editor.focus();
+    } else if (!shouldContinue) {
+      // Clear editor for fresh generation
+    }
+
+    // Move cursor to end of editor
+    this.editor.focus();
+
+    await this.generator.generate(
+      { plot, existingContent, sceneTitle, chapterTitle, characters, tone, style, wordTarget },
+      {
+        onChunk: (text) => {
+          // Insert text at the end of the editor
+          // Convert newlines to proper HTML
+          const html = text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
+          document.execCommand('insertHTML', false, html);
+        },
+        onDone: async () => {
+          this._setGenerateStatus(false);
+          // Trigger save
+          const content = this.editor.getContent();
+          if (this.state.currentSceneId) {
+            await this.manuscript.updateScene(this.state.currentSceneId, { content });
+            await this._updateStatusBar();
+            this._updateTreeWordCounts();
+          }
+        },
+        onError: (err) => {
+          this._setGenerateStatus(false);
+          this._showPanel('generate');
+          if (errEl) {
+            errEl.style.display = 'block';
+            errEl.textContent = err.message;
+          }
+        }
+      }
+    );
+  }
+
+  _setGenerateStatus(active) {
+    const statusEl = document.getElementById('generate-status');
+    const cancelBtn = document.getElementById('btn-generate-cancel');
+    const generateBtn = document.getElementById('btn-generate-prose');
+
+    if (statusEl) statusEl.style.display = active ? 'block' : 'none';
+    if (cancelBtn) cancelBtn.style.display = active ? '' : 'none';
+    if (generateBtn) generateBtn.disabled = active;
   }
 
   async openSettingsPanel() {
@@ -594,6 +715,26 @@ class App {
       </div>
 
       <div class="analysis-section">
+        <h3>AI Prose Generation</h3>
+        <div class="form-group">
+          <label>Anthropic API Key</label>
+          <input type="password" class="form-input" id="setting-api-key" value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+            Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent-primary);">console.anthropic.com</a>. Stored locally on this device only.
+          </p>
+        </div>
+        <div class="form-group">
+          <label>AI Model</label>
+          <select class="form-input" id="setting-ai-model">
+            <option value="claude-sonnet-4-5-20250929" ${this.generator?.model === 'claude-sonnet-4-5-20250929' ? 'selected' : ''}>Claude Sonnet 4.5 (recommended)</option>
+            <option value="claude-haiku-4-5-20251001" ${this.generator?.model === 'claude-haiku-4-5-20251001' ? 'selected' : ''}>Claude Haiku 4.5 (faster, cheaper)</option>
+            <option value="claude-opus-4-6" ${this.generator?.model === 'claude-opus-4-6' ? 'selected' : ''}>Claude Opus 4.6 (highest quality)</option>
+          </select>
+        </div>
+        <button class="btn btn-sm" id="save-api-settings" style="width:100%;">Save AI Settings</button>
+      </div>
+
+      <div class="analysis-section">
         <h3>Writing Goals</h3>
         <div class="form-group">
           <label>Daily Word Goal</label>
@@ -771,6 +912,7 @@ class App {
     document.getElementById('btn-redo')?.addEventListener('click', () => this.editor.redo());
 
     // Panel buttons
+    document.getElementById('btn-generate')?.addEventListener('click', () => this.openGeneratePanel());
     document.getElementById('btn-analysis')?.addEventListener('click', () => this.openAnalysisPanel());
     document.getElementById('btn-structure')?.addEventListener('click', () => this.openStructurePanel());
     document.getElementById('btn-export')?.addEventListener('click', () => this.openExportPanel());
@@ -845,6 +987,24 @@ class App {
       }
       if (e.target.id === 'btn-import-json') {
         this._importProjectFromFile();
+      }
+      if (e.target.id === 'save-api-settings') {
+        const key = document.getElementById('setting-api-key')?.value || '';
+        const model = document.getElementById('setting-ai-model')?.value || 'claude-sonnet-4-5-20250929';
+        await this.generator.setApiKey(key);
+        await this.generator.setModel(model);
+        alert('AI settings saved.');
+      }
+      if (e.target.id === 'btn-generate-prose') {
+        await this._runGeneration();
+      }
+      if (e.target.id === 'btn-generate-cancel') {
+        this.generator.cancel();
+        this._setGenerateStatus(false);
+      }
+      if (e.target.id === 'btn-generate-open-settings') {
+        this._closeAllPanels();
+        setTimeout(() => this.openSettingsPanel(), 100);
       }
     });
 
@@ -1102,7 +1262,8 @@ class App {
 
   _registerServiceWorker() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {
+      const swPath = new URL('sw.js', window.location.href).pathname;
+      navigator.serviceWorker.register(swPath).catch(() => {
         // Service worker registration failed — app still works without it
       });
     }
