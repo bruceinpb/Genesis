@@ -319,25 +319,36 @@ class App {
     setTimeout(() => plotEl?.focus(), 300);
   }
 
-  async _runGeneration() {
-    const plot = document.getElementById('generate-plot')?.value?.trim();
-    if (!plot) {
-      alert('Please enter a story plot or description.');
-      return;
+  async _runGeneration(options = {}) {
+    // Use saved settings if continuing, otherwise read from panel
+    let plot, wordTarget, tone, style, useCharacters;
+    if (options.isContinuation && this._lastGenSettings) {
+      plot = this._lastGenSettings.plot;
+      wordTarget = this._lastGenSettings.wordTarget;
+      tone = this._lastGenSettings.tone;
+      style = this._lastGenSettings.style;
+      useCharacters = this._lastGenSettings.useCharacters;
+    } else {
+      plot = document.getElementById('generate-plot')?.value?.trim();
+      if (!plot) {
+        alert('Please enter a story plot or description.');
+        return;
+      }
+      wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 500;
+      tone = document.getElementById('generate-tone')?.value?.trim() || '';
+      style = document.getElementById('generate-style')?.value?.trim() || '';
+      useCharacters = document.getElementById('generate-use-characters')?.checked;
     }
 
-    const wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 500;
-    const tone = document.getElementById('generate-tone')?.value?.trim() || '';
-    const style = document.getElementById('generate-style')?.value?.trim() || '';
-    const shouldContinue = document.getElementById('generate-continue')?.checked;
-    const useCharacters = document.getElementById('generate-use-characters')?.checked;
-
-    // Gather context
-    const existingContent = shouldContinue ? this.editor.getContent() : '';
+    // Always continue from existing content when generating
+    const existingContent = this.editor.getContent();
     let characters = [];
     if (useCharacters && this.state.currentProjectId) {
       characters = await this.storage.getProjectCharacters(this.state.currentProjectId);
     }
+
+    // Save settings for "Continue Writing"
+    this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters };
 
     // Get scene/chapter titles
     let sceneTitle = '';
@@ -351,12 +362,13 @@ class App {
       }
     }
 
-    // Show generating state
+    // Hide continue bar and show generating state
+    this._showContinueBar(false);
     this._setGenerateStatus(true);
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
 
-    // Close the panel so user can see the editor
+    // Close any open panel so user can see the editor
     this._closeAllPanels();
 
     // Accumulate streamed text, then set it on the editor directly
@@ -367,10 +379,8 @@ class App {
       { plot, existingContent, sceneTitle, chapterTitle, characters, tone, style, wordTarget },
       {
         onChunk: (text) => {
-          // Accumulate raw text and render directly into the editor element
           streamedText += text;
-          const startingContent = shouldContinue && existingContent.trim() ? existingContent : '';
-          // Convert accumulated text to HTML paragraphs
+          const startingContent = existingContent.trim() ? existingContent : '';
           const paragraphs = streamedText.split('\n\n');
           const newHtml = paragraphs
             .map(p => {
@@ -379,23 +389,41 @@ class App {
             })
             .join('');
           editorEl.innerHTML = startingContent + newHtml;
-          // Scroll to bottom to show latest text
-          editorEl.scrollTop = editorEl.scrollHeight;
           const container = editorEl.closest('.editor-area');
           if (container) container.scrollTop = container.scrollHeight;
         },
         onDone: async () => {
           this._setGenerateStatus(false);
-          // Trigger save
+          // Save the content
           const content = this.editor.getContent();
           if (this.state.currentSceneId) {
             await this.manuscript.updateScene(this.state.currentSceneId, { content });
             await this._updateStatusBar();
             this._updateTreeWordCounts();
           }
+
+          // If auto-writing to goal, check word count and continue
+          if (this._autoWriteToGoal) {
+            const currentWords = this.editor.getWordCount();
+            const project = this.state.currentProjectId
+              ? await this.storage.get(STORE_NAMES.projects, this.state.currentProjectId)
+              : null;
+            const target = project ? project.targetWords : 0;
+            if (target > 0 && currentWords < target) {
+              // Brief pause then continue
+              setTimeout(() => this._runGeneration({ isContinuation: true }), 1500);
+              return;
+            } else {
+              this._autoWriteToGoal = false;
+            }
+          }
+
+          // Show the continue bar
+          this._showContinueBar(true);
         },
         onError: (err) => {
           this._setGenerateStatus(false);
+          this._autoWriteToGoal = false;
           this._showPanel('generate');
           if (errEl) {
             errEl.style.display = 'block';
@@ -404,6 +432,11 @@ class App {
         }
       }
     );
+  }
+
+  _showContinueBar(show) {
+    const bar = document.getElementById('continue-bar');
+    if (bar) bar.style.display = show ? 'flex' : 'none';
   }
 
   _setGenerateStatus(active) {
@@ -1006,11 +1039,25 @@ class App {
       }
       if (e.target.id === 'btn-generate-cancel') {
         this.generator.cancel();
+        this._autoWriteToGoal = false;
         this._setGenerateStatus(false);
+        this._showContinueBar(true);
       }
       if (e.target.id === 'btn-generate-open-settings') {
         this._closeAllPanels();
         setTimeout(() => this.openSettingsPanel(), 100);
+      }
+      if (e.target.id === 'btn-continue-writing' || e.target.closest('#btn-continue-writing')) {
+        this._showContinueBar(false);
+        await this._runGeneration({ isContinuation: true });
+      }
+      if (e.target.id === 'btn-continue-to-target' || e.target.closest('#btn-continue-to-target')) {
+        this._showContinueBar(false);
+        this._autoWriteToGoal = true;
+        await this._runGeneration({ isContinuation: true });
+      }
+      if (e.target.id === 'btn-continue-dismiss' || e.target.closest('#btn-continue-dismiss')) {
+        this._showContinueBar(false);
       }
     });
 
