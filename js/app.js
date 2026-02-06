@@ -854,10 +854,12 @@ class App {
     });
 
     // Focus mode
-    document.getElementById('btn-focus-mode')?.addEventListener('click', () => {
+    const toggleFocus = () => {
       this.state.focusMode = !this.state.focusMode;
       document.getElementById('app').classList.toggle('focus-mode', this.state.focusMode);
-    });
+    };
+    document.getElementById('btn-focus-mode')?.addEventListener('click', toggleFocus);
+    document.getElementById('btn-exit-focus')?.addEventListener('click', toggleFocus);
 
     // Sidebar navigation tabs
     document.querySelectorAll('.sidebar-nav button').forEach(btn => {
