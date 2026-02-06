@@ -166,6 +166,10 @@ class App {
     const wcEl = document.getElementById('status-words');
     if (wcEl) wcEl.textContent = count.toLocaleString();
 
+    // Update floating word count
+    const fwcWords = document.getElementById('fwc-words');
+    if (fwcWords) fwcWords.textContent = count.toLocaleString();
+
     // Update daily progress
     this._trackDailyWords(count);
   }
@@ -1095,6 +1099,12 @@ class App {
     if (goalEl) goalEl.textContent = project ? project.targetWords.toLocaleString() : '—';
     if (progressEl) progressEl.textContent = progress + '%';
     if (dailyEl) dailyEl.textContent = `${this.state.wordsToday} / ${this.state.dailyGoal}`;
+
+    // Update floating word count
+    const fwcTotal = document.getElementById('fwc-total');
+    const fwcProgress = document.getElementById('fwc-progress');
+    if (fwcTotal) fwcTotal.textContent = totalWords.toLocaleString();
+    if (fwcProgress) fwcProgress.textContent = progress + '%';
   }
 
   async _updateTreeWordCounts() {
