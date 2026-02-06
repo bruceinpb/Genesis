@@ -359,36 +359,30 @@ class App {
     // Close the panel so user can see the editor
     this._closeAllPanels();
 
-    // Append a visual separator if continuing
-    if (shouldContinue && existingContent.trim()) {
-      this.editor.focus();
-    } else if (!shouldContinue) {
-      // Clear editor for fresh generation
-    }
-
-    // Move cursor to end of editor
-    this.editor.focus();
+    // Accumulate streamed text, then set it on the editor directly
+    const editorEl = this.editor.element;
+    let streamedText = '';
 
     await this.generator.generate(
       { plot, existingContent, sceneTitle, chapterTitle, characters, tone, style, wordTarget },
       {
         onChunk: (text) => {
-          // Use insertText to preserve spaces (insertHTML collapses whitespace)
-          const paragraphs = text.split('\n\n');
-          for (let i = 0; i < paragraphs.length; i++) {
-            if (i > 0) {
-              document.execCommand('insertParagraph', false);
-            }
-            const lines = paragraphs[i].split('\n');
-            for (let j = 0; j < lines.length; j++) {
-              if (j > 0) {
-                document.execCommand('insertLineBreak', false);
-              }
-              if (lines[j]) {
-                document.execCommand('insertText', false, lines[j]);
-              }
-            }
-          }
+          // Accumulate raw text and render directly into the editor element
+          streamedText += text;
+          const startingContent = shouldContinue && existingContent.trim() ? existingContent : '';
+          // Convert accumulated text to HTML paragraphs
+          const paragraphs = streamedText.split('\n\n');
+          const newHtml = paragraphs
+            .map(p => {
+              const lines = p.replace(/\n/g, '<br>');
+              return `<p>${lines}</p>`;
+            })
+            .join('');
+          editorEl.innerHTML = startingContent + newHtml;
+          // Scroll to bottom to show latest text
+          editorEl.scrollTop = editorEl.scrollHeight;
+          const container = editorEl.closest('.editor-area');
+          if (container) container.scrollTop = container.scrollHeight;
         },
         onDone: async () => {
           this._setGenerateStatus(false);
