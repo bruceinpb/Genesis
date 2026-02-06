@@ -33,14 +33,14 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js';
 import { getFirestore } from 'https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js';
 
-// REPLACE these values with your Firebase project configuration
 const firebaseConfig = {
-  apiKey: "REPLACE_WITH_YOUR_API_KEY",
-  authDomain: "REPLACE_WITH_YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "REPLACE_WITH_YOUR_PROJECT_ID",
-  storageBucket: "REPLACE_WITH_YOUR_PROJECT_ID.firebasestorage.app",
-  messagingSenderId: "REPLACE_WITH_YOUR_SENDER_ID",
-  appId: "REPLACE_WITH_YOUR_APP_ID"
+  apiKey: "AIzaSyDPx4rEg02ZNFD68H6ciB0twuhg3WxpOPQ",
+  authDomain: "genesis-57b8d.firebaseapp.com",
+  projectId: "genesis-57b8d",
+  storageBucket: "genesis-57b8d.firebasestorage.app",
+  messagingSenderId: "754351877582",
+  appId: "1:754351877582:web:66c29c9b054f937db18f9f",
+  measurementId: "G-1NEG09CHKV"
 };
 
 const app = initializeApp(firebaseConfig);
