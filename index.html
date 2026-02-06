@@ -19,7 +19,56 @@
 </head>
 <body class="no-bounce">
 
-<div id="app">
+<!-- ===== Landing Page ===== -->
+<div id="landing-page">
+  <!-- User Selection Step -->
+  <div class="landing-view" id="landing-user-select">
+    <div class="landing-center">
+      <div class="landing-logo">
+        <h1>Genesis 2</h1>
+        <p>Prose Studio</p>
+      </div>
+      <div class="landing-card">
+        <h2>Who's Writing Today?</h2>
+        <div id="user-list" class="user-list"></div>
+        <div class="landing-input-row">
+          <input type="text" id="new-user-name" class="form-input" placeholder="Enter your name..." autocomplete="off">
+          <button class="btn btn-primary" id="btn-user-continue">Go</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Project Selection Step -->
+  <div class="landing-view" id="landing-projects" style="display:none;">
+    <div class="landing-top-bar">
+      <div class="landing-top-left">
+        <h1 class="landing-title">Genesis 2</h1>
+        <span class="landing-welcome">Welcome, <span id="landing-user-name"></span></span>
+      </div>
+      <button class="btn btn-sm" id="btn-change-user">Switch User</button>
+    </div>
+
+    <div class="landing-body">
+      <button class="btn btn-primary landing-create-btn" id="btn-create-project">
+        + Create New Project
+      </button>
+
+      <div class="projects-section" id="my-projects-section">
+        <h3>Your Projects</h3>
+        <div id="my-projects-list" class="project-grid"></div>
+      </div>
+
+      <div class="projects-section" id="others-projects-section" style="display:none;">
+        <h3>All Projects</h3>
+        <div id="others-projects-list" class="project-grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== App (hidden until a project is opened) ===== -->
+<div id="app" style="display:none;">
 
   <!-- ===== Sidebar ===== -->
   <aside class="sidebar">
@@ -29,14 +78,14 @@
     </div>
 
     <nav class="sidebar-nav">
-      <button class="active" data-tab="manuscript">Manuscript</button>
+      <button class="active" data-tab="chapters">Chapters</button>
       <button data-tab="characters">Characters</button>
       <button data-tab="notes">Notes</button>
     </nav>
 
     <div class="sidebar-content">
-      <div class="sidebar-panel" id="sidebar-manuscript" style="display:block;">
-        <!-- Manuscript tree rendered by JS -->
+      <div class="sidebar-panel" id="sidebar-chapters" style="display:block;">
+        <!-- Chapter list rendered by JS -->
       </div>
       <div class="sidebar-panel" id="sidebar-characters" style="display:none;">
         <!-- Characters list rendered by JS -->
@@ -47,8 +96,8 @@
     </div>
 
     <div class="sidebar-footer">
-      <button class="btn btn-sm btn-primary" id="btn-new-project-sidebar" style="flex:1;">
-        + New Project
+      <button class="btn btn-sm" id="btn-back-to-projects-sidebar" style="flex:1;">
+        &#8592; All Projects
       </button>
     </div>
   </aside>
@@ -56,6 +105,8 @@
   <!-- ===== Toolbar ===== -->
   <header class="toolbar">
     <button class="toolbar-btn" id="btn-sidebar-toggle-mobile" aria-label="Menu" title="Toggle sidebar">&#9776;</button>
+
+    <button class="toolbar-btn" id="btn-back-to-projects" title="Back to Projects">&#8592;</button>
 
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-bold" title="Bold (Cmd+B)"><b>B</b></button>
@@ -206,7 +257,7 @@
 
       <button class="btn" id="export-json" style="width:100%;margin-bottom:8px;">
         Full Backup (JSON)
-        <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including characters, notes, structure</span>
+        <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
       </button>
     </div>
 

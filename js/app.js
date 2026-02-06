@@ -1,9 +1,13 @@
 /**
  * Genesis 2 — Main Application Controller
  * Orchestrates all modules and manages the UI.
+ *
+ * Uses Firestore for cloud storage (projects, chapters) and
+ * IndexedDB for local-only features (characters, notes, settings).
  */
 
 import { Storage, STORE_NAMES } from './storage.js';
+import { FirestoreStorage } from './firestore-storage.js';
 import { ManuscriptManager } from './manuscript.js';
 import { ProseAnalyzer } from './prose.js';
 import { StructureManager } from './structure.js';
@@ -13,8 +17,9 @@ import { ProseGenerator } from './generate.js';
 
 class App {
   constructor() {
-    this.storage = new Storage();
-    this.manuscript = null;
+    this.localStorage = new Storage();   // IndexedDB for local features
+    this.fs = new FirestoreStorage();     // Firestore for cloud features
+    this.manuscript = null;               // For characters/notes (IndexedDB)
     this.analyzer = new ProseAnalyzer();
     this.structure = new StructureManager();
     this.exporter = null;
@@ -22,9 +27,10 @@ class App {
     this.generator = null;
 
     this.state = {
+      currentUser: null,
       currentProjectId: null,
-      currentSceneId: null,
-      sidebarTab: 'manuscript', // manuscript, characters, notes
+      currentChapterId: null,
+      sidebarTab: 'chapters',
       focusMode: false,
       sidebarOpen: true,
       theme: 'dark',
@@ -32,19 +38,26 @@ class App {
       wordsToday: 0,
       sessionStart: Date.now()
     };
+
+    // Cached project data to avoid extra Firestore reads
+    this._currentProject = null;
+    this._chapterWordCounts = {};
+    this._autoSaveInterval = null;
   }
 
   async init() {
-    await this.storage.init();
-    this.manuscript = new ManuscriptManager(this.storage);
-    this.exporter = new ExportManager(this.storage, this.manuscript);
-    this.generator = new ProseGenerator(this.storage);
+    // Initialize local storage (for settings, characters, notes)
+    await this.localStorage.init();
+    this.manuscript = new ManuscriptManager(this.localStorage);
+
+    // Initialize modules
+    this.exporter = new ExportManager(this.fs);
+    this.generator = new ProseGenerator(this.localStorage);
     await this.generator.init();
 
     // Load settings
-    this.state.theme = await this.storage.getSetting('theme', 'dark');
-    this.state.dailyGoal = await this.storage.getSetting('dailyGoal', 1000);
-    this.state.currentProjectId = await this.storage.getSetting('lastProjectId', null);
+    this.state.theme = await this.localStorage.getSetting('theme', 'dark');
+    this.state.dailyGoal = await this.localStorage.getSetting('dailyGoal', 1000);
 
     // Apply theme
     this._applyTheme(this.state.theme);
@@ -59,12 +72,11 @@ class App {
     // Bind UI events
     this._bindEvents();
 
-    // Load last project or show welcome
-    if (this.state.currentProjectId) {
-      await this._loadProject(this.state.currentProjectId);
-    } else {
-      this._showWelcome();
-    }
+    // Check for saved user
+    this.state.currentUser = window.localStorage.getItem('genesis2_userName') || null;
+
+    // Show landing page
+    await this._showLanding();
 
     // Track daily words
     await this._loadDailyProgress();
@@ -73,155 +85,362 @@ class App {
     this._registerServiceWorker();
   }
 
-  // --- Project Management ---
+  // ========================================
+  //  Landing Page
+  // ========================================
 
-  async createNewProject() {
-    const name = await this._prompt('Project Name', 'My Novel');
-    if (!name) return;
+  async _showLanding() {
+    // Stop auto-save
+    if (this._autoSaveInterval) {
+      clearInterval(this._autoSaveInterval);
+      this._autoSaveInterval = null;
+    }
 
-    const genre = await this._prompt('Genre (optional)', '');
-    const targetStr = await this._prompt('Target word count', '80000');
-    const targetWords = parseInt(targetStr) || 80000;
+    // Save current chapter before leaving
+    await this._saveCurrentChapter();
 
-    const project = await this.manuscript.createProject(name, genre, targetWords);
+    // Show landing, hide app
+    document.getElementById('landing-page').style.display = '';
+    document.getElementById('app').style.display = 'none';
 
-    // Create first chapter and scene
-    const chapter = await this.manuscript.createChapter(project.id, 'Chapter One');
-    await this.manuscript.createScene(chapter.id, 'Opening Scene');
+    // Reset state
+    this.state.currentProjectId = null;
+    this.state.currentChapterId = null;
+    this._currentProject = null;
+    this._chapterWordCounts = {};
 
-    await this._loadProject(project.id);
+    if (this.state.currentUser) {
+      await this._showProjectSelection();
+    } else {
+      this._showUserSelection();
+    }
   }
+
+  _showUserSelection() {
+    document.getElementById('landing-user-select').style.display = '';
+    document.getElementById('landing-projects').style.display = 'none';
+    this._loadExistingUsers();
+    // Focus the name input
+    setTimeout(() => document.getElementById('new-user-name')?.focus(), 300);
+  }
+
+  async _showProjectSelection() {
+    document.getElementById('landing-user-select').style.display = 'none';
+    document.getElementById('landing-projects').style.display = '';
+    document.getElementById('landing-user-name').textContent = this.state.currentUser;
+    await this._loadProjects();
+  }
+
+  async _loadExistingUsers() {
+    const list = document.getElementById('user-list');
+    try {
+      const users = await this.fs.getAllUsers();
+      if (users.length === 0) {
+        list.innerHTML = '';
+      } else {
+        list.innerHTML = users.map(u =>
+          `<button class="user-btn" data-name="${this._esc(u.displayName)}">${this._esc(u.displayName)}</button>`
+        ).join('');
+      }
+    } catch (err) {
+      console.error('Failed to load users:', err);
+      list.innerHTML = `<p class="landing-error">Could not connect to database. Check Firebase configuration in js/firebase-config.js.</p>`;
+    }
+  }
+
+  async _selectUser(name) {
+    this.state.currentUser = name;
+    window.localStorage.setItem('genesis2_userName', name);
+    try {
+      await this.fs.getOrCreateUser(name);
+    } catch (err) {
+      console.error('Failed to create user:', err);
+    }
+    await this._showProjectSelection();
+  }
+
+  async _loadProjects() {
+    const myList = document.getElementById('my-projects-list');
+    const othersList = document.getElementById('others-projects-list');
+    const othersSection = document.getElementById('others-projects-section');
+
+    myList.innerHTML = '<div class="landing-loading"><div class="generate-spinner"></div> Loading projects...</div>';
+
+    try {
+      const allProjects = await this.fs.getAllProjects();
+      const myProjects = allProjects.filter(p => p.owner === this.state.currentUser);
+      const otherProjects = allProjects.filter(p => p.owner !== this.state.currentUser);
+
+      myList.innerHTML = myProjects.length > 0
+        ? myProjects.map(p => this._renderProjectCard(p)).join('')
+        : '<p class="projects-empty">No projects yet. Create your first one!</p>';
+
+      if (otherProjects.length > 0) {
+        othersSection.style.display = '';
+        const grouped = {};
+        for (const p of otherProjects) {
+          if (!grouped[p.owner]) grouped[p.owner] = [];
+          grouped[p.owner].push(p);
+        }
+        let html = '';
+        for (const [owner, projects] of Object.entries(grouped)) {
+          html += `<div class="owner-group"><h4>${this._esc(owner)}'s Projects</h4>`;
+          html += `<div class="project-grid">`;
+          html += projects.map(p => this._renderProjectCard(p)).join('');
+          html += `</div></div>`;
+        }
+        othersList.innerHTML = html;
+      } else {
+        othersSection.style.display = 'none';
+      }
+    } catch (err) {
+      console.error('Failed to load projects:', err);
+      myList.innerHTML = `<p class="landing-error">Failed to load projects. Check your internet connection and Firebase configuration.</p>`;
+    }
+  }
+
+  _renderProjectCard(project) {
+    const updated = project.updatedAt?.toDate
+      ? project.updatedAt.toDate()
+      : new Date(project.updatedAt);
+    const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `
+      <div class="project-card" data-id="${project.id}">
+        <div class="project-card-title">${this._esc(project.title)}</div>
+        <div class="project-card-meta">
+          ${project.genre ? `<span class="project-genre">${this._esc(project.genre)}</span>` : ''}
+          <span class="project-date">Updated ${dateStr}</span>
+        </div>
+        <div class="project-card-goal">${(project.wordCountGoal || 0).toLocaleString()} word goal</div>
+      </div>`;
+  }
+
+  async _createNewProject() {
+    const title = await this._prompt('Project Title', 'My Novel');
+    if (!title) return;
+    const genre = await this._prompt('Genre (optional)', '');
+    const goalStr = await this._prompt('Word count goal', '80000');
+    const wordCountGoal = parseInt(goalStr) || 80000;
+
+    try {
+      const project = await this.fs.createProject({
+        owner: this.state.currentUser,
+        title,
+        genre,
+        wordCountGoal
+      });
+
+      await this.fs.createChapter({
+        projectId: project.id,
+        chapterNumber: 1,
+        title: 'Chapter One'
+      });
+
+      await this._openProject(project.id);
+    } catch (err) {
+      console.error('Failed to create project:', err);
+      alert('Failed to create project. Check your internet connection.');
+    }
+  }
+
+  async _openProject(projectId) {
+    // Hide landing, show app
+    document.getElementById('landing-page').style.display = 'none';
+    document.getElementById('app').style.display = '';
+
+    await this._loadProject(projectId);
+  }
+
+  // ========================================
+  //  Project & Chapter Management
+  // ========================================
 
   async _loadProject(projectId) {
-    const project = await this.storage.get(STORE_NAMES.projects, projectId);
-    if (!project) {
-      this._showWelcome();
-      return;
-    }
+    try {
+      const project = await this.fs.getProject(projectId);
+      if (!project) {
+        await this._showLanding();
+        return;
+      }
 
-    this.state.currentProjectId = projectId;
-    await this.storage.setSetting('lastProjectId', projectId);
+      this.state.currentProjectId = projectId;
+      this._currentProject = project;
 
-    // Update toolbar title
-    document.getElementById('project-title').textContent = project.name;
+      // Update toolbar title
+      document.getElementById('project-title').textContent = project.title;
 
-    // Load manuscript tree
-    await this._renderManuscriptTree();
+      // Render chapter list
+      await this._renderChapterList();
 
-    // Load first scene
-    const tree = await this.manuscript.getManuscriptTree(projectId);
-    if (tree.length > 0 && tree[0].scenes.length > 0) {
-      await this._loadScene(tree[0].scenes[0].id);
-    } else {
-      this.editor.clear();
-      this.state.currentSceneId = null;
-    }
+      // Load first chapter
+      const chapters = await this.fs.getProjectChapters(projectId);
 
-    // Update status bar
-    await this._updateStatusBar();
-  }
+      // Cache word counts
+      this._chapterWordCounts = {};
+      for (const ch of chapters) {
+        this._chapterWordCounts[ch.id] = ch.wordCount || 0;
+      }
 
-  async _loadScene(sceneId) {
-    const scene = await this.storage.get(STORE_NAMES.scenes, sceneId);
-    if (!scene) return;
+      if (chapters.length > 0) {
+        await this._loadChapter(chapters[0].id);
+      } else {
+        this.editor.clear();
+        this.state.currentChapterId = null;
+        this._showWelcome();
+      }
 
-    // Save current scene first
-    await this._saveCurrentScene();
+      // Update status bar
+      this._updateStatusBarLocal();
 
-    // Show editor, hide welcome screen
-    this._hideWelcome();
-
-    this.state.currentSceneId = sceneId;
-    this.editor.setContent(scene.content || '');
-
-    // Update active state in tree
-    document.querySelectorAll('.tree-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.id === sceneId);
-    });
-
-    // Update toolbar scene title
-    const chapter = await this.storage.get(STORE_NAMES.chapters, scene.chapterId);
-    const titleEl = document.getElementById('scene-title');
-    if (titleEl) {
-      titleEl.textContent = chapter ? `${chapter.title} — ${scene.title}` : scene.title;
+      // Start auto-save interval (30 seconds)
+      if (this._autoSaveInterval) clearInterval(this._autoSaveInterval);
+      this._autoSaveInterval = setInterval(() => {
+        this._saveCurrentChapter();
+      }, 30000);
+    } catch (err) {
+      console.error('Failed to load project:', err);
+      alert('Failed to load project. Check your internet connection.');
+      await this._showLanding();
     }
   }
 
-  async _saveCurrentScene() {
-    if (!this.state.currentSceneId) return;
+  async _loadChapter(chapterId) {
+    try {
+      const chapter = await this.fs.getChapter(chapterId);
+      if (!chapter) return;
+
+      // Save current chapter first
+      await this._saveCurrentChapter();
+
+      // Show editor, hide welcome
+      this._hideWelcome();
+
+      this.state.currentChapterId = chapterId;
+      this.editor.setContent(chapter.content || '');
+
+      // Update active state in tree
+      document.querySelectorAll('.tree-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.id === chapterId);
+      });
+
+      // Update toolbar chapter title
+      const titleEl = document.getElementById('scene-title');
+      if (titleEl) titleEl.textContent = chapter.title;
+    } catch (err) {
+      console.error('Failed to load chapter:', err);
+    }
+  }
+
+  async _saveCurrentChapter() {
+    if (!this.state.currentChapterId) return;
     const content = this.editor.getContent();
-    await this.manuscript.updateScene(this.state.currentSceneId, { content });
+    try {
+      await this.fs.updateChapter(this.state.currentChapterId, { content });
+    } catch (err) {
+      console.error('Auto-save failed:', err);
+    }
   }
 
-  // --- Editor Events ---
+  // ========================================
+  //  Editor Events
+  // ========================================
 
   async _onEditorChange(content) {
-    if (!this.state.currentSceneId) return;
-    await this.manuscript.updateScene(this.state.currentSceneId, { content });
-    await this._updateStatusBar();
-    this._updateTreeWordCounts();
+    if (!this.state.currentChapterId) return;
+
+    // Save to Firestore
+    try {
+      await this.fs.updateChapter(this.state.currentChapterId, { content });
+    } catch (err) {
+      console.error('Save failed:', err);
+    }
+
+    // Update local word count displays
+    this._updateLocalWordCounts(content);
   }
 
   _onWordCountUpdate(count) {
     const wcEl = document.getElementById('status-words');
     if (wcEl) wcEl.textContent = count.toLocaleString();
 
-    // Update floating word count
     const fwcWords = document.getElementById('fwc-words');
     if (fwcWords) fwcWords.textContent = count.toLocaleString();
 
-    // Update daily progress
     this._trackDailyWords(count);
   }
 
-  // --- Sidebar Rendering ---
+  _updateLocalWordCounts(content) {
+    const text = content.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ');
+    const words = text.match(/[a-zA-Z'''\u2019-]+/g) || [];
+    const chapterWords = words.length;
 
-  async _renderManuscriptTree() {
-    const container = document.getElementById('sidebar-manuscript');
+    // Update tree item
+    const chEl = document.querySelector(`.tree-item[data-id="${this.state.currentChapterId}"] .word-count`);
+    if (chEl) chEl.textContent = chapterWords.toLocaleString();
+
+    // Update cached word count
+    this._chapterWordCounts[this.state.currentChapterId] = chapterWords;
+
+    // Recalculate total
+    const total = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+
+    const totalEl = document.getElementById('status-total');
+    if (totalEl) totalEl.textContent = total.toLocaleString();
+    const fwcTotal = document.getElementById('fwc-total');
+    if (fwcTotal) fwcTotal.textContent = total.toLocaleString();
+
+    // Update progress
+    const project = this._currentProject;
+    if (project) {
+      const goal = project.wordCountGoal || 80000;
+      const progress = Math.round((total / goal) * 100);
+      const progressEl = document.getElementById('status-progress');
+      if (progressEl) progressEl.textContent = progress + '%';
+      const fwcProgress = document.getElementById('fwc-progress');
+      if (fwcProgress) fwcProgress.textContent = progress + '%';
+    }
+  }
+
+  // ========================================
+  //  Sidebar Rendering
+  // ========================================
+
+  async _renderChapterList() {
+    const container = document.getElementById('sidebar-chapters');
     if (!container || !this.state.currentProjectId) return;
 
-    const tree = await this.manuscript.getManuscriptTree(this.state.currentProjectId);
+    try {
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
 
-    let html = '';
-    for (const chapter of tree) {
-      html += `
-        <div class="tree-item chapter" data-id="${chapter.id}" data-type="chapter">
+      let html = '';
+      for (const chapter of chapters) {
+        const statusLabel = chapter.status === 'complete' ? 'done' : chapter.status === 'revision' ? 'rev' : '';
+        html += `
+        <div class="tree-item chapter ${chapter.id === this.state.currentChapterId ? 'active' : ''}"
+             data-id="${chapter.id}" data-type="chapter">
           <span class="icon">&#9656;</span>
           <span class="name">${this._esc(chapter.title)}</span>
-          <span class="word-count">${chapter.wordCount.toLocaleString()}</span>
-        </div>`;
-
-      for (const scene of chapter.scenes) {
-        html += `
-        <div class="tree-item scene ${scene.id === this.state.currentSceneId ? 'active' : ''}"
-             data-id="${scene.id}" data-type="scene" data-chapter="${chapter.id}">
-          <span class="icon">&#9702;</span>
-          <span class="name">${this._esc(scene.title)}</span>
-          <span class="word-count">${(scene.wordCount || 0).toLocaleString()}</span>
+          <span class="word-count">${(chapter.wordCount || 0).toLocaleString()}${statusLabel ? ' (' + statusLabel + ')' : ''}</span>
         </div>`;
       }
 
-      // Add scene button
       html += `
-        <button class="tree-add" data-action="add-scene" data-chapter="${chapter.id}">
-          + Scene
+        <button class="tree-add" data-action="add-chapter">
+          + Chapter
         </button>`;
+
+      container.innerHTML = html;
+    } catch (err) {
+      console.error('Failed to render chapter list:', err);
     }
-
-    // Add chapter button
-    html += `
-      <button class="tree-add" data-action="add-chapter">
-        + Chapter
-      </button>`;
-
-    container.innerHTML = html;
   }
 
   async _renderCharactersList() {
     const container = document.getElementById('sidebar-characters');
     if (!container || !this.state.currentProjectId) return;
 
-    const characters = await this.storage.getProjectCharacters(this.state.currentProjectId);
+    // Characters stored locally in IndexedDB
+    const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
 
     let html = '';
     for (const char of characters) {
@@ -245,7 +464,8 @@ class App {
     const container = document.getElementById('sidebar-notes');
     if (!container || !this.state.currentProjectId) return;
 
-    const notes = await this.storage.getProjectNotes(this.state.currentProjectId);
+    // Notes stored locally in IndexedDB
+    const notes = await this.localStorage.getProjectNotes(this.state.currentProjectId);
 
     let html = '';
     for (const note of notes) {
@@ -265,7 +485,9 @@ class App {
     container.innerHTML = html;
   }
 
-  // --- Panels ---
+  // ========================================
+  //  Panels
+  // ========================================
 
   async openAnalysisPanel() {
     const content = this.editor.getContent();
@@ -280,14 +502,15 @@ class App {
   }
 
   async openStructurePanel() {
-    if (!this.state.currentProjectId) return;
+    if (!this.state.currentProjectId || !this._currentProject) return;
 
-    const project = await this.storage.get(STORE_NAMES.projects, this.state.currentProjectId);
-    const totalWords = await this.storage.getProjectWordCount(this.state.currentProjectId);
-    const templateId = await this.storage.getSetting('structureTemplate_' + this.state.currentProjectId, 'threeAct');
+    const project = this._currentProject;
+    const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+    const templateId = await this.localStorage.getSetting('structureTemplate_' + this.state.currentProjectId, 'threeAct');
+    const targetWords = project.wordCountGoal || 80000;
 
-    const guidance = this.structure.getPacingGuidance(templateId, project.targetWords, totalWords);
-    const beats = this.structure.mapBeatsToManuscript(templateId, project.targetWords, totalWords);
+    const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
+    const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
 
     const body = document.getElementById('panel-structure-body');
     if (!body) return;
@@ -315,19 +538,16 @@ class App {
       }
     }
 
-    // Clear previous errors
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
     this._setGenerateStatus(false);
     this._showPanel('generate');
 
-    // Focus the plot textarea
     setTimeout(() => plotEl?.focus(), 300);
   }
 
   async _runGeneration(options = {}) {
-    // Use saved settings if continuing, otherwise read from panel
     let plot, wordTarget, tone, style, useCharacters;
     if (options.isContinuation && this._lastGenSettings) {
       plot = this._lastGenSettings.plot;
@@ -347,46 +567,36 @@ class App {
       useCharacters = document.getElementById('generate-use-characters')?.checked;
     }
 
-    // Always continue from existing content when generating
     const existingContent = this.editor.getContent();
     let characters = [];
     if (useCharacters && this.state.currentProjectId) {
-      characters = await this.storage.getProjectCharacters(this.state.currentProjectId);
+      characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
     }
 
-    // Save settings for "Continue Writing"
     this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters };
 
-    // Get scene/chapter titles
-    let sceneTitle = '';
+    // Get chapter title
     let chapterTitle = '';
-    if (this.state.currentSceneId) {
-      const scene = await this.storage.get(STORE_NAMES.scenes, this.state.currentSceneId);
-      if (scene) {
-        sceneTitle = scene.title;
-        const chapter = await this.storage.get(STORE_NAMES.chapters, scene.chapterId);
+    if (this.state.currentChapterId) {
+      try {
+        const chapter = await this.fs.getChapter(this.state.currentChapterId);
         if (chapter) chapterTitle = chapter.title;
-      }
+      } catch (_) {}
     }
 
-    // Hide continue bar and show generating state
     this._showContinueBar(false);
     this._setGenerateStatus(true);
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
 
-    // Close any open panel so user can see the editor
     this._closeAllPanels();
-
-    // Show editor, hide welcome screen
     this._hideWelcome();
 
-    // Accumulate streamed text, then set it on the editor directly
     const editorEl = this.editor.element;
     let streamedText = '';
 
     await this.generator.generate(
-      { plot, existingContent, sceneTitle, chapterTitle, characters, tone, style, wordTarget },
+      { plot, existingContent, chapterTitle, characters, tone, style, wordTarget },
       {
         onChunk: (text) => {
           streamedText += text;
@@ -404,23 +614,18 @@ class App {
         },
         onDone: async () => {
           this._setGenerateStatus(false);
-          // Save the content
           const content = this.editor.getContent();
-          if (this.state.currentSceneId) {
-            await this.manuscript.updateScene(this.state.currentSceneId, { content });
-            await this._updateStatusBar();
-            this._updateTreeWordCounts();
+          if (this.state.currentChapterId) {
+            try {
+              await this.fs.updateChapter(this.state.currentChapterId, { content });
+            } catch (_) {}
+            this._updateLocalWordCounts(content);
           }
 
-          // If auto-writing to goal, check word count and continue
           if (this._autoWriteToGoal) {
             const currentWords = this.editor.getWordCount();
-            const project = this.state.currentProjectId
-              ? await this.storage.get(STORE_NAMES.projects, this.state.currentProjectId)
-              : null;
-            const target = project ? project.targetWords : 0;
+            const target = this._currentProject ? this._currentProject.wordCountGoal : 0;
             if (target > 0 && currentWords < target) {
-              // Brief pause then continue
               setTimeout(() => this._runGeneration({ isContinuation: true }), 1500);
               return;
             } else {
@@ -428,7 +633,6 @@ class App {
             }
           }
 
-          // Show the continue bar
           this._showContinueBar(true);
         },
         onError: (err) => {
@@ -463,16 +667,11 @@ class App {
     const body = document.getElementById('panel-settings-body');
     if (!body) return;
 
-    const project = this.state.currentProjectId
-      ? await this.storage.get(STORE_NAMES.projects, this.state.currentProjectId)
-      : null;
-
-    body.innerHTML = this._renderSettings(project);
+    body.innerHTML = this._renderSettings(this._currentProject);
     this._showPanel('settings');
   }
 
   _showPanel(panelId) {
-    // Close all panels first
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
     document.getElementById('panel-overlay').classList.remove('visible');
 
@@ -488,7 +687,9 @@ class App {
     document.getElementById('panel-overlay').classList.remove('visible');
   }
 
-  // --- Analysis Rendering ---
+  // ========================================
+  //  Analysis Rendering
+  // ========================================
 
   _renderAnalysis(analysis, score) {
     const sv = analysis.sentenceVariety;
@@ -688,7 +889,9 @@ class App {
     `;
   }
 
-  // --- Structure Rendering ---
+  // ========================================
+  //  Structure Rendering
+  // ========================================
 
   _renderStructure(guidance, beats, project, templateId) {
     const templates = this.structure.getTemplates();
@@ -747,7 +950,9 @@ class App {
     `;
   }
 
-  // --- Settings Rendering ---
+  // ========================================
+  //  Settings Rendering
+  // ========================================
 
   _renderSettings(project) {
     return `
@@ -795,20 +1000,16 @@ class App {
       <div class="analysis-section">
         <h3>Project Settings</h3>
         <div class="form-group">
-          <label>Project Name</label>
-          <input type="text" class="form-input" id="setting-project-name" value="${this._esc(project.name)}">
+          <label>Project Title</label>
+          <input type="text" class="form-input" id="setting-project-name" value="${this._esc(project.title)}">
         </div>
         <div class="form-group">
           <label>Genre</label>
           <input type="text" class="form-input" id="setting-project-genre" value="${this._esc(project.genre || '')}">
         </div>
         <div class="form-group">
-          <label>Target Word Count</label>
-          <input type="number" class="form-input" id="setting-target-words" value="${project.targetWords}" min="1000" step="1000">
-        </div>
-        <div class="form-group">
-          <label>Synopsis</label>
-          <textarea class="form-input" id="setting-synopsis" rows="4">${this._esc(project.synopsis || '')}</textarea>
+          <label>Word Count Goal</label>
+          <input type="number" class="form-input" id="setting-target-words" value="${project.wordCountGoal || 80000}" min="1000" step="1000">
         </div>
         <button class="btn btn-primary" id="save-project-settings" style="width:100%;margin-top:8px;">Save Project Settings</button>
       </div>
@@ -817,7 +1018,6 @@ class App {
         <h3>Data</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm" id="btn-export-json">Backup (JSON)</button>
-          <button class="btn btn-sm" id="btn-import-json">Import Backup</button>
         </div>
       </div>
 
@@ -829,7 +1029,9 @@ class App {
     `;
   }
 
-  // --- Welcome Screen ---
+  // ========================================
+  //  Welcome Screen
+  // ========================================
 
   _showWelcome() {
     const overlay = document.getElementById('welcome-overlay');
@@ -846,18 +1048,69 @@ class App {
     if (editorEl) editorEl.style.display = '';
   }
 
-  // --- Event Binding ---
+  // ========================================
+  //  Event Binding
+  // ========================================
 
   _bindEvents() {
-    // Sidebar toggle
+    // --- Landing Page Events ---
+
+    // User list clicks
+    document.getElementById('user-list')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.user-btn');
+      if (btn) this._selectUser(btn.dataset.name);
+    });
+
+    // New user input
+    document.getElementById('btn-user-continue')?.addEventListener('click', () => {
+      const name = document.getElementById('new-user-name')?.value?.trim();
+      if (name) this._selectUser(name);
+    });
+    document.getElementById('new-user-name')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const name = e.target.value?.trim();
+        if (name) this._selectUser(name);
+      }
+    });
+
+    // Switch user
+    document.getElementById('btn-change-user')?.addEventListener('click', () => {
+      window.localStorage.removeItem('genesis2_userName');
+      this.state.currentUser = null;
+      this._showUserSelection();
+    });
+
+    // Create project
+    document.getElementById('btn-create-project')?.addEventListener('click', () => {
+      this._createNewProject();
+    });
+
+    // Project card clicks (event delegation on both lists)
+    const handleProjectClick = (e) => {
+      const card = e.target.closest('.project-card');
+      if (card) this._openProject(card.dataset.id);
+    };
+    document.getElementById('my-projects-list')?.addEventListener('click', handleProjectClick);
+    document.getElementById('others-projects-list')?.addEventListener('click', handleProjectClick);
+
+    // --- Back to Projects ---
+    document.getElementById('btn-back-to-projects')?.addEventListener('click', () => this._showLanding());
+    document.getElementById('btn-back-to-projects-sidebar')?.addEventListener('click', () => this._showLanding());
+
+    // --- Sidebar toggle ---
     document.getElementById('btn-sidebar-toggle')?.addEventListener('click', () => {
       this.state.sidebarOpen = !this.state.sidebarOpen;
       document.getElementById('app').classList.toggle('sidebar-collapsed', !this.state.sidebarOpen);
-      // Mobile sidebar
       document.querySelector('.sidebar')?.classList.toggle('mobile-open', this.state.sidebarOpen);
     });
 
-    // Focus mode
+    document.getElementById('btn-sidebar-toggle-mobile')?.addEventListener('click', () => {
+      this.state.sidebarOpen = !this.state.sidebarOpen;
+      document.getElementById('app').classList.toggle('sidebar-collapsed', !this.state.sidebarOpen);
+      document.querySelector('.sidebar')?.classList.toggle('mobile-open', this.state.sidebarOpen);
+    });
+
+    // --- Focus mode ---
     const toggleFocus = () => {
       this.state.focusMode = !this.state.focusMode;
       document.getElementById('app').classList.toggle('focus-mode', this.state.focusMode);
@@ -865,7 +1118,7 @@ class App {
     document.getElementById('btn-focus-mode')?.addEventListener('click', toggleFocus);
     document.getElementById('btn-exit-focus')?.addEventListener('click', toggleFocus);
 
-    // Sidebar navigation tabs
+    // --- Sidebar navigation tabs ---
     document.querySelectorAll('.sidebar-nav button').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         const tab = e.target.dataset.tab;
@@ -882,46 +1135,47 @@ class App {
       });
     });
 
-    // Sidebar content clicks (event delegation)
+    // --- Sidebar content clicks (event delegation) ---
     document.querySelector('.sidebar-content')?.addEventListener('click', async (e) => {
       const treeItem = e.target.closest('.tree-item');
       const addBtn = e.target.closest('.tree-add');
+      const charCard = e.target.closest('.character-card');
 
       if (treeItem) {
         const type = treeItem.dataset.type;
         const id = treeItem.dataset.id;
 
-        if (type === 'scene') {
-          await this._loadScene(id);
-        } else if (type === 'chapter') {
-          // Toggle expand / select first scene
-          const chapterId = id;
-          const scenes = await this.storage.getChapterScenes(chapterId);
-          if (scenes.length > 0) {
-            await this._loadScene(scenes[0].id);
-          }
+        if (type === 'chapter') {
+          await this._loadChapter(id);
         } else if (type === 'note') {
           await this._openNoteEditor(id);
         }
       }
 
+      if (charCard) {
+        await this._openCharacterEditor(charCard.dataset.id);
+      }
+
       if (addBtn) {
         const action = addBtn.dataset.action;
         if (action === 'add-chapter') {
-          const title = await this._prompt('Chapter Title', `Chapter ${document.querySelectorAll('.tree-item.chapter').length + 1}`);
-          if (title && this.state.currentProjectId) {
-            const ch = await this.manuscript.createChapter(this.state.currentProjectId, title);
-            const sc = await this.manuscript.createScene(ch.id);
-            await this._renderManuscriptTree();
-            await this._loadScene(sc.id);
-          }
-        } else if (action === 'add-scene') {
-          const chapterId = addBtn.dataset.chapter;
-          const title = await this._prompt('Scene Title', 'New Scene');
-          if (title && chapterId) {
-            const sc = await this.manuscript.createScene(chapterId, title);
-            await this._renderManuscriptTree();
-            await this._loadScene(sc.id);
+          if (!this.state.currentProjectId) return;
+          const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+          const nextNum = chapters.length + 1;
+          const title = await this._prompt('Chapter Title', `Chapter ${nextNum}`);
+          if (title) {
+            try {
+              const ch = await this.fs.createChapter({
+                projectId: this.state.currentProjectId,
+                chapterNumber: nextNum,
+                title
+              });
+              this._chapterWordCounts[ch.id] = 0;
+              await this._renderChapterList();
+              await this._loadChapter(ch.id);
+            } catch (err) {
+              console.error('Failed to create chapter:', err);
+            }
           }
         } else if (action === 'add-character') {
           const name = await this._prompt('Character Name', 'New Character');
@@ -939,15 +1193,7 @@ class App {
       }
     });
 
-    // Character card clicks
-    document.querySelector('.sidebar-content')?.addEventListener('click', async (e) => {
-      const card = e.target.closest('.character-card');
-      if (card) {
-        await this._openCharacterEditor(card.dataset.id);
-      }
-    });
-
-    // Toolbar buttons
+    // --- Toolbar buttons ---
     document.getElementById('btn-bold')?.addEventListener('click', () => this.editor.bold());
     document.getElementById('btn-italic')?.addEventListener('click', () => this.editor.italic());
     document.getElementById('btn-heading')?.addEventListener('click', () => this.editor.insertHeading());
@@ -956,20 +1202,20 @@ class App {
     document.getElementById('btn-undo')?.addEventListener('click', () => this.editor.undo());
     document.getElementById('btn-redo')?.addEventListener('click', () => this.editor.redo());
 
-    // Panel buttons
+    // --- Panel buttons ---
     document.getElementById('btn-generate')?.addEventListener('click', () => this.openGeneratePanel());
     document.getElementById('btn-analysis')?.addEventListener('click', () => this.openAnalysisPanel());
     document.getElementById('btn-structure')?.addEventListener('click', () => this.openStructurePanel());
     document.getElementById('btn-export')?.addEventListener('click', () => this.openExportPanel());
     document.getElementById('btn-settings')?.addEventListener('click', () => this.openSettingsPanel());
 
-    // Panel overlay close
+    // --- Panel overlay close ---
     document.getElementById('panel-overlay')?.addEventListener('click', () => this._closeAllPanels());
     document.querySelectorAll('.panel-close').forEach(btn => {
       btn.addEventListener('click', () => this._closeAllPanels());
     });
 
-    // Export panel actions
+    // --- Export panel actions ---
     document.getElementById('export-plain')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
       const result = await this.exporter.exportPlainText(this.state.currentProjectId);
@@ -991,29 +1237,26 @@ class App {
       this.exporter.download(result);
     });
 
-    // Welcome screen buttons (use event delegation since they're dynamically created)
+    // --- Welcome screen buttons ---
     document.addEventListener('click', async (e) => {
       if (e.target.id === 'btn-new-project' || e.target.closest('#btn-new-project')) {
-        await this.createNewProject();
-      }
-      if (e.target.id === 'btn-import-project' || e.target.closest('#btn-import-project')) {
-        this._importProjectFromFile();
+        await this._createNewProject();
       }
     });
 
-    // Settings panel dynamic events
+    // --- Settings panel dynamic events ---
     document.addEventListener('change', async (e) => {
       if (e.target.id === 'setting-theme') {
         this.state.theme = e.target.value;
         this._applyTheme(this.state.theme);
-        await this.storage.setSetting('theme', this.state.theme);
+        await this.localStorage.setSetting('theme', this.state.theme);
       }
       if (e.target.id === 'setting-daily-goal') {
         this.state.dailyGoal = parseInt(e.target.value) || 1000;
-        await this.storage.setSetting('dailyGoal', this.state.dailyGoal);
+        await this.localStorage.setSetting('dailyGoal', this.state.dailyGoal);
       }
       if (e.target.id === 'structure-template-select') {
-        await this.storage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
+        await this.localStorage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
         await this.openStructurePanel();
       }
     });
@@ -1029,9 +1272,6 @@ class App {
         if (!this.state.currentProjectId) return;
         const result = await this.exporter.exportJson(this.state.currentProjectId);
         this.exporter.download(result);
-      }
-      if (e.target.id === 'btn-import-json') {
-        this._importProjectFromFile();
       }
       if (e.target.id === 'save-api-settings') {
         const key = document.getElementById('setting-api-key')?.value || '';
@@ -1067,73 +1307,47 @@ class App {
       }
     });
 
-    // Handle visibility change for auto-save
+    // --- Auto-save on visibility change ---
     document.addEventListener('visibilitychange', async () => {
       if (document.hidden) {
-        await this._saveCurrentScene();
+        await this._saveCurrentChapter();
       }
     });
 
-    // Before unload save
+    // --- Before unload save ---
     window.addEventListener('beforeunload', () => {
-      this._saveCurrentScene();
+      this._saveCurrentChapter();
     });
   }
 
-  // --- Helper methods ---
+  // ========================================
+  //  Helper Methods
+  // ========================================
 
-  async _updateStatusBar() {
-    if (!this.state.currentProjectId) return;
-
-    const totalWords = await this.storage.getProjectWordCount(this.state.currentProjectId);
-    const project = await this.storage.get(STORE_NAMES.projects, this.state.currentProjectId);
-    const progress = project ? Math.round((totalWords / project.targetWords) * 100) : 0;
+  _updateStatusBarLocal() {
+    const total = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+    const project = this._currentProject;
+    const goal = project ? (project.wordCountGoal || 80000) : 80000;
+    const progress = Math.round((total / goal) * 100);
 
     const el = (id) => document.getElementById(id);
-    const totalEl = el('status-total');
-    const goalEl = el('status-goal');
-    const progressEl = el('status-progress');
-    const dailyEl = el('status-daily');
-
-    if (totalEl) totalEl.textContent = totalWords.toLocaleString();
-    if (goalEl) goalEl.textContent = project ? project.targetWords.toLocaleString() : '—';
-    if (progressEl) progressEl.textContent = progress + '%';
-    if (dailyEl) dailyEl.textContent = `${this.state.wordsToday} / ${this.state.dailyGoal}`;
-
-    // Update floating word count
-    const fwcTotal = document.getElementById('fwc-total');
-    const fwcProgress = document.getElementById('fwc-progress');
-    if (fwcTotal) fwcTotal.textContent = totalWords.toLocaleString();
-    if (fwcProgress) fwcProgress.textContent = progress + '%';
-  }
-
-  async _updateTreeWordCounts() {
-    if (!this.state.currentProjectId) return;
-    const tree = await this.manuscript.getManuscriptTree(this.state.currentProjectId);
-
-    for (const ch of tree) {
-      const chEl = document.querySelector(`.tree-item.chapter[data-id="${ch.id}"] .word-count`);
-      if (chEl) chEl.textContent = ch.wordCount.toLocaleString();
-
-      for (const sc of ch.scenes) {
-        const scEl = document.querySelector(`.tree-item.scene[data-id="${sc.id}"] .word-count`);
-        if (scEl) scEl.textContent = (sc.wordCount || 0).toLocaleString();
-      }
-    }
+    if (el('status-total')) el('status-total').textContent = total.toLocaleString();
+    if (el('status-goal')) el('status-goal').textContent = goal.toLocaleString();
+    if (el('status-progress')) el('status-progress').textContent = progress + '%';
+    if (el('status-daily')) el('status-daily').textContent = `${this.state.wordsToday} / ${this.state.dailyGoal}`;
+    if (el('fwc-total')) el('fwc-total').textContent = total.toLocaleString();
+    if (el('fwc-progress')) el('fwc-progress').textContent = progress + '%';
   }
 
   async _loadDailyProgress() {
     const today = new Date().toISOString().split('T')[0];
-    this.state.wordsToday = await this.storage.getSetting('wordsToday_' + today, 0);
+    this.state.wordsToday = await this.localStorage.getSetting('wordsToday_' + today, 0);
   }
 
-  _trackDailyWords(currentSceneWords) {
-    // Simple daily tracking — stores session delta
+  _trackDailyWords(currentChapterWords) {
     const today = new Date().toISOString().split('T')[0];
     const key = 'wordsToday_' + today;
-    // This is a simplified tracker — a production version would track
-    // the delta between session start and current word count
-    this.storage.setSetting(key, Math.max(this.state.wordsToday, currentSceneWords));
+    this.localStorage.setSetting(key, Math.max(this.state.wordsToday, currentChapterWords));
   }
 
   _applyTheme(theme) {
@@ -1143,55 +1357,54 @@ class App {
 
   async _saveProjectSettings() {
     if (!this.state.currentProjectId) return;
-    const name = document.getElementById('setting-project-name')?.value;
+    const title = document.getElementById('setting-project-name')?.value;
     const genre = document.getElementById('setting-project-genre')?.value;
-    const targetWords = parseInt(document.getElementById('setting-target-words')?.value) || 80000;
-    const synopsis = document.getElementById('setting-synopsis')?.value;
+    const wordCountGoal = parseInt(document.getElementById('setting-target-words')?.value) || 80000;
 
-    await this.manuscript.updateProject(this.state.currentProjectId, {
-      name, genre, targetWords, synopsis
-    });
+    try {
+      await this.fs.updateProject(this.state.currentProjectId, {
+        title, genre, wordCountGoal
+      });
 
-    document.getElementById('project-title').textContent = name;
-    this._closeAllPanels();
+      // Update cached project
+      this._currentProject = { ...this._currentProject, title, genre, wordCountGoal };
+      document.getElementById('project-title').textContent = title;
+      this._updateStatusBarLocal();
+      this._closeAllPanels();
+    } catch (err) {
+      console.error('Failed to save project settings:', err);
+      alert('Failed to save settings.');
+    }
   }
 
   async _deleteCurrentProject() {
     if (!this.state.currentProjectId) return;
     if (!confirm('Delete this entire project? This cannot be undone.')) return;
-    if (!confirm('Are you absolutely sure? All chapters, scenes, characters, and notes will be permanently deleted.')) return;
+    if (!confirm('Are you absolutely sure? All chapters will be permanently deleted.')) return;
 
-    await this.manuscript.deleteProject(this.state.currentProjectId);
-    this.state.currentProjectId = null;
-    this.state.currentSceneId = null;
-    await this.storage.setSetting('lastProjectId', null);
-    this._closeAllPanels();
-    this._showWelcome();
-  }
-
-  _importProjectFromFile() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        const project = await this.storage.importProject(data);
-        if (project) {
-          await this._loadProject(project.id);
-        }
-      } catch (err) {
-        alert('Failed to import: ' + err.message);
+    try {
+      // Stop auto-save
+      if (this._autoSaveInterval) {
+        clearInterval(this._autoSaveInterval);
+        this._autoSaveInterval = null;
       }
-    });
-    input.click();
+      this.state.currentChapterId = null;
+
+      await this.fs.deleteProject(this.state.currentProjectId);
+
+      this.state.currentProjectId = null;
+      this._currentProject = null;
+      this._chapterWordCounts = {};
+      this._closeAllPanels();
+      await this._showLanding();
+    } catch (err) {
+      console.error('Failed to delete project:', err);
+      alert('Failed to delete project.');
+    }
   }
 
   async _openCharacterEditor(charId) {
-    const character = await this.storage.get(STORE_NAMES.characters, charId);
+    const character = await this.localStorage.get(STORE_NAMES.characters, charId);
     if (!character) return;
 
     const body = document.getElementById('panel-analysis-body');
@@ -1259,7 +1472,7 @@ class App {
   }
 
   async _openNoteEditor(noteId) {
-    const note = await this.storage.get(STORE_NAMES.notes, noteId);
+    const note = await this.localStorage.get(STORE_NAMES.notes, noteId);
     if (!note) return;
 
     const body = document.getElementById('panel-analysis-body');

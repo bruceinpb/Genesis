@@ -3,7 +3,7 @@
  * Enables offline usage on iPad. Caches all app assets.
  */
 
-const CACHE_NAME = 'genesis2-v9';
+const CACHE_NAME = 'genesis2-v10';
 
 const ASSETS = [
   '/',
@@ -19,6 +19,8 @@ const ASSETS = [
   '/js/structure.js',
   '/js/export.js',
   '/js/generate.js',
+  '/js/firebase-config.js',
+  '/js/firestore-storage.js',
   '/icons/icon-192.svg',
   '/icons/icon-512.svg'
 ];
