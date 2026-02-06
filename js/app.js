@@ -128,8 +128,8 @@ class App {
     // Save current scene first
     await this._saveCurrentScene();
 
-    // Restore editor if welcome screen replaced it
-    this._restoreEditor();
+    // Show editor, hide welcome screen
+    this._hideWelcome();
 
     this.state.currentSceneId = sceneId;
     this.editor.setContent(scene.content || '');
@@ -374,8 +374,8 @@ class App {
     // Close any open panel so user can see the editor
     this._closeAllPanels();
 
-    // Restore editor if welcome screen replaced it
-    this._restoreEditor();
+    // Show editor, hide welcome screen
+    this._hideWelcome();
 
     // Accumulate streamed text, then set it on the editor directly
     const editorEl = this.editor.element;
@@ -828,38 +828,18 @@ class App {
   // --- Welcome Screen ---
 
   _showWelcome() {
-    const container = document.querySelector('.editor-container');
-    if (container) {
-      container.innerHTML = `
-        <div class="welcome">
-          <h2>Genesis 2</h2>
-          <p>
-            A writing studio crafted for creating world-class, best-seller prose.
-            Designed for iPad, built for serious writers.
-          </p>
-          <button class="btn btn-primary" id="btn-new-project">Create New Project</button>
-          <div style="margin-top:16px;">
-            <button class="btn btn-sm" id="btn-import-project">Import Existing Project</button>
-          </div>
-        </div>
-      `;
-    }
+    const overlay = document.getElementById('welcome-overlay');
+    const editorEl = document.getElementById('editor');
+    if (overlay) overlay.style.display = '';
+    if (editorEl) editorEl.style.display = 'none';
     document.getElementById('project-title').textContent = 'Genesis 2';
   }
 
-  /** Restore the editor element if welcome screen replaced it */
-  _restoreEditor() {
-    const container = document.querySelector('.editor-container');
-    if (!container) return;
-    // Check if the editor div is still in the DOM
-    if (!container.querySelector('#editor')) {
-      container.innerHTML = '<div id="editor" class="editor" data-placeholder="Begin writing your story..."></div>';
-      const editorEl = container.querySelector('#editor');
-      this.editor = new Editor(editorEl, {
-        onChange: (content) => this._onEditorChange(content),
-        onWordCount: (count) => this._onWordCountUpdate(count)
-      });
-    }
+  _hideWelcome() {
+    const overlay = document.getElementById('welcome-overlay');
+    const editorEl = document.getElementById('editor');
+    if (overlay) overlay.style.display = 'none';
+    if (editorEl) editorEl.style.display = '';
   }
 
   // --- Event Binding ---
