@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Genesis 2">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="description" content="iPad-centric writing studio for crafting world-class, best-seller prose.">
+
+  <title>Genesis 2 — Prose Studio</title>
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.svg">
+
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body class="no-bounce">
+
+<div id="app">
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>Genesis 2</h1>
+      <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" title="Toggle sidebar">&#9776;</button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="active" data-tab="manuscript">Manuscript</button>
+      <button data-tab="characters">Characters</button>
+      <button data-tab="notes">Notes</button>
+    </nav>
+
+    <div class="sidebar-content">
+      <div class="sidebar-panel" id="sidebar-manuscript" style="display:block;">
+        <!-- Manuscript tree rendered by JS -->
+      </div>
+      <div class="sidebar-panel" id="sidebar-characters" style="display:none;">
+        <!-- Characters list rendered by JS -->
+      </div>
+      <div class="sidebar-panel" id="sidebar-notes" style="display:none;">
+        <!-- Notes list rendered by JS -->
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="btn btn-sm btn-primary" id="btn-new-project-sidebar" style="flex:1;">
+        + New Project
+      </button>
+    </div>
+  </aside>
+
+  <!-- ===== Toolbar ===== -->
+  <header class="toolbar">
+    <button class="toolbar-btn" id="btn-sidebar-toggle-mobile" aria-label="Menu" title="Toggle sidebar">&#9776;</button>
+
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-bold" title="Bold (Cmd+B)"><b>B</b></button>
+      <button class="toolbar-btn" id="btn-italic" title="Italic (Cmd+I)"><i>I</i></button>
+      <button class="toolbar-btn" id="btn-heading" title="Heading">H</button>
+      <button class="toolbar-btn" id="btn-blockquote" title="Blockquote">&#8220;</button>
+      <button class="toolbar-btn" id="btn-scene-break" title="Scene Break">***</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-undo" title="Undo">&#8617;</button>
+      <button class="toolbar-btn" id="btn-redo" title="Redo">&#8618;</button>
+    </div>
+
+    <span class="toolbar-title" id="project-title">Genesis 2</span>
+    <span class="toolbar-title" id="scene-title" style="font-weight:400;font-size:0.85rem;color:var(--text-secondary);"></span>
+
+    <div class="toolbar-spacer"></div>
+
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-analysis" title="Prose Analysis">&#9874;</button>
+      <button class="toolbar-btn" id="btn-structure" title="Story Structure">&#9670;</button>
+      <button class="toolbar-btn" id="btn-export" title="Export">&#8681;</button>
+      <button class="toolbar-btn" id="btn-focus-mode" title="Focus Mode">&#9673;</button>
+      <button class="toolbar-btn" id="btn-settings" title="Settings">&#9881;</button>
+    </div>
+  </header>
+
+  <!-- ===== Editor ===== -->
+  <main class="editor-area">
+    <div class="editor-container">
+      <div id="editor" class="editor" data-placeholder="Begin writing your story..."></div>
+    </div>
+  </main>
+
+  <!-- ===== Status Bar ===== -->
+  <footer class="status-bar">
+    <div class="status-item">
+      <span class="label">Words:</span>
+      <span class="value" id="status-words">0</span>
+    </div>
+    <div class="status-item">
+      <span class="label">Total:</span>
+      <span class="value" id="status-total">0</span>
+    </div>
+    <div class="status-item">
+      <span class="label">Goal:</span>
+      <span class="value" id="status-goal">80,000</span>
+    </div>
+    <div class="status-item">
+      <span class="label">Progress:</span>
+      <span class="value" id="status-progress">0%</span>
+    </div>
+
+    <div class="status-spacer"></div>
+
+    <div class="status-item">
+      <span class="label">Today:</span>
+      <span class="value" id="status-daily">0 / 1,000</span>
+    </div>
+  </footer>
+
+</div>
+
+<!-- ===== Panel Overlay ===== -->
+<div class="panel-overlay" id="panel-overlay"></div>
+
+<!-- ===== Analysis Panel ===== -->
+<div class="panel" id="panel-analysis">
+  <div class="panel-header">
+    <h2>Prose Analysis</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-analysis-body">
+    <!-- Rendered dynamically -->
+  </div>
+</div>
+
+<!-- ===== Structure Panel ===== -->
+<div class="panel" id="panel-structure">
+  <div class="panel-header">
+    <h2>Story Structure</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-structure-body">
+    <!-- Rendered dynamically -->
+  </div>
+</div>
+
+<!-- ===== Export Panel ===== -->
+<div class="panel" id="panel-export">
+  <div class="panel-header">
+    <h2>Export Manuscript</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body">
+    <div class="analysis-section">
+      <h3>Export Formats</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">
+        Export your manuscript in various formats for submission, sharing, or backup.
+      </p>
+
+      <button class="btn" id="export-manuscript" style="width:100%;margin-bottom:8px;">
+        Standard Manuscript Format (HTML)
+        <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
+      </button>
+
+      <button class="btn" id="export-html" style="width:100%;margin-bottom:8px;">
+        Styled HTML
+        <br><span style="font-size:0.75rem;color:var(--text-muted);">Beautiful reading format</span>
+      </button>
+
+      <button class="btn" id="export-plain" style="width:100%;margin-bottom:8px;">
+        Plain Text
+        <br><span style="font-size:0.75rem;color:var(--text-muted);">Universal .txt format</span>
+      </button>
+
+      <button class="btn" id="export-json" style="width:100%;margin-bottom:8px;">
+        Full Backup (JSON)
+        <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including characters, notes, structure</span>
+      </button>
+    </div>
+
+    <div class="analysis-section">
+      <h3>Print</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Use your browser's print function (Cmd+P) for a clean manuscript printout.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Settings Panel ===== -->
+<div class="panel" id="panel-settings">
+  <div class="panel-header">
+    <h2>Settings</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-settings-body">
+    <!-- Rendered dynamically -->
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+
+</body>
+</html>
