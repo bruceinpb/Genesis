@@ -373,10 +373,22 @@ class App {
       { plot, existingContent, sceneTitle, chapterTitle, characters, tone, style, wordTarget },
       {
         onChunk: (text) => {
-          // Insert text at the end of the editor
-          // Convert newlines to proper HTML
-          const html = text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
-          document.execCommand('insertHTML', false, html);
+          // Use insertText to preserve spaces (insertHTML collapses whitespace)
+          const paragraphs = text.split('\n\n');
+          for (let i = 0; i < paragraphs.length; i++) {
+            if (i > 0) {
+              document.execCommand('insertParagraph', false);
+            }
+            const lines = paragraphs[i].split('\n');
+            for (let j = 0; j < lines.length; j++) {
+              if (j > 0) {
+                document.execCommand('insertLineBreak', false);
+              }
+              if (lines[j]) {
+                document.execCommand('insertText', false, lines[j]);
+              }
+            }
+          }
         },
         onDone: async () => {
           this._setGenerateStatus(false);
