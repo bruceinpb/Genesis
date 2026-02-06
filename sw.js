@@ -3,7 +3,7 @@
  * Enables offline usage on iPad. Caches all app assets.
  */
 
-const CACHE_NAME = 'genesis2-v3';
+const CACHE_NAME = 'genesis2-v4';
 
 const ASSETS = [
   '/',
