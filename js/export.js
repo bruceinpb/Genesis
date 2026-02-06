@@ -2,47 +2,37 @@
  * Genesis 2 — Export Module
  * Export manuscripts to standard formats: plain text, manuscript format,
  * HTML, and JSON backup.
+ *
+ * Works with the Firestore chapter-based model (no scenes).
  */
 
 class ExportManager {
-  constructor(storage, manuscriptManager) {
-    this.storage = storage;
-    this.manuscript = manuscriptManager;
+  constructor(firestoreStorage) {
+    this.fs = firestoreStorage;
   }
 
   /**
    * Export the full manuscript as plain text.
    */
   async exportPlainText(projectId) {
-    const project = await this.storage.get('projects', projectId);
-    const tree = await this.manuscript.getManuscriptTree(projectId);
+    const project = await this.fs.getProject(projectId);
+    const chapters = await this.fs.getProjectChapters(projectId);
     let output = '';
 
-    output += project.name.toUpperCase() + '\n';
-    output += '='.repeat(project.name.length) + '\n\n';
+    output += project.title.toUpperCase() + '\n';
+    output += '='.repeat(project.title.length) + '\n\n';
 
-    if (project.synopsis) {
-      output += project.synopsis + '\n\n';
-      output += '---\n\n';
-    }
-
-    for (const chapter of tree) {
+    for (const chapter of chapters) {
       output += '\n' + chapter.title.toUpperCase() + '\n';
       output += '-'.repeat(chapter.title.length) + '\n\n';
 
-      for (const scene of chapter.scenes) {
-        const text = this._htmlToText(scene.content);
-        output += text + '\n\n';
-
-        if (scene !== chapter.scenes[chapter.scenes.length - 1]) {
-          output += '* * *\n\n';
-        }
-      }
+      const text = this._htmlToText(chapter.content);
+      output += text + '\n\n';
     }
 
     return {
       content: output,
-      filename: this._sanitizeFilename(project.name) + '.txt',
+      filename: this._sanitizeFilename(project.title) + '.txt',
       mimeType: 'text/plain'
     };
   }
@@ -52,17 +42,15 @@ class ExportManager {
    * Courier 12pt, double-spaced, ~250 words/page.
    */
   async exportManuscriptFormat(projectId) {
-    const project = await this.storage.get('projects', projectId);
-    const tree = await this.manuscript.getManuscriptTree(projectId);
-    const totalWords = tree.reduce((sum, ch) =>
-      sum + ch.scenes.reduce((s, sc) => s + (sc.wordCount || 0), 0), 0
-    );
+    const project = await this.fs.getProject(projectId);
+    const chapters = await this.fs.getProjectChapters(projectId);
+    const totalWords = chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0);
 
     let html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>${this._escapeHtml(project.name)}</title>
+<title>${this._escapeHtml(project.title)}</title>
 <style>
   @page { margin: 1in; size: letter; }
   body {
@@ -91,11 +79,6 @@ class ExportManager {
     margin-top: 48pt;
     font-size: 12pt;
   }
-  .header {
-    text-align: right;
-    font-size: 12pt;
-    margin-bottom: 0;
-  }
   .chapter-start {
     page-break-before: always;
     padding-top: 33%;
@@ -112,10 +95,6 @@ class ExportManager {
     margin: 0;
   }
   p:first-of-type { text-indent: 0; }
-  .scene-break {
-    text-align: center;
-    margin: 24pt 0;
-  }
   .end-mark {
     text-align: center;
     margin-top: 48pt;
@@ -126,37 +105,28 @@ class ExportManager {
 <body>
 
 <div class="title-page">
-  <h1>${this._escapeHtml(project.name)}</h1>
-  <div class="byline">by [Author Name]</div>
+  <h1>${this._escapeHtml(project.title)}</h1>
+  <div class="byline">by ${this._escapeHtml(project.owner || '[Author Name]')}</div>
   <div class="wordcount">Approximately ${Math.round(totalWords / 1000) * 1000} words</div>
 </div>
 `;
 
-    for (let i = 0; i < tree.length; i++) {
-      const chapter = tree[i];
+    for (const chapter of chapters) {
       html += `\n<div class="chapter-start">
   <h2>${this._escapeHtml(chapter.title)}</h2>
 </div>\n\n`;
 
-      for (let j = 0; j < chapter.scenes.length; j++) {
-        const scene = chapter.scenes[j];
-        const paragraphs = this._contentToParagraphs(scene.content);
-
-        paragraphs.forEach((p, idx) => {
-          html += `<p>${this._escapeHtml(p)}</p>\n`;
-        });
-
-        if (j < chapter.scenes.length - 1) {
-          html += '<div class="scene-break">#</div>\n\n';
-        }
-      }
+      const paragraphs = this._contentToParagraphs(chapter.content);
+      paragraphs.forEach(p => {
+        html += `<p>${this._escapeHtml(p)}</p>\n`;
+      });
     }
 
     html += '\n<div class="end-mark">THE END</div>\n\n</body>\n</html>';
 
     return {
       content: html,
-      filename: this._sanitizeFilename(project.name) + '_manuscript.html',
+      filename: this._sanitizeFilename(project.title) + '_manuscript.html',
       mimeType: 'text/html'
     };
   }
@@ -165,15 +135,15 @@ class ExportManager {
    * Export as a styled HTML ebook.
    */
   async exportStyledHtml(projectId) {
-    const project = await this.storage.get('projects', projectId);
-    const tree = await this.manuscript.getManuscriptTree(projectId);
+    const project = await this.fs.getProject(projectId);
+    const chapters = await this.fs.getProjectChapters(projectId);
 
     let html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${this._escapeHtml(project.name)}</title>
+<title>${this._escapeHtml(project.title)}</title>
 <style>
   body {
     font-family: Georgia, 'Palatino Linotype', 'Book Antiqua', serif;
@@ -200,19 +170,6 @@ class ExportManager {
   }
   p { text-indent: 1.5em; margin: 0 0 0.2em; }
   p:first-of-type, h2 + p { text-indent: 0; }
-  .scene-break {
-    text-align: center;
-    margin: 2em 0;
-    color: #999;
-    letter-spacing: 1em;
-  }
-  .synopsis {
-    font-style: italic;
-    text-align: center;
-    color: #666;
-    margin: 0 0 3em;
-    text-indent: 0;
-  }
   blockquote {
     border-left: 3px solid #d4a853;
     padding-left: 1.2em;
@@ -224,32 +181,19 @@ class ExportManager {
 </head>
 <body>
 
-<h1>${this._escapeHtml(project.name)}</h1>
+<h1>${this._escapeHtml(project.title)}</h1>
 `;
 
-    if (project.synopsis) {
-      html += `<p class="synopsis">${this._escapeHtml(project.synopsis)}</p>\n`;
-    }
-
-    for (const chapter of tree) {
+    for (const chapter of chapters) {
       html += `\n<h2>${this._escapeHtml(chapter.title)}</h2>\n\n`;
-
-      for (let j = 0; j < chapter.scenes.length; j++) {
-        const scene = chapter.scenes[j];
-        // Preserve the HTML content but sanitize it
-        html += this._sanitizeContent(scene.content) + '\n';
-
-        if (j < chapter.scenes.length - 1) {
-          html += '<div class="scene-break">* * *</div>\n\n';
-        }
-      }
+      html += this._sanitizeContent(chapter.content) + '\n';
     }
 
     html += '\n</body>\n</html>';
 
     return {
       content: html,
-      filename: this._sanitizeFilename(project.name) + '.html',
+      filename: this._sanitizeFilename(project.title) + '.html',
       mimeType: 'text/html'
     };
   }
@@ -258,10 +202,10 @@ class ExportManager {
    * Export full project as JSON backup.
    */
   async exportJson(projectId) {
-    const data = await this.storage.exportProject(projectId);
+    const data = await this.fs.exportProject(projectId);
     return {
       content: JSON.stringify(data, null, 2),
-      filename: this._sanitizeFilename(data.project.name) + '_backup.json',
+      filename: this._sanitizeFilename(data.project.title) + '_backup.json',
       mimeType: 'application/json'
     };
   }
