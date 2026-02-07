@@ -190,40 +190,25 @@ Guidelines for your prose:
   }
 
   /**
-   * Generate cover design data by analyzing the story content.
-   * Returns a JSON object with colors, mood text, and visual elements
-   * that can be rendered client-side on a canvas.
+   * Generate a cover image prompt by analyzing the story content.
+   * Uses Claude to create a vivid image generation prompt.
    */
-  async generateCoverDesign({ title, genre, proseExcerpt, characters }) {
+  async generateCoverPrompt({ title, genre, proseExcerpt, characters }) {
     if (!this.apiKey) {
       throw new Error('No API key set. Go to Settings to add your Anthropic API key.');
     }
 
-    const systemPrompt = `You are an expert book cover designer. Given a novel's details, create a cover design specification as JSON. Output ONLY valid JSON, no markdown, no explanation.
+    const systemPrompt = `You are an expert book cover designer and art director. Given details about a novel, generate a vivid, detailed image generation prompt for a compelling book cover illustration. The prompt should describe a single striking visual scene that captures the essence and mood of the story. Focus on visual elements: composition, colors, lighting, mood, key imagery, and artistic style. The image should work as a book cover — dramatic, evocative, and visually striking. Do NOT include any text, titles, words, letters, or author names in the image description. Output ONLY the image prompt, nothing else.`;
 
-The JSON must have this exact structure:
-{
-  "bgGradient": ["#hex1", "#hex2", "#hex3"],
-  "accentColor": "#hex",
-  "titleColor": "#hex",
-  "subtitleColor": "#hex",
-  "mood": "A short evocative tagline (max 8 words)",
-  "symbol": "A single unicode emoji that represents the story",
-  "pattern": "circles|waves|diamonds|stars|lines|dots",
-  "overlay": "dark|light|none"
-}
-
-Choose colors that evoke the story's mood and genre. The bgGradient should be 3 colors for a dramatic gradient. The pattern adds subtle visual texture. The mood is a short tagline for the cover.`;
-
-    let userPrompt = `Design a book cover for:\n\nTitle: ${title}\n`;
+    let userPrompt = `Generate a book cover image prompt for:\n\nTitle: ${title}\n`;
     if (genre) userPrompt += `Genre: ${genre}\n`;
     if (characters && characters.length > 0) {
-      userPrompt += `Characters: ${characters.map(c => c.name).join(', ')}\n`;
+      userPrompt += `Key characters: ${characters.map(c => c.name + (c.description ? ' - ' + c.description : '')).join('; ')}\n`;
     }
     if (proseExcerpt) {
-      userPrompt += `\nExcerpt:\n"""${proseExcerpt.slice(0, 2000)}"""\n`;
+      userPrompt += `\nExcerpt from the novel:\n"""${proseExcerpt.slice(0, 3000)}"""\n`;
     }
-    userPrompt += `\nOutput the JSON cover design specification only.`;
+    userPrompt += `\nGenerate a concise, vivid image prompt (2-3 sentences) for a professional book cover illustration. Focus on mood, key visual elements, and artistic style. Absolutely no text, words, or typography in the image.`;
 
     const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
@@ -235,7 +220,7 @@ Choose colors that evoke the story's mood and genre. The bgGradient should be 3 
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: 400,
+        max_tokens: 300,
         messages: [{ role: 'user', content: userPrompt }],
         system: systemPrompt
       })
@@ -249,11 +234,53 @@ Choose colors that evoke the story's mood and genre. The bgGradient should be 3 
     }
 
     const result = await response.json();
-    const text = result.content?.[0]?.text?.trim() || '';
+    return result.content?.[0]?.text?.trim() || '';
+  }
 
-    // Parse JSON from response (handle potential markdown code blocks)
-    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    return JSON.parse(jsonStr);
+  /**
+   * Generate a cover image using Hugging Face Inference API (Stable Diffusion XL).
+   * Returns a base64 data URL of the generated image.
+   */
+  async generateCoverImage(prompt, hfToken) {
+    if (!hfToken) {
+      throw new Error('No Hugging Face token set. Go to Settings to add your token.');
+    }
+
+    const response = await fetch(
+      'https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            width: 768,
+            height: 1024,
+            num_inference_steps: 30,
+            guidance_scale: 7.5
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `Hugging Face API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    // Response is a binary image (jpeg/png)
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   }
 
   /**
