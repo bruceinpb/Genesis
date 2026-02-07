@@ -99,7 +99,7 @@ body.no-bounce {
   touch-action: manipulation;
   align-items: center;
   justify-content: center;
-  opacity: 0.4;
+  opacity: 0.7;
   transition: opacity 0.2s;
 }
 
@@ -108,7 +108,7 @@ body.no-bounce {
   opacity: 1;
 }
 
-#app.focus-mode .focus-exit-btn {
+#app.focus-mode ~ .focus-exit-btn {
   display: flex;
 }
 
