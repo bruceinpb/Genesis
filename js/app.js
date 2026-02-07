@@ -116,6 +116,13 @@ class App {
     }
   }
 
+  async _switchUser() {
+    await this._saveCurrentChapter();
+    this.state.currentUser = null;
+    localStorage.removeItem('genesis-user');
+    await this._showLanding();
+  }
+
   _showUserSelection() {
     document.getElementById('landing-user-select').style.display = '';
     document.getElementById('landing-projects').style.display = 'none';
@@ -1126,6 +1133,9 @@ class App {
     // --- Back to Projects ---
     document.getElementById('btn-back-to-projects')?.addEventListener('click', () => this._showLanding());
     document.getElementById('btn-back-to-projects-sidebar')?.addEventListener('click', () => this._showLanding());
+
+    // --- Switch User ---
+    document.getElementById('btn-switch-user-sidebar')?.addEventListener('click', () => this._switchUser());
 
     // --- Sidebar toggle ---
     document.getElementById('btn-sidebar-toggle')?.addEventListener('click', () => {
