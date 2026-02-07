@@ -297,6 +297,89 @@ Guidelines for your prose:
   }
 
   /**
+   * Generate a cover image using Hugging Face via Puter.js CORS-free fetch.
+   * puter.net.fetch() proxies requests through Puter's servers, bypassing CORS.
+   * Returns a base64 data URL.
+   */
+  async generateCoverViaHF(prompt, hfToken) {
+    if (!hfToken) throw new Error('No Hugging Face token set.');
+    if (typeof puter === 'undefined' || !puter.net || !puter.net.fetch) {
+      throw new Error('Puter.js net.fetch not available');
+    }
+
+    const models = [
+      'black-forest-labs/FLUX.1-schnell',
+      'stabilityai/stable-diffusion-xl-base-1.0'
+    ];
+
+    let lastError = null;
+    for (const model of models) {
+      try {
+        const url = `https://api-inference.huggingface.co/models/${model}`;
+        console.log(`Trying HF model via puter.net.fetch: ${model}`);
+
+        let response = await puter.net.fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${hfToken}`,
+            'Content-Type': 'application/json',
+            'x-wait-for-model': 'true'
+          },
+          body: JSON.stringify({ inputs: prompt })
+        });
+
+        // Handle model cold start — retry up to 2 times
+        let retries = 0;
+        while (response.status === 503 && retries < 2) {
+          let wait = 30000;
+          try {
+            const body = await response.json();
+            wait = Math.min((body.estimated_time || 30) * 1000, 45000);
+          } catch (_) {}
+          console.log(`HF model loading (attempt ${retries + 1}), waiting ${Math.round(wait / 1000)}s...`);
+          await new Promise(r => setTimeout(r, wait));
+          response = await puter.net.fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${hfToken}`,
+              'Content-Type': 'application/json',
+              'x-wait-for-model': 'true'
+            },
+            body: JSON.stringify({ inputs: prompt })
+          });
+          retries++;
+        }
+
+        if (!response.ok) {
+          const text = await response.text();
+          let msg = `HF error (${response.status})`;
+          try { msg = JSON.parse(text).error || msg; } catch (_) {}
+          throw new Error(msg);
+        }
+
+        const ct = response.headers.get('content-type') || '';
+        if (!ct.startsWith('image/')) {
+          const text = await response.text();
+          throw new Error(`Expected image, got ${ct}: ${text.slice(0, 100)}`);
+        }
+
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Failed to read image data'));
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        console.warn(`HF model ${model} via puter.net.fetch failed:`, err.message);
+        lastError = err;
+        if (err.message.includes('401') || err.message.includes('403')) throw err;
+      }
+    }
+    throw lastError || new Error('All HF models failed via puter.net.fetch');
+  }
+
+  /**
    * Generate a cover image using Hugging Face via a CORS proxy.
    * Returns a base64 data URL of the generated image.
    */
