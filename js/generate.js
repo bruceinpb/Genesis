@@ -188,6 +188,54 @@ Guidelines for your prose:
 
     return prompt;
   }
+
+  /**
+   * Generate a cover image prompt by analyzing the story content.
+   * Returns a text prompt suitable for an image generation API.
+   */
+  async generateCoverPrompt({ title, genre, proseExcerpt, characters }) {
+    if (!this.apiKey) {
+      throw new Error('No API key set. Go to Settings to add your Anthropic API key.');
+    }
+
+    const systemPrompt = `You are an expert book cover designer and art director. Given details about a novel, generate a vivid, detailed image generation prompt for a compelling book cover. The prompt should describe a single striking visual scene that captures the essence and mood of the story. Focus on visual elements: composition, colors, lighting, mood, key imagery, and artistic style. Do NOT include any text, titles, or author names in the image description. Output ONLY the image prompt, nothing else.`;
+
+    let userPrompt = `Generate a book cover image prompt for:\n\nTitle: ${title}\n`;
+    if (genre) userPrompt += `Genre: ${genre}\n`;
+    if (characters && characters.length > 0) {
+      userPrompt += `Key characters: ${characters.map(c => c.name + (c.description ? ' - ' + c.description : '')).join('; ')}\n`;
+    }
+    if (proseExcerpt) {
+      userPrompt += `\nExcerpt from the novel:\n"""${proseExcerpt.slice(0, 3000)}"""\n`;
+    }
+    userPrompt += `\nGenerate a concise, vivid image prompt (2-3 sentences) for a professional book cover. Focus on mood, key visual elements, and artistic style. No text or typography in the image.`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 300,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    return result.content?.[0]?.text?.trim() || '';
+  }
 }
 
 export { ProseGenerator };

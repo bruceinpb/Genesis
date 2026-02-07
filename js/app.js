@@ -211,14 +211,22 @@ class App {
       ? project.updatedAt.toDate()
       : new Date(project.updatedAt);
     const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const coverUrl = project.coverPrompt
+      ? `https://image.pollinations.ai/prompt/${encodeURIComponent(project.coverPrompt)}?width=200&height=300&seed=${project.coverSeed || 1}&nologo=true`
+      : '';
     return `
       <div class="project-card" data-id="${project.id}">
-        <div class="project-card-title">${this._esc(project.title)}</div>
-        <div class="project-card-meta">
-          ${project.genre ? `<span class="project-genre">${this._esc(project.genre)}</span>` : ''}
-          <span class="project-date">Updated ${dateStr}</span>
+        <div class="project-card-inner">
+          ${coverUrl ? `<img class="project-card-cover" src="${coverUrl}" alt="Cover" loading="lazy">` : '<div class="project-card-cover-empty"></div>'}
+          <div class="project-card-info">
+            <div class="project-card-title">${this._esc(project.title)}</div>
+            <div class="project-card-meta">
+              ${project.genre ? `<span class="project-genre">${this._esc(project.genre)}</span>` : ''}
+              <span class="project-date">Updated ${dateStr}</span>
+            </div>
+            <div class="project-card-goal">${(project.wordCountGoal || 0).toLocaleString()} word goal</div>
+          </div>
         </div>
-        <div class="project-card-goal">${(project.wordCountGoal || 0).toLocaleString()} word goal</div>
       </div>`;
   }
 
@@ -295,6 +303,9 @@ class App {
         this.state.currentChapterId = null;
         this._showWelcome();
       }
+
+      // Update cover display
+      this._updateCoverDisplay();
 
       // Update status bar
       this._updateStatusBarLocal();
@@ -527,6 +538,19 @@ class App {
   }
 
   async openExportPanel() {
+    // Show/hide cover download section
+    const coverSection = document.getElementById('export-cover-section');
+    const coverPreview = document.getElementById('export-cover-preview');
+    const coverUrl = this._getCoverUrl(this._currentProject, 400, 600);
+    if (coverSection && coverPreview) {
+      if (coverUrl) {
+        coverSection.style.display = '';
+        coverPreview.style.display = '';
+        coverPreview.src = coverUrl;
+      } else {
+        coverSection.style.display = 'none';
+      }
+    }
     this._showPanel('export');
   }
 
@@ -974,6 +998,119 @@ class App {
   }
 
   // ========================================
+  //  Cover Image
+  // ========================================
+
+  _getCoverUrl(project, width = 512, height = 768) {
+    if (!project?.coverPrompt) return null;
+    const seed = project.coverSeed || 1;
+    return `https://image.pollinations.ai/prompt/${encodeURIComponent(project.coverPrompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
+  }
+
+  _updateCoverDisplay() {
+    const project = this._currentProject;
+    const placeholder = document.getElementById('cover-placeholder');
+    const img = document.getElementById('cover-image');
+    const regenBtn = document.getElementById('btn-regenerate-cover');
+    if (!placeholder || !img || !regenBtn) return;
+
+    const url = this._getCoverUrl(project);
+    if (url) {
+      placeholder.style.display = 'none';
+      img.style.display = 'block';
+      img.src = url;
+      regenBtn.style.display = '';
+    } else {
+      placeholder.style.display = '';
+      img.style.display = 'none';
+      img.src = '';
+      regenBtn.style.display = 'none';
+    }
+  }
+
+  async _generateCover(regenerate = false) {
+    const project = this._currentProject;
+    if (!project) return;
+
+    if (!this.generator.hasApiKey()) {
+      alert('Set your Anthropic API key in Settings first.');
+      return;
+    }
+
+    // Show loading state
+    const loading = document.getElementById('cover-loading');
+    const placeholder = document.getElementById('cover-placeholder');
+    if (loading) loading.style.display = '';
+    if (placeholder) placeholder.style.display = 'none';
+
+    try {
+      // Gather prose excerpt from chapters
+      const chapters = await this.fs.getProjectChapters(project.id);
+      let proseExcerpt = '';
+      for (const ch of chapters) {
+        if (ch.content) {
+          const text = ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          proseExcerpt += text + ' ';
+          if (proseExcerpt.length > 3000) break;
+        }
+      }
+
+      // Gather characters
+      const characters = await this.manuscript.getCharacters() || [];
+
+      // Generate image prompt via Claude
+      const coverPrompt = await this.generator.generateCoverPrompt({
+        title: project.title,
+        genre: project.genre || '',
+        proseExcerpt: proseExcerpt.trim(),
+        characters
+      });
+
+      if (!coverPrompt) throw new Error('Failed to generate cover prompt.');
+
+      // Set seed (new random for regenerate, keep existing otherwise)
+      const coverSeed = regenerate
+        ? Math.floor(Math.random() * 999999) + 1
+        : (project.coverSeed || Math.floor(Math.random() * 999999) + 1);
+
+      // Save to Firestore
+      await this.fs.updateProject(project.id, { coverPrompt, coverSeed });
+      this._currentProject.coverPrompt = coverPrompt;
+      this._currentProject.coverSeed = coverSeed;
+
+      // Update display
+      this._updateCoverDisplay();
+    } catch (err) {
+      console.error('Cover generation failed:', err);
+      alert('Cover generation failed: ' + err.message);
+      if (placeholder) placeholder.style.display = '';
+    } finally {
+      if (loading) loading.style.display = 'none';
+    }
+  }
+
+  async _downloadCover() {
+    const project = this._currentProject;
+    const url = this._getCoverUrl(project, 1024, 1536);
+    if (!url) return;
+
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${project.title || 'cover'} - cover.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      // Fallback: open in new tab
+      window.open(url, '_blank');
+    }
+  }
+
+  // ========================================
   //  Settings Rendering
   // ========================================
 
@@ -1302,6 +1439,15 @@ class App {
     });
 
     document.addEventListener('click', async (e) => {
+      if (e.target.id === 'btn-create-cover') {
+        await this._generateCover(false);
+      }
+      if (e.target.id === 'btn-regenerate-cover') {
+        await this._generateCover(true);
+      }
+      if (e.target.id === 'export-cover-download') {
+        await this._downloadCover();
+      }
       if (e.target.id === 'save-project-settings') {
         await this._saveProjectSettings();
       }
