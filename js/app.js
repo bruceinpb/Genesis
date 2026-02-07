@@ -668,7 +668,23 @@ class App {
     if (!body) return;
 
     body.innerHTML = this._renderSettings(this._currentProject);
+    this._initApiKeyPinLock();
     this._showPanel('settings');
+  }
+
+  _initApiKeyPinLock() {
+    const hasPin = !!localStorage.getItem('genesis-api-pin');
+    const lockedDiv = document.getElementById('api-key-locked');
+    const unlockedDiv = document.getElementById('api-key-unlocked');
+    if (!lockedDiv || !unlockedDiv) return;
+
+    if (hasPin) {
+      lockedDiv.style.display = 'block';
+      unlockedDiv.style.display = 'none';
+    } else {
+      lockedDiv.style.display = 'none';
+      unlockedDiv.style.display = 'block';
+    }
   }
 
   _showPanel(panelId) {
@@ -972,10 +988,24 @@ class App {
         <h3>AI Prose Generation</h3>
         <div class="form-group">
           <label>Anthropic API Key</label>
-          <input type="password" class="form-input" id="setting-api-key" value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
-          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
-            Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent-primary);">console.anthropic.com</a>. Stored locally on this device only.
-          </p>
+          <div id="api-key-locked" style="display:none;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="password" class="form-input" id="api-key-pin-input" placeholder="Enter PIN to unlock" style="flex:1;">
+              <button class="btn btn-sm" id="api-key-unlock-btn">Unlock</button>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">API key is PIN-protected.</p>
+          </div>
+          <div id="api-key-unlocked">
+            <input type="password" class="form-input" id="setting-api-key" value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+              Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent-primary);">console.anthropic.com</a>. Stored locally on this device only.
+            </p>
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+              <input type="password" class="form-input" id="api-key-set-pin" placeholder="${localStorage.getItem('genesis-api-pin') ? 'New PIN (leave blank to keep)' : 'Set a PIN to lock (optional)'}" style="flex:1;">
+              <button class="btn btn-sm" id="api-key-lock-btn">${localStorage.getItem('genesis-api-pin') ? 'Update PIN' : 'Set PIN'}</button>
+              ${localStorage.getItem('genesis-api-pin') ? '<button class="btn btn-sm" id="api-key-remove-pin">Remove PIN</button>' : ''}
+            </div>
+          </div>
         </div>
         <div class="form-group">
           <label>AI Model</label>
@@ -1272,6 +1302,32 @@ class App {
         if (!this.state.currentProjectId) return;
         const result = await this.exporter.exportJson(this.state.currentProjectId);
         this.exporter.download(result);
+      }
+      if (e.target.id === 'api-key-unlock-btn') {
+        const pin = document.getElementById('api-key-pin-input')?.value || '';
+        const stored = localStorage.getItem('genesis-api-pin');
+        if (pin === stored) {
+          document.getElementById('api-key-locked').style.display = 'none';
+          document.getElementById('api-key-unlocked').style.display = 'block';
+          document.getElementById('api-key-pin-input').value = '';
+        } else {
+          alert('Incorrect PIN.');
+        }
+      }
+      if (e.target.id === 'api-key-lock-btn') {
+        const pin = document.getElementById('api-key-set-pin')?.value || '';
+        if (!pin || pin.length < 4) {
+          alert('PIN must be at least 4 characters.');
+          return;
+        }
+        localStorage.setItem('genesis-api-pin', pin);
+        alert('PIN set. API key is now protected.');
+        await this.openSettingsPanel();
+      }
+      if (e.target.id === 'api-key-remove-pin') {
+        localStorage.removeItem('genesis-api-pin');
+        alert('PIN removed.');
+        await this.openSettingsPanel();
       }
       if (e.target.id === 'save-api-settings') {
         const key = document.getElementById('setting-api-key')?.value || '';
