@@ -308,8 +308,8 @@ Guidelines for your prose:
     }
 
     const models = [
-      'black-forest-labs/FLUX.1-schnell',
-      'stabilityai/stable-diffusion-xl-base-1.0'
+      'stabilityai/stable-diffusion-xl-base-1.0',
+      'black-forest-labs/FLUX.1-schnell'
     ];
 
     let lastError = null;
@@ -389,8 +389,8 @@ Guidelines for your prose:
     }
 
     const models = [
-      'black-forest-labs/FLUX.1-schnell',
-      'stabilityai/stable-diffusion-xl-base-1.0'
+      'stabilityai/stable-diffusion-xl-base-1.0',
+      'black-forest-labs/FLUX.1-schnell'
     ];
 
     let lastError = null;

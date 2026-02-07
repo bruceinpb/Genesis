@@ -1073,7 +1073,7 @@ class App {
       // Step 2b: Try Puter.js built-in image generation
       if (!coverImage) {
         try {
-          if (loading) loading.textContent = 'Trying alternate AI source...';
+          if (loading) loading.textContent = 'Generating cover image...';
           coverImage = await this.generator.generateCoverWithPuter(coverPrompt);
         } catch (err) {
           console.warn('Puter cover generation failed:', err.message);
@@ -1083,7 +1083,7 @@ class App {
       // Step 2c: Try Hugging Face via CORS proxy (corsproxy.io)
       if (!coverImage && this._hfToken) {
         try {
-          if (loading) loading.textContent = 'Trying alternate method...';
+          if (loading) loading.textContent = 'Generating cover image...';
           coverImage = await this.generator.generateCoverImage(coverPrompt, this._hfToken);
         } catch (err) {
           console.warn('HF via CORS proxy failed:', err.message);
