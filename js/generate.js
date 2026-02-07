@@ -268,6 +268,108 @@ Guidelines for your prose:
   }
 
   /**
+   * Overlay the project title onto an AI-generated cover image.
+   * Uses white bold text with a dark outline for readability on any background.
+   * @param {string} dataUrl - base64 data URL of the image
+   * @param {string} title - the project title
+   * @returns {Promise<string>} - base64 data URL with title overlaid
+   */
+  overlayTitle(dataUrl, title) {
+    if (!title) return Promise.resolve(dataUrl);
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+
+          // Draw the AI image
+          ctx.drawImage(img, 0, 0, w, h);
+
+          // Add a subtle gradient at the bottom for text readability
+          const grad = ctx.createLinearGradient(0, h * 0.65, 0, h);
+          grad.addColorStop(0, 'rgba(0,0,0,0)');
+          grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, h * 0.65, w, h * 0.35);
+
+          // Calculate font size — scale to fit width with padding
+          const maxWidth = w * 0.85;
+          let fontSize = Math.round(w * 0.08);
+          ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+
+          // Word-wrap the title into lines
+          const words = title.split(/\s+/);
+          let lines = [];
+          let line = '';
+          for (const word of words) {
+            const test = line ? line + ' ' + word : word;
+            if (ctx.measureText(test).width > maxWidth && line) {
+              lines.push(line);
+              line = word;
+            } else {
+              line = test;
+            }
+          }
+          if (line) lines.push(line);
+
+          // If too many lines, reduce font size
+          if (lines.length > 3) {
+            fontSize = Math.round(fontSize * 0.75);
+            ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+            lines = [];
+            line = '';
+            for (const word of words) {
+              const test = line ? line + ' ' + word : word;
+              if (ctx.measureText(test).width > maxWidth && line) {
+                lines.push(line);
+                line = word;
+              } else {
+                line = test;
+              }
+            }
+            if (line) lines.push(line);
+          }
+
+          // Position text near the bottom
+          const lineHeight = fontSize * 1.25;
+          const totalTextHeight = lines.length * lineHeight;
+          const startY = h - totalTextHeight - h * 0.06;
+
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+
+          for (let i = 0; i < lines.length; i++) {
+            const x = w / 2;
+            const y = startY + i * lineHeight;
+
+            // Dark outline stroke for contrast
+            ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+            ctx.lineWidth = Math.max(3, fontSize * 0.08);
+            ctx.lineJoin = 'round';
+            ctx.strokeText(lines[i], x, y);
+
+            // White fill
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(lines[i], x, y);
+          }
+
+          resolve(canvas.toDataURL('image/jpeg', 0.9));
+        } catch (err) {
+          // If overlay fails, return original image
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl); // fallback to original on error
+      img.src = dataUrl;
+    });
+  }
+
+  /**
    * Convert an Image element to a base64 data URL via canvas.
    */
   _imgElementToDataUrl(img) {
