@@ -639,6 +639,15 @@ class App {
           editorEl.innerHTML = startingContent + newHtml;
           const container = editorEl.closest('.editor-area');
           if (container) container.scrollTop = container.scrollHeight;
+          // Update word count live during streaming
+          const wc = editorEl.textContent.match(/[a-zA-Z'''\u2019-]+/g) || [];
+          const chapterWords = wc.length;
+          const wordsEl = document.getElementById('status-words');
+          if (wordsEl) wordsEl.textContent = chapterWords.toLocaleString();
+          const fwcWords = document.getElementById('fwc-words');
+          if (fwcWords) fwcWords.textContent = chapterWords.toLocaleString();
+          this._updateLocalWordCounts(editorEl.innerHTML);
+          this._trackDailyWords(chapterWords);
         },
         onDone: async () => {
           this._setGenerateStatus(false);
@@ -651,9 +660,8 @@ class App {
           }
 
           if (this._autoWriteToGoal) {
-            const currentWords = this.editor.getWordCount();
-            const target = this._currentProject ? this._currentProject.wordCountGoal : 0;
-            if (target > 0 && currentWords < target) {
+            // Check against daily word goal, not project word count goal
+            if (this.state.dailyGoal > 0 && this.state.wordsToday < this.state.dailyGoal) {
               setTimeout(() => this._runGeneration({ isContinuation: true }), 1500);
               return;
             } else {
@@ -1719,7 +1727,12 @@ class App {
   _trackDailyWords(currentChapterWords) {
     const today = new Date().toISOString().split('T')[0];
     const key = 'wordsToday_' + today;
-    this.localStorage.setSetting(key, Math.max(this.state.wordsToday, currentChapterWords));
+    const updated = Math.max(this.state.wordsToday, currentChapterWords);
+    this.state.wordsToday = updated;
+    this.localStorage.setSetting(key, updated);
+    // Update daily display
+    const dailyEl = document.getElementById('status-daily');
+    if (dailyEl) dailyEl.textContent = `${updated.toLocaleString()} / ${this.state.dailyGoal.toLocaleString()}`;
   }
 
   _applyTheme(theme) {
