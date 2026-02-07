@@ -1332,6 +1332,9 @@ class App {
     const toggleFocus = () => {
       this.state.focusMode = !this.state.focusMode;
       document.getElementById('app').classList.toggle('focus-mode', this.state.focusMode);
+      // Directly control exit button via JS — CSS selectors are unreliable on iPad Safari
+      const exitBtn = document.getElementById('btn-exit-focus');
+      if (exitBtn) exitBtn.style.display = this.state.focusMode ? 'flex' : 'none';
     };
     document.getElementById('btn-focus-mode')?.addEventListener('click', toggleFocus);
     document.getElementById('btn-exit-focus')?.addEventListener('click', toggleFocus);
