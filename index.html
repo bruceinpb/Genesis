@@ -83,6 +83,18 @@
       <button data-tab="notes">Notes</button>
     </nav>
 
+    <div id="sidebar-cover" class="sidebar-cover">
+      <div id="cover-image-container" class="cover-image-container">
+        <div id="cover-placeholder" class="cover-placeholder">
+          <span>No Cover</span>
+          <button class="btn btn-sm" id="btn-create-cover">Create Cover</button>
+        </div>
+        <img id="cover-image" class="cover-image" style="display:none;" alt="Book cover">
+        <div id="cover-loading" class="cover-loading" style="display:none;">Generating...</div>
+      </div>
+      <button class="btn btn-sm" id="btn-regenerate-cover" style="display:none; width:100%; margin-top:6px;">Regenerate Cover</button>
+    </div>
+
     <div class="sidebar-content">
       <div class="sidebar-panel" id="sidebar-chapters" style="display:block;">
         <!-- Chapter list rendered by JS -->
@@ -261,6 +273,15 @@
       <button class="btn" id="export-json" style="width:100%;margin-bottom:8px;">
         Full Backup (JSON)
         <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
+      </button>
+    </div>
+
+    <div class="analysis-section" id="export-cover-section" style="display:none;">
+      <h3>Cover Image</h3>
+      <img id="export-cover-preview" class="export-cover-preview" style="display:none;" alt="Cover preview">
+      <button class="btn" id="export-cover-download" style="width:100%;margin-bottom:8px;">
+        Download Cover Image (PNG)
+        <br><span style="font-size:0.75rem;color:var(--text-muted);">High resolution book cover</span>
       </button>
     </div>
 
