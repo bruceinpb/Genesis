@@ -1060,25 +1060,37 @@ class App {
 
       let coverImage = null;
 
-      // Step 2a: Try Puter.js (free, no API key, CORS-free)
-      try {
-        if (loading) loading.textContent = 'Generating AI cover...';
-        coverImage = await this.generator.generateCoverWithPuter(coverPrompt);
-      } catch (err) {
-        console.warn('Puter cover generation failed:', err.message);
-      }
-
-      // Step 2b: Try Hugging Face via CORS proxy
+      // Step 2a: Try HuggingFace via Puter.js CORS-free fetch (best approach)
       if (!coverImage && this._hfToken) {
         try {
-          if (loading) loading.textContent = 'Trying Hugging Face...';
-          coverImage = await this.generator.generateCoverImage(coverPrompt, this._hfToken);
+          if (loading) loading.textContent = 'Generating AI cover...';
+          coverImage = await this.generator.generateCoverViaHF(coverPrompt, this._hfToken);
         } catch (err) {
-          console.warn('HF cover generation failed:', err.message);
+          console.warn('HF via puter.net.fetch failed:', err.message);
         }
       }
 
-      // Step 2c: Canvas fallback (always works)
+      // Step 2b: Try Puter.js built-in image generation
+      if (!coverImage) {
+        try {
+          if (loading) loading.textContent = 'Trying alternate AI source...';
+          coverImage = await this.generator.generateCoverWithPuter(coverPrompt);
+        } catch (err) {
+          console.warn('Puter cover generation failed:', err.message);
+        }
+      }
+
+      // Step 2c: Try Hugging Face via CORS proxy (corsproxy.io)
+      if (!coverImage && this._hfToken) {
+        try {
+          if (loading) loading.textContent = 'Trying alternate method...';
+          coverImage = await this.generator.generateCoverImage(coverPrompt, this._hfToken);
+        } catch (err) {
+          console.warn('HF via CORS proxy failed:', err.message);
+        }
+      }
+
+      // Step 2d: Canvas fallback (always works)
       if (!coverImage) {
         console.warn('AI image sources failed, using canvas fallback');
         const design = this.generator.getDefaultCoverDesign(project.genre);
