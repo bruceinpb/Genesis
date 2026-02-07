@@ -267,50 +267,77 @@ Guidelines for your prose:
   }
 
   async _callHuggingFaceViaProxy(model, prompt, hfToken) {
-    const CORS_PROXY = 'https://corsproxy.io/?';
     const targetUrl = `https://api-inference.huggingface.co/models/${model}`;
-    const proxyUrl = CORS_PROXY + encodeURIComponent(targetUrl);
 
-    const doFetch = () => fetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${hfToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ inputs: prompt })
-    });
+    // Try multiple CORS proxy URL formats
+    const proxyUrls = [
+      `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
+    ];
 
-    let response = await doFetch();
-
-    // Model cold start — wait and retry once
-    if (response.status === 503) {
-      const body = await response.json().catch(() => ({}));
-      const wait = Math.min((body.estimated_time || 20) * 1000, 60000);
-      console.log(`HF model loading, waiting ${Math.round(wait / 1000)}s...`);
-      await new Promise(r => setTimeout(r, wait));
-      response = await doFetch();
+    let lastError = null;
+    for (const proxyUrl of proxyUrls) {
+      try {
+        return await this._fetchHfImage(proxyUrl, prompt, hfToken);
+      } catch (err) {
+        console.warn(`Proxy format failed:`, err.message);
+        lastError = err;
+      }
     }
+    throw lastError;
+  }
 
-    if (!response.ok) {
-      const text = await response.text();
-      let msg = `Hugging Face error (${response.status})`;
-      try { msg = JSON.parse(text).error || msg; } catch (_) {}
-      throw new Error(msg);
+  async _fetchHfImage(proxyUrl, prompt, hfToken) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000); // 90s total timeout
+
+    try {
+      const doFetch = () => fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ inputs: prompt }),
+        signal: controller.signal
+      });
+
+      let response = await doFetch();
+
+      // Model cold start — wait and retry up to 2 times
+      let retries = 0;
+      while (response.status === 503 && retries < 2) {
+        const body = await response.json().catch(() => ({}));
+        const wait = Math.min((body.estimated_time || 30) * 1000, 45000);
+        console.log(`HF model loading (attempt ${retries + 1}), waiting ${Math.round(wait / 1000)}s...`);
+        await new Promise(r => setTimeout(r, wait));
+        response = await doFetch();
+        retries++;
+      }
+
+      if (!response.ok) {
+        const text = await response.text();
+        let msg = `Hugging Face error (${response.status})`;
+        try { msg = JSON.parse(text).error || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+
+      const ct = response.headers.get('content-type') || '';
+      if (!ct.startsWith('image/')) {
+        const text = await response.text();
+        throw new Error(`Expected image, got ${ct}: ${text.slice(0, 100)}`);
+      }
+
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Failed to read image data'));
+        reader.readAsDataURL(blob);
+      });
+    } finally {
+      clearTimeout(timeout);
     }
-
-    const ct = response.headers.get('content-type') || '';
-    if (!ct.startsWith('image/')) {
-      const text = await response.text();
-      throw new Error(`Expected image, got: ${text.slice(0, 100)}`);
-    }
-
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('Failed to read image data'));
-      reader.readAsDataURL(blob);
-    });
   }
 
   /**
@@ -326,7 +353,7 @@ Guidelines for your prose:
       hash |= 0;
     }
     const seed = Math.abs(hash);
-    return `https://image.pollinations.ai/prompt/${encoded}?width=600&height=900&seed=${seed}&nologo=true`;
+    return `https://image.pollinations.ai/prompt/${encoded}?width=600&height=900&seed=${seed}`;
   }
 
   /**
