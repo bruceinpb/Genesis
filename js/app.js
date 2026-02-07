@@ -212,7 +212,7 @@ class App {
       : new Date(project.updatedAt);
     const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const coverUrl = project.coverPrompt
-      ? `https://image.pollinations.ai/prompt/${encodeURIComponent(project.coverPrompt)}?width=200&height=300&seed=${project.coverSeed || 1}&nologo=true`
+      ? `https://pollinations.ai/p/${encodeURIComponent(project.coverPrompt)}?width=200&height=300&seed=${project.coverSeed || 1}&nologo=true`
       : '';
     return `
       <div class="project-card" data-id="${project.id}">
@@ -1004,7 +1004,7 @@ class App {
   _getCoverUrl(project, width = 512, height = 768) {
     if (!project?.coverPrompt) return null;
     const seed = project.coverSeed || 1;
-    return `https://image.pollinations.ai/prompt/${encodeURIComponent(project.coverPrompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
+    return `https://pollinations.ai/p/${encodeURIComponent(project.coverPrompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
   }
 
   _updateCoverDisplay() {
