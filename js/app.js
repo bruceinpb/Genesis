@@ -58,7 +58,6 @@ class App {
     // Load settings
     this.state.theme = await this.localStorage.getSetting('theme', 'dark');
     this.state.dailyGoal = await this.localStorage.getSetting('dailyGoal', 1000);
-    this._hfToken = await this.localStorage.getSetting('hfToken', '');
 
     // Apply theme
     this._applyTheme(this.state.theme);
@@ -1026,10 +1025,6 @@ class App {
       alert('Set your Anthropic API key in Settings first.');
       return;
     }
-    if (!this._hfToken) {
-      alert('Set your Hugging Face token in Settings first.');
-      return;
-    }
 
     // Show loading state
     const loading = document.getElementById('cover-loading');
@@ -1062,8 +1057,27 @@ class App {
 
       if (!coverPrompt) throw new Error('Failed to generate cover prompt.');
 
-      // Step 2: Hugging Face generates the actual image
-      const coverImage = await this.generator.generateCoverImage(coverPrompt, this._hfToken);
+      // Step 2: Try Pollinations.ai via <img src> (bypasses CORS entirely)
+      const imageUrl = this.generator.getCoverImageUrl(coverPrompt);
+
+      const loaded = await new Promise((resolve) => {
+        const testImg = new Image();
+        testImg.onload = () => resolve(true);
+        testImg.onerror = () => resolve(false);
+        testImg.src = imageUrl;
+        // Timeout: 45 seconds for AI image generation
+        setTimeout(() => resolve(false), 45000);
+      });
+
+      let coverImage;
+      if (loaded) {
+        coverImage = imageUrl;
+      } else {
+        // Fallback: canvas-rendered cover (genre-themed)
+        console.warn('Pollinations image failed, using canvas fallback');
+        const design = this.generator.getDefaultCoverDesign(project.genre);
+        coverImage = this.generator.renderCover(design, project.title, project.owner);
+      }
 
       // Save to Firestore
       await this.fs.updateProject(project.id, { coverImage, coverPrompt });
@@ -1085,12 +1099,18 @@ class App {
     const project = this._currentProject;
     if (!project?.coverImage) return;
 
-    const a = document.createElement('a');
-    a.href = project.coverImage;
-    a.download = `${project.title || 'cover'} - cover.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    if (project.coverImage.startsWith('data:')) {
+      // Base64 data URL — direct download
+      const a = document.createElement('a');
+      a.href = project.coverImage;
+      a.download = `${project.title || 'cover'} - cover.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      // External URL — open in new tab
+      window.open(project.coverImage, '_blank');
+    }
   }
 
   // ========================================
@@ -1143,18 +1163,6 @@ class App {
           </select>
         </div>
         <button class="btn btn-sm" id="save-api-settings" style="width:100%;">Save AI Settings</button>
-      </div>
-
-      <div class="analysis-section">
-        <h3>Cover Image Generation</h3>
-        <div class="form-group">
-          <label>Hugging Face API Token</label>
-          <input type="password" class="form-input" id="setting-hf-token" value="${this._esc(this._hfToken || '')}" placeholder="hf_...">
-          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
-            Free token from <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--accent-primary);">huggingface.co</a>. Used for AI cover art generation.
-          </p>
-        </div>
-        <button class="btn btn-sm" id="save-hf-settings" style="width:100%;">Save Cover Settings</button>
       </div>
 
       <div class="analysis-section">
@@ -1486,12 +1494,6 @@ class App {
         await this.generator.setApiKey(key);
         await this.generator.setModel(model);
         alert('AI settings saved.');
-      }
-      if (e.target.id === 'save-hf-settings') {
-        const token = document.getElementById('setting-hf-token')?.value || '';
-        this._hfToken = token;
-        await this.localStorage.setSetting('hfToken', token);
-        alert('Cover settings saved.');
       }
       if (e.target.id === 'btn-generate-prose') {
         await this._runGeneration();

@@ -238,96 +238,43 @@ Guidelines for your prose:
   }
 
   /**
-   * Generate a cover image using Hugging Face Inference API.
-   * Tries FLUX.1-schnell first (fast), falls back to SD 2.1.
-   * Handles model cold starts with automatic retry.
-   * Returns a base64 data URL of the generated image.
+   * Build a Pollinations.ai image URL from a prompt.
+   * Uses img src approach which bypasses CORS entirely.
    */
-  async generateCoverImage(prompt, hfToken) {
-    if (!hfToken) {
-      throw new Error('No Hugging Face token set. Go to Settings to add your token.');
+  getCoverImageUrl(prompt) {
+    const encoded = encodeURIComponent(prompt);
+    // Deterministic seed from prompt hash
+    let hash = 0;
+    for (let i = 0; i < prompt.length; i++) {
+      hash = ((hash << 5) - hash) + prompt.charCodeAt(i);
+      hash |= 0;
     }
-
-    const models = [
-      'black-forest-labs/FLUX.1-schnell',
-      'stabilityai/stable-diffusion-xl-base-1.0',
-      'stabilityai/stable-diffusion-2-1'
-    ];
-
-    let lastError = null;
-
-    for (const model of models) {
-      try {
-        const result = await this._callHuggingFace(model, prompt, hfToken);
-        return result;
-      } catch (err) {
-        console.warn(`Model ${model} failed:`, err.message);
-        lastError = err;
-        // If it's an auth error, don't try other models
-        if (err.message.includes('401') || err.message.includes('403')) {
-          throw err;
-        }
-      }
-    }
-
-    throw lastError || new Error('All image generation models failed.');
+    const seed = Math.abs(hash);
+    return `https://image.pollinations.ai/prompt/${encoded}?width=600&height=900&seed=${seed}&nologo=true`;
   }
 
-  async _callHuggingFace(model, prompt, hfToken, retries = 3) {
-    for (let attempt = 0; attempt < retries; attempt++) {
-      const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${hfToken}`,
-            'Content-Type': 'application/json',
-            'x-wait-for-model': 'true'
-          },
-          body: JSON.stringify({
-            inputs: prompt,
-            parameters: {
-              num_inference_steps: 25,
-              guidance_scale: 7.5
-            }
-          })
-        }
-      );
+  /**
+   * Get a genre-appropriate cover design for canvas fallback.
+   */
+  getDefaultCoverDesign(genre) {
+    const g = (genre || '').toLowerCase();
 
-      if (response.status === 503) {
-        // Model is loading — wait and retry
-        const body = await response.json().catch(() => ({}));
-        const waitTime = Math.min((body.estimated_time || 20) * 1000, 60000);
-        console.log(`Model loading, waiting ${waitTime / 1000}s...`);
-        await new Promise(r => setTimeout(r, waitTime));
-        continue;
-      }
+    const designs = {
+      romance:  { bgGradient: ['#8e2de2','#4a00e0','#2d1b69'], accentColor: '#ff6b6b', titleColor: '#ffffff', subtitleColor: 'rgba(255,255,255,0.7)', pattern: 'waves',    symbol: '\u2665', overlay: 'dark' },
+      thriller: { bgGradient: ['#1a1a2e','#16213e','#0f3460'], accentColor: '#e94560', titleColor: '#ffffff', subtitleColor: 'rgba(255,255,255,0.7)', pattern: 'lines',    symbol: '\u2620', overlay: 'dark' },
+      fantasy:  { bgGradient: ['#2d1b69','#1a0a3e','#0f0728'], accentColor: '#ffd700', titleColor: '#ffd700', subtitleColor: 'rgba(255,215,0,0.7)',   pattern: 'stars',    symbol: '\u2726', overlay: 'dark' },
+      'sci-fi': { bgGradient: ['#0c0c1d','#1a1a3e','#0a2a4a'], accentColor: '#00d4ff', titleColor: '#00d4ff', subtitleColor: 'rgba(0,212,255,0.7)',   pattern: 'circles',  symbol: '\u2605', overlay: 'dark' },
+      science:  { bgGradient: ['#0c0c1d','#1a1a3e','#0a2a4a'], accentColor: '#00d4ff', titleColor: '#00d4ff', subtitleColor: 'rgba(0,212,255,0.7)',   pattern: 'circles',  symbol: '\u2605', overlay: 'dark' },
+      horror:   { bgGradient: ['#1a0000','#2d0000','#0a0a0a'], accentColor: '#cc0000', titleColor: '#cc0000', subtitleColor: 'rgba(204,0,0,0.5)',     pattern: 'lines',    symbol: '\u2620', overlay: 'dark' },
+      mystery:  { bgGradient: ['#1a1a2e','#0a1628','#0f2f4f'], accentColor: '#d4a574', titleColor: '#d4a574', subtitleColor: 'rgba(212,165,116,0.7)', pattern: 'diamonds',  symbol: '?',     overlay: 'dark' },
+      literary: { bgGradient: ['#2c2c2c','#1a1a1a','#333333'], accentColor: '#c9a96e', titleColor: '#c9a96e', subtitleColor: 'rgba(201,169,110,0.7)', pattern: 'dots',     overlay: 'dark' }
+    };
 
-      if (!response.ok) {
-        const errorBody = await response.text();
-        let msg = `Hugging Face error (${response.status})`;
-        try { msg = JSON.parse(errorBody).error || msg; } catch (_) {}
-        throw new Error(msg);
-      }
-
-      // Check if response is actually an image
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.startsWith('image/')) {
-        const text = await response.text();
-        throw new Error(`Expected image, got: ${text.slice(0, 200)}`);
-      }
-
-      // Response is a binary image
-      const blob = await response.blob();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error('Failed to read image data'));
-        reader.readAsDataURL(blob);
-      });
+    let design = designs.literary; // default
+    for (const [key, val] of Object.entries(designs)) {
+      if (g.includes(key)) { design = val; break; }
     }
-
-    throw new Error('Model loading timed out. Please try again.');
+    return { ...design, mood: genre || 'A Novel' };
   }
 
   /**
