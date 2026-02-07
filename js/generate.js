@@ -238,6 +238,82 @@ Guidelines for your prose:
   }
 
   /**
+   * Generate a cover image using Hugging Face via a CORS proxy.
+   * Safari blocks direct HF API calls (no CORS headers), so we route
+   * through corsproxy.io which adds the required Access-Control headers.
+   * Returns a base64 data URL of the generated image.
+   */
+  async generateCoverImage(prompt, hfToken) {
+    if (!hfToken) {
+      throw new Error('No Hugging Face token set.');
+    }
+
+    const models = [
+      'black-forest-labs/FLUX.1-schnell',
+      'stabilityai/stable-diffusion-xl-base-1.0'
+    ];
+
+    let lastError = null;
+    for (const model of models) {
+      try {
+        return await this._callHuggingFaceViaProxy(model, prompt, hfToken);
+      } catch (err) {
+        console.warn(`Model ${model} failed:`, err.message);
+        lastError = err;
+        if (err.message.includes('401') || err.message.includes('403')) throw err;
+      }
+    }
+    throw lastError || new Error('All image generation models failed.');
+  }
+
+  async _callHuggingFaceViaProxy(model, prompt, hfToken) {
+    const CORS_PROXY = 'https://corsproxy.io/?';
+    const targetUrl = `https://api-inference.huggingface.co/models/${model}`;
+    const proxyUrl = CORS_PROXY + encodeURIComponent(targetUrl);
+
+    const doFetch = () => fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${hfToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ inputs: prompt })
+    });
+
+    let response = await doFetch();
+
+    // Model cold start — wait and retry once
+    if (response.status === 503) {
+      const body = await response.json().catch(() => ({}));
+      const wait = Math.min((body.estimated_time || 20) * 1000, 60000);
+      console.log(`HF model loading, waiting ${Math.round(wait / 1000)}s...`);
+      await new Promise(r => setTimeout(r, wait));
+      response = await doFetch();
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      let msg = `Hugging Face error (${response.status})`;
+      try { msg = JSON.parse(text).error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const ct = response.headers.get('content-type') || '';
+    if (!ct.startsWith('image/')) {
+      const text = await response.text();
+      throw new Error(`Expected image, got: ${text.slice(0, 100)}`);
+    }
+
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Failed to read image data'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
    * Build a Pollinations.ai image URL from a prompt.
    * Uses img src approach which bypasses CORS entirely.
    */
