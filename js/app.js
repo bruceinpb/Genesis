@@ -211,13 +211,10 @@ class App {
       ? project.updatedAt.toDate()
       : new Date(project.updatedAt);
     const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const coverUrl = project.coverPrompt
-      ? this._getCoverUrl(project, 200, 300)
-      : '';
     return `
       <div class="project-card" data-id="${project.id}">
         <div class="project-card-inner">
-          ${coverUrl ? `<img class="project-card-cover" src="${coverUrl}" alt="Cover" loading="lazy">` : '<div class="project-card-cover-empty"></div>'}
+          ${project.coverImage ? `<img class="project-card-cover" src="${project.coverImage}" alt="Cover" loading="lazy">` : '<div class="project-card-cover-empty"></div>'}
           <div class="project-card-info">
             <div class="project-card-title">${this._esc(project.title)}</div>
             <div class="project-card-meta">
@@ -541,12 +538,11 @@ class App {
     // Show/hide cover download section
     const coverSection = document.getElementById('export-cover-section');
     const coverPreview = document.getElementById('export-cover-preview');
-    const coverUrl = this._getCoverUrl(this._currentProject, 400, 600);
     if (coverSection && coverPreview) {
-      if (coverUrl) {
+      if (this._currentProject?.coverImage) {
         coverSection.style.display = '';
         coverPreview.style.display = '';
-        coverPreview.src = coverUrl;
+        coverPreview.src = this._currentProject.coverImage;
       } else {
         coverSection.style.display = 'none';
       }
@@ -1001,14 +997,6 @@ class App {
   //  Cover Image
   // ========================================
 
-  _getCoverUrl(project, width = 512, height = 768) {
-    if (!project?.coverPrompt) return null;
-    const seed = project.coverSeed || 1;
-    // Truncate prompt to avoid overly long URLs
-    const prompt = project.coverPrompt.slice(0, 500);
-    return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&model=flux&enhance=true`;
-  }
-
   _updateCoverDisplay() {
     const project = this._currentProject;
     const placeholder = document.getElementById('cover-placeholder');
@@ -1016,16 +1004,10 @@ class App {
     const regenBtn = document.getElementById('btn-regenerate-cover');
     if (!placeholder || !img || !regenBtn) return;
 
-    const url = this._getCoverUrl(project);
-    if (url) {
+    if (project?.coverImage) {
       placeholder.style.display = 'none';
       img.style.display = 'block';
-      img.onerror = () => {
-        img.style.display = 'none';
-        placeholder.innerHTML = '<span>Image loading failed</span><button class="btn btn-sm" id="btn-create-cover">Retry</button>';
-        placeholder.style.display = '';
-      };
-      img.src = url;
+      img.src = project.coverImage;
       regenBtn.style.display = '';
     } else {
       placeholder.style.display = '';
@@ -1065,25 +1047,26 @@ class App {
       // Gather characters
       const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
 
-      // Generate image prompt via Claude
-      const coverPrompt = await this.generator.generateCoverPrompt({
+      // Generate cover design via Claude
+      const design = await this.generator.generateCoverDesign({
         title: project.title,
         genre: project.genre || '',
         proseExcerpt: proseExcerpt.trim(),
         characters
       });
 
-      if (!coverPrompt) throw new Error('Failed to generate cover prompt.');
+      // Render to canvas and get base64 PNG
+      const coverImage = this.generator.renderCover(
+        design,
+        project.title,
+        project.owner || '',
+        600, 900
+      );
 
-      // Set seed (new random for regenerate, keep existing otherwise)
-      const coverSeed = regenerate
-        ? Math.floor(Math.random() * 999999) + 1
-        : (project.coverSeed || Math.floor(Math.random() * 999999) + 1);
-
-      // Save to Firestore
-      await this.fs.updateProject(project.id, { coverPrompt, coverSeed });
-      this._currentProject.coverPrompt = coverPrompt;
-      this._currentProject.coverSeed = coverSeed;
+      // Save base64 image to Firestore
+      await this.fs.updateProject(project.id, { coverImage, coverDesign: design });
+      this._currentProject.coverImage = coverImage;
+      this._currentProject.coverDesign = design;
 
       // Update display
       this._updateCoverDisplay();
@@ -1096,24 +1079,32 @@ class App {
     }
   }
 
-  async _downloadCover() {
+  _downloadCover() {
     const project = this._currentProject;
-    const url = this._getCoverUrl(project, 1024, 1536);
-    if (!url) return;
+    if (!project?.coverImage) return;
 
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
+    // Re-render at high resolution for download
+    if (project.coverDesign) {
+      const hiRes = this.generator.renderCover(
+        project.coverDesign,
+        project.title,
+        project.owner || '',
+        1200, 1800
+      );
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      a.href = hiRes;
       a.download = `${project.title || 'cover'} - cover.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    } catch (err) {
-      // Fallback: open in new tab
-      window.open(url, '_blank');
+    } else {
+      // Fallback: download the stored image
+      const a = document.createElement('a');
+      a.href = project.coverImage;
+      a.download = `${project.title || 'cover'} - cover.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     }
   }
 
