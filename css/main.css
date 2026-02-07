@@ -1506,3 +1506,75 @@ select.form-input {
     margin-top: 3in;
   }
 }
+
+/* ============================================
+   Flyout Tooltips
+   ============================================ */
+
+#tooltip-flyout {
+  display: none;
+  position: fixed;
+  z-index: 100000;
+  max-width: 300px;
+  padding: 10px 14px;
+  background: rgba(20, 20, 30, 0.95);
+  color: #f0f0f0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+#tooltip-flyout.visible {
+  display: block;
+  opacity: 1;
+}
+
+#tooltip-flyout .tooltip-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+  color: #fff;
+}
+
+#tooltip-flyout .tooltip-body {
+  color: rgba(240,240,240,0.85);
+}
+
+#tooltip-flyout::before {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: rgba(20, 20, 30, 0.95);
+  transform: rotate(45deg);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+#tooltip-flyout.arrow-top::before {
+  top: -6px;
+  left: var(--arrow-x, 50%);
+  transform: translateX(-50%) rotate(45deg);
+  border-bottom: none;
+  border-right: none;
+}
+
+#tooltip-flyout.arrow-bottom::before {
+  bottom: -6px;
+  left: var(--arrow-x, 50%);
+  transform: translateX(-50%) rotate(45deg);
+  border-top: none;
+  border-left: none;
+}
+
+/* On light/sepia themes, darken tooltip further */
+[data-theme="light"] #tooltip-flyout,
+[data-theme="sepia"] #tooltip-flyout {
+  background: rgba(30, 30, 40, 0.97);
+}
