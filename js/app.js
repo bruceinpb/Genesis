@@ -1060,33 +1060,27 @@ class App {
 
       let coverImage = null;
 
-      // Step 2a: Try Hugging Face via CORS proxy (best quality)
-      if (this._hfToken) {
+      // Step 2a: Try Puter.js (free, no API key, CORS-free)
+      try {
+        if (loading) loading.textContent = 'Generating AI cover...';
+        coverImage = await this.generator.generateCoverWithPuter(coverPrompt);
+      } catch (err) {
+        console.warn('Puter cover generation failed:', err.message);
+      }
+
+      // Step 2b: Try Hugging Face via CORS proxy
+      if (!coverImage && this._hfToken) {
         try {
-          if (loading) loading.textContent = 'Generating AI image...';
+          if (loading) loading.textContent = 'Trying Hugging Face...';
           coverImage = await this.generator.generateCoverImage(coverPrompt, this._hfToken);
         } catch (err) {
           console.warn('HF cover generation failed:', err.message);
         }
       }
 
-      // Step 2b: Try Pollinations.ai via <img src> (no CORS needed)
-      if (!coverImage) {
-        if (loading) loading.textContent = 'Trying alternate source...';
-        const imageUrl = this.generator.getCoverImageUrl(coverPrompt);
-        const loaded = await new Promise((resolve) => {
-          const testImg = new Image();
-          testImg.onload = () => resolve(true);
-          testImg.onerror = () => resolve(false);
-          testImg.src = imageUrl;
-          setTimeout(() => resolve(false), 45000);
-        });
-        if (loaded) coverImage = imageUrl;
-      }
-
       // Step 2c: Canvas fallback (always works)
       if (!coverImage) {
-        console.warn('All image sources failed, using canvas fallback');
+        console.warn('AI image sources failed, using canvas fallback');
         const design = this.generator.getDefaultCoverDesign(project.genre);
         coverImage = this.generator.renderCover(design, project.title, project.owner);
       }

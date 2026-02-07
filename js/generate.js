@@ -238,9 +238,66 @@ Guidelines for your prose:
   }
 
   /**
+   * Generate a cover image using Puter.js (free, no API key, CORS-free).
+   * Tries Stable Diffusion 3 first (custom dimensions), then DALL-E 3.
+   * Returns a base64 data URL of the generated image.
+   */
+  async generateCoverWithPuter(prompt) {
+    if (typeof puter === 'undefined' || !puter.ai) {
+      throw new Error('Puter.js not loaded');
+    }
+
+    // Try SD3 (allows custom book-cover dimensions)
+    const models = [
+      { model: 'stabilityai/stable-diffusion-3-medium', width: 768, height: 1152, steps: 25,
+        negative_prompt: 'text, words, letters, typography, watermark, blurry, low quality' },
+      { model: 'dall-e-3' }
+    ];
+
+    let lastError = null;
+    for (const opts of models) {
+      try {
+        const img = await puter.ai.txt2img(prompt, opts);
+        return await this._imgElementToDataUrl(img);
+      } catch (err) {
+        console.warn(`Puter model ${opts.model} failed:`, err.message);
+        lastError = err;
+      }
+    }
+    throw lastError || new Error('Puter image generation failed');
+  }
+
+  /**
+   * Convert an Image element to a base64 data URL via canvas.
+   */
+  _imgElementToDataUrl(img) {
+    return new Promise((resolve, reject) => {
+      const convert = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width || 768;
+          canvas.height = img.naturalHeight || img.height || 1152;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } catch (err) {
+          // If canvas tainted (cross-origin), use img.src directly
+          if (img.src) resolve(img.src);
+          else reject(err);
+        }
+      };
+
+      if (img.complete && img.naturalWidth > 0) {
+        convert();
+      } else {
+        img.onload = convert;
+        img.onerror = () => reject(new Error('Puter image element failed to load'));
+      }
+    });
+  }
+
+  /**
    * Generate a cover image using Hugging Face via a CORS proxy.
-   * Safari blocks direct HF API calls (no CORS headers), so we route
-   * through corsproxy.io which adds the required Access-Control headers.
    * Returns a base64 data URL of the generated image.
    */
   async generateCoverImage(prompt, hfToken) {
