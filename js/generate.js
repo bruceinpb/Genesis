@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, tone, style, wordTarget }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, tone, style, wordTarget, concludeStory, genre, projectGoal }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -54,7 +54,7 @@ class ProseGenerator {
     this.abortController = new AbortController();
 
     const systemPrompt = this._buildSystemPrompt({ tone, style });
-    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget });
+    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, projectGoal });
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {
@@ -149,7 +149,7 @@ Guidelines for your prose:
     return prompt;
   }
 
-  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget }) {
+  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, projectGoal }) {
     let prompt = '';
 
     if (chapterTitle) {
@@ -157,6 +157,9 @@ Guidelines for your prose:
     }
     if (sceneTitle) {
       prompt += `Scene: ${sceneTitle}\n`;
+    }
+    if (genre) {
+      prompt += `Genre: ${genre}\n`;
     }
 
     prompt += `\nStory/Plot:\n${plot}\n`;
@@ -178,13 +181,29 @@ Guidelines for your prose:
     if (existingContent) {
       const plainText = existingContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       if (plainText.length > 0) {
-        const truncated = plainText.slice(-2000);
+        const truncated = plainText.slice(-3000);
         prompt += `\nContinue from this existing text (pick up exactly where it leaves off):\n"""${truncated}"""\n`;
       }
     }
 
     const target = wordTarget || 500;
-    prompt += `\nWrite approximately ${target} words of prose. Output ONLY the story text, no labels or commentary.`;
+
+    if (concludeStory) {
+      prompt += `\nIMPORTANT: This is the FINAL section of the story. You have approximately ${target} words to bring the story to a satisfying, complete conclusion.`;
+      prompt += `\n- Resolve the main conflict and any critical plot threads`;
+      prompt += `\n- Give the protagonist a clear emotional resolution`;
+      prompt += `\n- Write a memorable final scene or closing image`;
+      prompt += `\n- Ensure the ending feels earned and not rushed`;
+      if (genre) {
+        prompt += `\n- Honor the conventions and reader expectations of the ${genre} genre`;
+      }
+      if (projectGoal) {
+        prompt += `\n- The total story target is ${projectGoal.toLocaleString()} words — pace your conclusion to fit within ~${target} words`;
+      }
+      prompt += `\n\nWrite approximately ${target} words to conclude the story. Output ONLY the story text, no labels or commentary.`;
+    } else {
+      prompt += `\nWrite approximately ${target} words of prose. Output ONLY the story text, no labels or commentary.`;
+    }
 
     return prompt;
   }

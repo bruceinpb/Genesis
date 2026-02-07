@@ -180,8 +180,12 @@
 
   <!-- ===== Continue Writing Bar ===== -->
   <div class="continue-bar" id="continue-bar" style="display:none;">
-    <button class="btn btn-primary" id="btn-continue-writing" data-tooltip="Continue Writing — Let Claude AI continue writing from where you left off. The AI reads your existing prose and generates the next passage, matching your story's voice, style, and characters." style="flex:1;">Continue Writing</button>
-    <button class="btn" id="btn-continue-to-target" data-tooltip="Write to Goal — Let Claude AI continue generating prose until your daily word count goal is reached. Generates multiple passages in sequence.">Write to Goal</button>
+    <div class="continue-group" style="display:flex;gap:4px;flex:1;">
+      <button class="btn btn-primary continue-word-btn" data-words="500" data-tooltip="Continue Writing ~500 words — Generate approximately 500 words of new prose, continuing from where the story left off." style="flex:1;">+500</button>
+      <button class="btn btn-primary continue-word-btn" data-words="1000" data-tooltip="Continue Writing ~1,000 words — Generate approximately 1,000 words of new prose, continuing from where the story left off." style="flex:1;">+1,000</button>
+      <button class="btn btn-primary continue-word-btn" data-words="2000" data-tooltip="Continue Writing ~2,000 words — Generate approximately 2,000 words of new prose, continuing from where the story left off." style="flex:1;">+2,000</button>
+    </div>
+    <button class="btn" id="btn-continue-to-target" data-tooltip="Write to Goal — Calculate the remaining words needed to reach your project's word count goal, then generate prose to complete the story with a satisfying conclusion.">Write to Goal</button>
     <button class="btn btn-sm" id="btn-continue-dismiss" data-tooltip="Dismiss this bar." style="min-width:44px;">&times;</button>
   </div>
 
