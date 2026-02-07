@@ -270,103 +270,106 @@ Guidelines for your prose:
   /**
    * Overlay the project title onto an AI-generated cover image.
    * Uses white bold text with a dark outline for readability on any background.
+   * Converts data URL to Blob + object URL for reliable loading on iPad Safari.
    * @param {string} dataUrl - base64 data URL of the image
    * @param {string} title - the project title
    * @returns {Promise<string>} - base64 data URL with title overlaid
    */
-  overlayTitle(dataUrl, title) {
-    if (!title) return Promise.resolve(dataUrl);
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          const w = img.naturalWidth || img.width;
-          const h = img.naturalHeight || img.height;
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
+  async overlayTitle(dataUrl, title) {
+    if (!title) return dataUrl;
+    try {
+      // Convert data URL to Blob → object URL (more reliable than loading huge data URLs)
+      const parts = dataUrl.split(',');
+      const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+      const binary = atob(parts[1]);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+      const objectUrl = URL.createObjectURL(blob);
 
-          // Draw the AI image
-          ctx.drawImage(img, 0, 0, w, h);
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Image load failed'));
+        el.src = objectUrl;
+      });
 
-          // Add a subtle gradient at the bottom for text readability
-          const grad = ctx.createLinearGradient(0, h * 0.65, 0, h);
-          grad.addColorStop(0, 'rgba(0,0,0,0)');
-          grad.addColorStop(1, 'rgba(0,0,0,0.6)');
-          ctx.fillStyle = grad;
-          ctx.fillRect(0, h * 0.65, w, h * 0.35);
+      const canvas = document.createElement('canvas');
+      const w = img.naturalWidth || img.width || 768;
+      const h = img.naturalHeight || img.height || 1024;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
 
-          // Calculate font size — scale to fit width with padding
-          const maxWidth = w * 0.85;
-          let fontSize = Math.round(w * 0.08);
-          ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+      // Draw the AI image
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(objectUrl);
 
-          // Word-wrap the title into lines
-          const words = title.split(/\s+/);
-          let lines = [];
-          let line = '';
-          for (const word of words) {
-            const test = line ? line + ' ' + word : word;
-            if (ctx.measureText(test).width > maxWidth && line) {
-              lines.push(line);
-              line = word;
-            } else {
-              line = test;
-            }
+      // Add a gradient at the bottom for text readability
+      const grad = ctx.createLinearGradient(0, h * 0.6, 0, h);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.65)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, h * 0.6, w, h * 0.4);
+
+      // Calculate font size — scale to fit width with padding
+      const maxWidth = w * 0.85;
+      let fontSize = Math.round(w * 0.08);
+      ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+
+      // Word-wrap the title into lines
+      const wrapText = (size) => {
+        ctx.font = `bold ${size}px Georgia, "Times New Roman", serif`;
+        const words = title.split(/\s+/);
+        const result = [];
+        let current = '';
+        for (const word of words) {
+          const test = current ? current + ' ' + word : word;
+          if (ctx.measureText(test).width > maxWidth && current) {
+            result.push(current);
+            current = word;
+          } else {
+            current = test;
           }
-          if (line) lines.push(line);
-
-          // If too many lines, reduce font size
-          if (lines.length > 3) {
-            fontSize = Math.round(fontSize * 0.75);
-            ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
-            lines = [];
-            line = '';
-            for (const word of words) {
-              const test = line ? line + ' ' + word : word;
-              if (ctx.measureText(test).width > maxWidth && line) {
-                lines.push(line);
-                line = word;
-              } else {
-                line = test;
-              }
-            }
-            if (line) lines.push(line);
-          }
-
-          // Position text near the bottom
-          const lineHeight = fontSize * 1.25;
-          const totalTextHeight = lines.length * lineHeight;
-          const startY = h - totalTextHeight - h * 0.06;
-
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-
-          for (let i = 0; i < lines.length; i++) {
-            const x = w / 2;
-            const y = startY + i * lineHeight;
-
-            // Dark outline stroke for contrast
-            ctx.strokeStyle = 'rgba(0,0,0,0.9)';
-            ctx.lineWidth = Math.max(3, fontSize * 0.08);
-            ctx.lineJoin = 'round';
-            ctx.strokeText(lines[i], x, y);
-
-            // White fill
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(lines[i], x, y);
-          }
-
-          resolve(canvas.toDataURL('image/jpeg', 0.9));
-        } catch (err) {
-          // If overlay fails, return original image
-          resolve(dataUrl);
         }
+        if (current) result.push(current);
+        return result;
       };
-      img.onerror = () => resolve(dataUrl); // fallback to original on error
-      img.src = dataUrl;
-    });
+
+      let lines = wrapText(fontSize);
+      if (lines.length > 3) {
+        fontSize = Math.round(fontSize * 0.7);
+        lines = wrapText(fontSize);
+      }
+
+      // Position text near the bottom
+      const lineHeight = fontSize * 1.3;
+      const totalTextHeight = lines.length * lineHeight;
+      const startY = h - totalTextHeight - h * 0.05;
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+
+      for (let i = 0; i < lines.length; i++) {
+        const x = w / 2;
+        const y = startY + i * lineHeight;
+
+        // Dark outline stroke for high contrast
+        ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+        ctx.lineWidth = Math.max(4, fontSize * 0.1);
+        ctx.lineJoin = 'round';
+        ctx.strokeText(lines[i], x, y);
+
+        // White fill
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(lines[i], x, y);
+      }
+
+      return canvas.toDataURL('image/jpeg', 0.9);
+    } catch (err) {
+      console.warn('Title overlay failed:', err);
+      return dataUrl;
+    }
   }
 
   /**
