@@ -1056,7 +1056,7 @@ class App {
       }
 
       // Gather characters
-      const characters = await this.manuscript.getCharacters() || [];
+      const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
 
       // Generate image prompt via Claude
       const coverPrompt = await this.generator.generateCoverPrompt({
