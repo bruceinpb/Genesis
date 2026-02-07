@@ -108,7 +108,7 @@ body.no-bounce {
   opacity: 1;
 }
 
-#app.focus-mode ~ .focus-exit-btn {
+#app.focus-mode .focus-exit-btn {
   display: flex;
 }
 
