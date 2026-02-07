@@ -212,7 +212,7 @@ class App {
       : new Date(project.updatedAt);
     const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const coverUrl = project.coverPrompt
-      ? `https://pollinations.ai/p/${encodeURIComponent(project.coverPrompt)}?width=200&height=300&seed=${project.coverSeed || 1}&nologo=true`
+      ? this._getCoverUrl(project, 200, 300)
       : '';
     return `
       <div class="project-card" data-id="${project.id}">
@@ -1004,7 +1004,9 @@ class App {
   _getCoverUrl(project, width = 512, height = 768) {
     if (!project?.coverPrompt) return null;
     const seed = project.coverSeed || 1;
-    return `https://pollinations.ai/p/${encodeURIComponent(project.coverPrompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
+    // Truncate prompt to avoid overly long URLs
+    const prompt = project.coverPrompt.slice(0, 500);
+    return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&model=flux&enhance=true`;
   }
 
   _updateCoverDisplay() {
@@ -1018,6 +1020,11 @@ class App {
     if (url) {
       placeholder.style.display = 'none';
       img.style.display = 'block';
+      img.onerror = () => {
+        img.style.display = 'none';
+        placeholder.innerHTML = '<span>Image loading failed</span><button class="btn btn-sm" id="btn-create-cover">Retry</button>';
+        placeholder.style.display = '';
+      };
       img.src = url;
       regenBtn.style.display = '';
     } else {
