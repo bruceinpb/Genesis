@@ -1090,7 +1090,12 @@ class App {
         }
       }
 
-      // Step 2d: Canvas fallback (always works)
+      // Overlay title on AI-generated cover
+      if (coverImage) {
+        coverImage = await this.generator.overlayTitle(coverImage, project.title);
+      }
+
+      // Step 2d: Canvas fallback (always works, has its own title rendering)
       if (!coverImage) {
         console.warn('AI image sources failed, using canvas fallback');
         const design = this.generator.getDefaultCoverDesign(project.genre);
