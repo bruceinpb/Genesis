@@ -58,6 +58,7 @@ class App {
     // Load settings
     this.state.theme = await this.localStorage.getSetting('theme', 'dark');
     this.state.dailyGoal = await this.localStorage.getSetting('dailyGoal', 1000);
+    this._hfToken = await this.localStorage.getSetting('hfToken', '');
 
     // Apply theme
     this._applyTheme(this.state.theme);
@@ -1025,6 +1026,10 @@ class App {
       alert('Set your Anthropic API key in Settings first.');
       return;
     }
+    if (!this._hfToken) {
+      alert('Set your Hugging Face token in Settings first.');
+      return;
+    }
 
     // Show loading state
     const loading = document.getElementById('cover-loading');
@@ -1047,26 +1052,23 @@ class App {
       // Gather characters
       const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
 
-      // Generate cover design via Claude
-      const design = await this.generator.generateCoverDesign({
+      // Step 1: Claude generates the image prompt
+      const coverPrompt = await this.generator.generateCoverPrompt({
         title: project.title,
         genre: project.genre || '',
         proseExcerpt: proseExcerpt.trim(),
         characters
       });
 
-      // Render to canvas and get base64 PNG
-      const coverImage = this.generator.renderCover(
-        design,
-        project.title,
-        project.owner || '',
-        600, 900
-      );
+      if (!coverPrompt) throw new Error('Failed to generate cover prompt.');
 
-      // Save base64 image to Firestore
-      await this.fs.updateProject(project.id, { coverImage, coverDesign: design });
+      // Step 2: Hugging Face generates the actual image
+      const coverImage = await this.generator.generateCoverImage(coverPrompt, this._hfToken);
+
+      // Save to Firestore
+      await this.fs.updateProject(project.id, { coverImage, coverPrompt });
       this._currentProject.coverImage = coverImage;
-      this._currentProject.coverDesign = design;
+      this._currentProject.coverPrompt = coverPrompt;
 
       // Update display
       this._updateCoverDisplay();
@@ -1083,29 +1085,12 @@ class App {
     const project = this._currentProject;
     if (!project?.coverImage) return;
 
-    // Re-render at high resolution for download
-    if (project.coverDesign) {
-      const hiRes = this.generator.renderCover(
-        project.coverDesign,
-        project.title,
-        project.owner || '',
-        1200, 1800
-      );
-      const a = document.createElement('a');
-      a.href = hiRes;
-      a.download = `${project.title || 'cover'} - cover.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } else {
-      // Fallback: download the stored image
-      const a = document.createElement('a');
-      a.href = project.coverImage;
-      a.download = `${project.title || 'cover'} - cover.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
+    const a = document.createElement('a');
+    a.href = project.coverImage;
+    a.download = `${project.title || 'cover'} - cover.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   // ========================================
@@ -1158,6 +1143,18 @@ class App {
           </select>
         </div>
         <button class="btn btn-sm" id="save-api-settings" style="width:100%;">Save AI Settings</button>
+      </div>
+
+      <div class="analysis-section">
+        <h3>Cover Image Generation</h3>
+        <div class="form-group">
+          <label>Hugging Face API Token</label>
+          <input type="password" class="form-input" id="setting-hf-token" value="${this._esc(this._hfToken || '')}" placeholder="hf_...">
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+            Free token from <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--accent-primary);">huggingface.co</a>. Used for AI cover art generation.
+          </p>
+        </div>
+        <button class="btn btn-sm" id="save-hf-settings" style="width:100%;">Save Cover Settings</button>
       </div>
 
       <div class="analysis-section">
@@ -1489,6 +1486,12 @@ class App {
         await this.generator.setApiKey(key);
         await this.generator.setModel(model);
         alert('AI settings saved.');
+      }
+      if (e.target.id === 'save-hf-settings') {
+        const token = document.getElementById('setting-hf-token')?.value || '';
+        this._hfToken = token;
+        await this.localStorage.setSetting('hfToken', token);
+        alert('Cover settings saved.');
       }
       if (e.target.id === 'btn-generate-prose') {
         await this._runGeneration();
