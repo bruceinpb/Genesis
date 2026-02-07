@@ -579,7 +579,7 @@ class App {
     let plot, wordTarget, tone, style, useCharacters;
     if (options.isContinuation && this._lastGenSettings) {
       plot = this._lastGenSettings.plot;
-      wordTarget = this._lastGenSettings.wordTarget;
+      wordTarget = options.wordTarget || this._lastGenSettings.wordTarget;
       tone = this._lastGenSettings.tone;
       style = this._lastGenSettings.style;
       useCharacters = this._lastGenSettings.useCharacters;
@@ -612,6 +612,12 @@ class App {
       } catch (_) {}
     }
 
+    // Build conclusion instructions if needed
+    let concludeStory = options.concludeStory || false;
+    const project = this._currentProject;
+    const projectGoal = project ? (project.wordCountGoal || 0) : 0;
+    const genre = project ? (project.genre || '') : '';
+
     this._showContinueBar(false);
     this._setGenerateStatus(true);
     const errEl = document.getElementById('generate-error');
@@ -624,7 +630,7 @@ class App {
     let streamedText = '';
 
     await this.generator.generate(
-      { plot, existingContent, chapterTitle, characters, tone, style, wordTarget },
+      { plot, existingContent, chapterTitle, characters, tone, style, wordTarget, concludeStory, genre, projectGoal },
       {
         onChunk: (text) => {
           streamedText += text;
@@ -659,13 +665,28 @@ class App {
             this._updateLocalWordCounts(content);
           }
 
-          if (this._autoWriteToGoal) {
-            // Check against daily word goal, not project word count goal
-            if (this.state.dailyGoal > 0 && this.state.wordsToday < this.state.dailyGoal) {
-              setTimeout(() => this._runGeneration({ isContinuation: true }), 1500);
+          // Write to Goal: check if we need another chunk
+          if (this._autoWriteToGoal && this._writeToGoalTarget > 0) {
+            const currentTotal = this._getTotalWordCount();
+            const goal = this._writeToGoalTarget;
+            const maxOverage = this._writeToGoalMaxOverage || Math.round(goal * 0.03);
+            const remaining = goal - currentTotal;
+
+            if (remaining > maxOverage * -1 && remaining > 50) {
+              // Still have words to write — schedule next chunk
+              const nextChunk = Math.min(remaining, 2000);
+              const isLastChunk = remaining <= 2000;
+              setTimeout(() => this._runGeneration({
+                isContinuation: true,
+                wordTarget: nextChunk,
+                concludeStory: isLastChunk,
+                writeToGoal: true
+              }), 1500);
               return;
             } else {
+              // Goal reached (within 3% overage) — stop
               this._autoWriteToGoal = false;
+              this._writeToGoalTarget = 0;
             }
           }
 
@@ -674,6 +695,7 @@ class App {
         onError: (err) => {
           this._setGenerateStatus(false);
           this._autoWriteToGoal = false;
+          this._writeToGoalTarget = 0;
           this._showPanel('generate');
           if (errEl) {
             errEl.style.display = 'block';
@@ -687,6 +709,86 @@ class App {
   _showContinueBar(show) {
     const bar = document.getElementById('continue-bar');
     if (bar) bar.style.display = show ? 'flex' : 'none';
+  }
+
+  _getTotalWordCount() {
+    return Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+  }
+
+  async _handleContinueWriting(wordTarget) {
+    const project = this._currentProject;
+    const totalWords = this._getTotalWordCount();
+    const goal = project ? (project.wordCountGoal || 0) : 0;
+
+    // Check if this generation would exceed the project word count goal
+    if (goal > 0 && totalWords + wordTarget > goal) {
+      const remaining = Math.max(0, goal - totalWords);
+      const willExceed = remaining < wordTarget;
+
+      if (willExceed && remaining > 0) {
+        const proceed = confirm(
+          `Your story has ${totalWords.toLocaleString()} words with a goal of ${goal.toLocaleString()}. ` +
+          `Adding ~${wordTarget.toLocaleString()} words will exceed the goal.\n\n` +
+          `Would you like the AI to write a conclusion to wrap up the story instead?`
+        );
+        if (proceed) {
+          // User wants to wrap up — generate remaining words with conclusion instructions
+          this._showContinueBar(false);
+          this._lastGenSettings.wordTarget = wordTarget;
+          await this._runGeneration({ isContinuation: true, concludeStory: true, wordTarget });
+          return;
+        }
+        // User said no — generate normally without conclusion
+      } else if (remaining <= 0) {
+        const proceed = confirm(
+          `Your story has already reached ${totalWords.toLocaleString()} words (goal: ${goal.toLocaleString()}). ` +
+          `Continue writing anyway?`
+        );
+        if (!proceed) return;
+      }
+    }
+
+    this._showContinueBar(false);
+    if (this._lastGenSettings) this._lastGenSettings.wordTarget = wordTarget;
+    await this._runGeneration({ isContinuation: true, wordTarget });
+  }
+
+  async _handleWriteToGoal() {
+    const project = this._currentProject;
+    if (!project) return;
+
+    const totalWords = this._getTotalWordCount();
+    const goal = project.wordCountGoal || 0;
+
+    if (goal <= 0) {
+      alert('No word count goal set for this project. Set one in Settings → Project Settings.');
+      return;
+    }
+
+    const remaining = goal - totalWords;
+    const maxOverage = Math.round(goal * 0.03); // 3% overage allowed
+
+    if (remaining <= 0) {
+      alert(`Your story has already reached ${totalWords.toLocaleString()} words (goal: ${goal.toLocaleString()}).`);
+      return;
+    }
+
+    this._showContinueBar(false);
+
+    // Generate in chunks, targeting the remaining word count
+    // Each chunk targets min(remaining, 2000) words
+    // The final chunk includes story conclusion instructions
+    this._autoWriteToGoal = true;
+    this._writeToGoalTarget = goal;
+    this._writeToGoalMaxOverage = maxOverage;
+
+    // Set the word target for this chunk
+    const chunkSize = Math.min(remaining, 2000);
+    if (this._lastGenSettings) this._lastGenSettings.wordTarget = chunkSize;
+
+    // If remaining words fit in one chunk, include conclusion instructions
+    const concludeStory = remaining <= 2000;
+    await this._runGeneration({ isContinuation: true, wordTarget: chunkSize, concludeStory, writeToGoal: true });
   }
 
   _setGenerateStatus(active) {
@@ -1563,14 +1665,14 @@ class App {
         this._closeAllPanels();
         setTimeout(() => this.openSettingsPanel(), 100);
       }
-      if (e.target.id === 'btn-continue-writing' || e.target.closest('#btn-continue-writing')) {
-        this._showContinueBar(false);
-        await this._runGeneration({ isContinuation: true });
+      // Continue Writing word-count buttons (+500, +1000, +2000)
+      const continueBtn = e.target.closest('.continue-word-btn');
+      if (continueBtn) {
+        const wordTarget = parseInt(continueBtn.dataset.words) || 500;
+        await this._handleContinueWriting(wordTarget);
       }
       if (e.target.id === 'btn-continue-to-target' || e.target.closest('#btn-continue-to-target')) {
-        this._showContinueBar(false);
-        this._autoWriteToGoal = true;
-        await this._runGeneration({ isContinuation: true });
+        await this._handleWriteToGoal();
       }
       if (e.target.id === 'btn-continue-dismiss' || e.target.closest('#btn-continue-dismiss')) {
         this._showContinueBar(false);

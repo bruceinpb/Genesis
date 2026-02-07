@@ -1151,16 +1151,23 @@ select.form-input {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: 6px;
+  padding: 10px 12px;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   z-index: 50;
-  max-width: 500px;
-  width: calc(100% - 40px);
+  max-width: 600px;
+  width: calc(100% - 32px);
   animation: slideUp 0.3s ease;
+  align-items: center;
+}
+
+.continue-bar .continue-word-btn {
+  font-size: 0.8rem;
+  padding: 8px 4px;
+  min-width: 0;
 }
 
 @keyframes slideUp {
