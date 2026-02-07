@@ -238,7 +238,9 @@ Guidelines for your prose:
   }
 
   /**
-   * Generate a cover image using Hugging Face Inference API (Stable Diffusion XL).
+   * Generate a cover image using Hugging Face Inference API.
+   * Tries FLUX.1-schnell first (fast), falls back to SD 2.1.
+   * Handles model cold starts with automatic retry.
    * Returns a base64 data URL of the generated image.
    */
   async generateCoverImage(prompt, hfToken) {
@@ -246,41 +248,86 @@ Guidelines for your prose:
       throw new Error('No Hugging Face token set. Go to Settings to add your token.');
     }
 
-    const response = await fetch(
-      'https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${hfToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            width: 768,
-            height: 1024,
-            num_inference_steps: 30,
-            guidance_scale: 7.5
-          }
-        })
-      }
-    );
+    const models = [
+      'black-forest-labs/FLUX.1-schnell',
+      'stabilityai/stable-diffusion-xl-base-1.0',
+      'stabilityai/stable-diffusion-2-1'
+    ];
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      let msg = `Hugging Face API error (${response.status})`;
-      try { msg = JSON.parse(errorBody).error || msg; } catch (_) {}
-      throw new Error(msg);
+    let lastError = null;
+
+    for (const model of models) {
+      try {
+        const result = await this._callHuggingFace(model, prompt, hfToken);
+        return result;
+      } catch (err) {
+        console.warn(`Model ${model} failed:`, err.message);
+        lastError = err;
+        // If it's an auth error, don't try other models
+        if (err.message.includes('401') || err.message.includes('403')) {
+          throw err;
+        }
+      }
     }
 
-    // Response is a binary image (jpeg/png)
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    throw lastError || new Error('All image generation models failed.');
+  }
+
+  async _callHuggingFace(model, prompt, hfToken, retries = 3) {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      const response = await fetch(
+        `https://api-inference.huggingface.co/models/${model}`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${hfToken}`,
+            'Content-Type': 'application/json',
+            'x-wait-for-model': 'true'
+          },
+          body: JSON.stringify({
+            inputs: prompt,
+            parameters: {
+              num_inference_steps: 25,
+              guidance_scale: 7.5
+            }
+          })
+        }
+      );
+
+      if (response.status === 503) {
+        // Model is loading — wait and retry
+        const body = await response.json().catch(() => ({}));
+        const waitTime = Math.min((body.estimated_time || 20) * 1000, 60000);
+        console.log(`Model loading, waiting ${waitTime / 1000}s...`);
+        await new Promise(r => setTimeout(r, waitTime));
+        continue;
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        let msg = `Hugging Face error (${response.status})`;
+        try { msg = JSON.parse(errorBody).error || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+
+      // Check if response is actually an image
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.startsWith('image/')) {
+        const text = await response.text();
+        throw new Error(`Expected image, got: ${text.slice(0, 200)}`);
+      }
+
+      // Response is a binary image
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Failed to read image data'));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    throw new Error('Model loading timed out. Please try again.');
   }
 
   /**
