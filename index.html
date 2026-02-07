@@ -46,11 +46,11 @@
         <h1 class="landing-title">Genesis 2</h1>
         <span class="landing-welcome">Welcome, <span id="landing-user-name"></span></span>
       </div>
-      <button class="btn btn-sm" id="btn-change-user">Switch User</button>
+      <button class="btn btn-sm" id="btn-change-user" data-tooltip="Switch User — Return to the user selection screen to sign in as a different writer. Your current work is saved automatically.">Switch User</button>
     </div>
 
     <div class="landing-body">
-      <button class="btn btn-primary landing-create-btn" id="btn-create-project">
+      <button class="btn btn-primary landing-create-btn" id="btn-create-project" data-tooltip="Create New Project — Start a new writing project. You'll set a title, genre, and word count goal. Each project has its own chapters, characters, notes, and cover image.">
         + Create New Project
       </button>
 
@@ -74,25 +74,25 @@
   <aside class="sidebar">
     <div class="sidebar-header">
       <h1>Genesis 2</h1>
-      <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" title="Toggle sidebar">&#9776;</button>
+      <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
     </div>
 
     <nav class="sidebar-nav">
-      <button class="active" data-tab="chapters">Chapters</button>
-      <button data-tab="characters">Characters</button>
-      <button data-tab="notes">Notes</button>
+      <button class="active" data-tab="chapters" data-tooltip="Chapters — View and manage your book's chapters. Tap a chapter to edit it. Use '+ Chapter' at the bottom to add new chapters. Drag to reorder.">Chapters</button>
+      <button data-tab="characters" data-tooltip="Characters — Create and manage character profiles with names, roles, descriptions, and personality traits. Character details are automatically used as context when generating AI prose.">Characters</button>
+      <button data-tab="notes" data-tooltip="Notes — Keep research notes, plot outlines, world-building details, and reference material organized alongside your manuscript. Notes are saved per project.">Notes</button>
     </nav>
 
     <div id="sidebar-cover" class="sidebar-cover">
       <div id="cover-image-container" class="cover-image-container">
         <div id="cover-placeholder" class="cover-placeholder">
           <span>No Cover</span>
-          <button class="btn btn-sm" id="btn-create-cover">Create Cover</button>
+          <button class="btn btn-sm" id="btn-create-cover" data-tooltip="Generate an AI-powered book cover image. Claude analyzes your story's content and genre to create an image prompt, then Hugging Face AI models generate the artwork. Requires a free HF API token in Settings.">Create Cover</button>
         </div>
         <img id="cover-image" class="cover-image" style="display:none;" alt="Book cover">
         <div id="cover-loading" class="cover-loading" style="display:none;">Generating...</div>
       </div>
-      <button class="btn btn-sm" id="btn-regenerate-cover" style="display:none; width:100%; margin-top:6px;">Regenerate Cover</button>
+      <button class="btn btn-sm" id="btn-regenerate-cover" data-tooltip="Generate a new AI cover image, replacing the current one. Each regeneration creates a unique image based on your story's content and genre." style="display:none; width:100%; margin-top:6px;">Regenerate Cover</button>
     </div>
 
     <div class="sidebar-content">
@@ -108,10 +108,10 @@
     </div>
 
     <div class="sidebar-footer">
-      <button class="btn btn-sm" id="btn-switch-user-sidebar" style="flex:1; margin-bottom:6px;">
+      <button class="btn btn-sm" id="btn-switch-user-sidebar" data-tooltip="Switch User — Sign out of the current user profile and return to the user selection screen. All your work is saved automatically to the cloud." style="flex:1; margin-bottom:6px;">
         &#x1F464; Switch User
       </button>
-      <button class="btn btn-sm" id="btn-back-to-projects-sidebar" style="flex:1;">
+      <button class="btn btn-sm" id="btn-back-to-projects-sidebar" data-tooltip="All Projects — Return to the project list where you can open a different project, create a new one, or see projects from other users." style="flex:1;">
         &#8592; All Projects
       </button>
     </div>
@@ -119,21 +119,21 @@
 
   <!-- ===== Toolbar ===== -->
   <header class="toolbar">
-    <button class="toolbar-btn" id="btn-sidebar-toggle-mobile" aria-label="Menu" title="Toggle sidebar">&#9776;</button>
+    <button class="toolbar-btn" id="btn-sidebar-toggle-mobile" aria-label="Menu" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
 
-    <button class="toolbar-btn" id="btn-back-to-projects" title="Back to Projects">&#8592;</button>
+    <button class="toolbar-btn" id="btn-back-to-projects" data-tooltip="Return to the project selection screen to open a different project or create a new one.">&#8592;</button>
 
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-bold" title="Bold (Cmd+B)"><b>B</b></button>
-      <button class="toolbar-btn" id="btn-italic" title="Italic (Cmd+I)"><i>I</i></button>
-      <button class="toolbar-btn" id="btn-heading" title="Heading">H</button>
-      <button class="toolbar-btn" id="btn-blockquote" title="Blockquote">&#8220;</button>
-      <button class="toolbar-btn" id="btn-scene-break" title="Scene Break">***</button>
+      <button class="toolbar-btn" id="btn-bold" data-tooltip="Bold — Make selected text bold to emphasize important words or phrases. Keyboard shortcut: Cmd+B."><b>B</b></button>
+      <button class="toolbar-btn" id="btn-italic" data-tooltip="Italic — Make selected text italic. Used for emphasis, internal thoughts, or foreign words. Keyboard shortcut: Cmd+I."><i>I</i></button>
+      <button class="toolbar-btn" id="btn-heading" data-tooltip="Heading — Insert a heading at the cursor position. Use for chapter titles or major section breaks within your manuscript.">H</button>
+      <button class="toolbar-btn" id="btn-blockquote" data-tooltip="Blockquote — Format selected text as an indented block quote. Useful for letters, signs, poems, or quoted passages within your story.">&#8220;</button>
+      <button class="toolbar-btn" id="btn-scene-break" data-tooltip="Scene Break — Insert a scene break marker (***). Use to mark a shift in time, location, or point of view within a chapter.">***</button>
     </div>
 
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-undo" title="Undo">&#8617;</button>
-      <button class="toolbar-btn" id="btn-redo" title="Redo">&#8618;</button>
+      <button class="toolbar-btn" id="btn-undo" data-tooltip="Undo — Reverse your most recent edit. Tap multiple times to undo several changes in sequence.">&#8617;</button>
+      <button class="toolbar-btn" id="btn-redo" data-tooltip="Redo — Restore a change you just undid. Tap multiple times to redo several undone changes.">&#8618;</button>
     </div>
 
     <span class="toolbar-title" id="project-title">Genesis 2</span>
@@ -142,12 +142,12 @@
     <div class="toolbar-spacer"></div>
 
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-generate" title="AI Generate" style="color:var(--accent-primary);font-weight:700;">AI</button>
-      <button class="toolbar-btn" id="btn-analysis" title="Prose Analysis">&#9874;</button>
-      <button class="toolbar-btn" id="btn-structure" title="Story Structure">&#9670;</button>
-      <button class="toolbar-btn" id="btn-export" title="Export">&#8681;</button>
-      <button class="toolbar-btn" id="btn-focus-mode" title="Focus Mode">&#9673;</button>
-      <button class="toolbar-btn" id="btn-settings" title="Settings">&#9881;</button>
+      <button class="toolbar-btn" id="btn-generate" data-tooltip="AI Prose Generator — Open the AI writing assistant. Describe your scene and Claude will generate prose that matches your story's voice, style, and characters." style="color:var(--accent-primary);font-weight:700;">AI</button>
+      <button class="toolbar-btn" id="btn-analysis" data-tooltip="Prose Analysis — Analyze your current chapter for writing quality, pacing, dialogue balance, sentence variety, and prose style. Provides detailed feedback and suggestions from Claude AI.">&#9874;</button>
+      <button class="toolbar-btn" id="btn-structure" data-tooltip="Story Structure — Analyze your story's narrative arc, plot structure, character development, and pacing across all chapters. Identifies strengths and areas for improvement.">&#9670;</button>
+      <button class="toolbar-btn" id="btn-export" data-tooltip="Export — Export your manuscript in multiple formats: Standard Manuscript (Shunn format for agent/publisher submissions), Styled HTML, Plain Text, Full JSON Backup, or download your cover image.">&#8681;</button>
+      <button class="toolbar-btn" id="btn-focus-mode" data-tooltip="Focus Mode — Enter distraction-free writing mode. Hides the sidebar, toolbar, and status bar so you can concentrate entirely on your prose. Tap the menu icon to exit.">&#9673;</button>
+      <button class="toolbar-btn" id="btn-settings" data-tooltip="Settings — Configure your writing environment: appearance themes, AI model selection, API keys, daily writing goals, and project-specific settings like title, genre, and word count targets.">&#9881;</button>
     </div>
   </header>
 
@@ -170,7 +170,7 @@
   </main>
 
   <!-- ===== Focus Mode Exit Button ===== -->
-  <button class="focus-exit-btn" id="btn-exit-focus" title="Exit Focus Mode">&#9776;</button>
+  <button class="focus-exit-btn" id="btn-exit-focus" data-tooltip="Exit Focus Mode — Return to the full editor view with sidebar, toolbar, and status bar visible.">&#9776;</button>
 
   <!-- ===== Floating Word Count ===== -->
   <div class="floating-word-count" id="floating-word-count">
@@ -183,33 +183,33 @@
 
   <!-- ===== Continue Writing Bar ===== -->
   <div class="continue-bar" id="continue-bar" style="display:none;">
-    <button class="btn btn-primary" id="btn-continue-writing" style="flex:1;">Continue Writing</button>
-    <button class="btn" id="btn-continue-to-target">Write to Goal</button>
-    <button class="btn btn-sm" id="btn-continue-dismiss" style="min-width:44px;">&times;</button>
+    <button class="btn btn-primary" id="btn-continue-writing" data-tooltip="Continue Writing — Let Claude AI continue writing from where you left off. The AI reads your existing prose and generates the next passage, matching your story's voice, style, and characters." style="flex:1;">Continue Writing</button>
+    <button class="btn" id="btn-continue-to-target" data-tooltip="Write to Goal — Let Claude AI continue generating prose until your daily word count goal is reached. Generates multiple passages in sequence.">Write to Goal</button>
+    <button class="btn btn-sm" id="btn-continue-dismiss" data-tooltip="Dismiss this bar." style="min-width:44px;">&times;</button>
   </div>
 
   <!-- ===== Status Bar ===== -->
   <footer class="status-bar">
-    <div class="status-item">
+    <div class="status-item" data-tooltip="Chapter Words — The word count for the chapter you are currently editing.">
       <span class="label">Words:</span>
       <span class="value" id="status-words">0</span>
     </div>
-    <div class="status-item">
+    <div class="status-item" data-tooltip="Total Words — The combined word count across all chapters in this project.">
       <span class="label">Total:</span>
       <span class="value" id="status-total">0</span>
     </div>
-    <div class="status-item">
+    <div class="status-item" data-tooltip="Manuscript Goal — Your target total word count for the finished manuscript. Change this in Settings under Project Settings.">
       <span class="label">Goal:</span>
       <span class="value" id="status-goal">80,000</span>
     </div>
-    <div class="status-item">
+    <div class="status-item" data-tooltip="Progress — The percentage of your manuscript word count goal that has been completed so far.">
       <span class="label">Progress:</span>
       <span class="value" id="status-progress">0%</span>
     </div>
 
     <div class="status-spacer"></div>
 
-    <div class="status-item">
+    <div class="status-item" data-tooltip="Today's Writing — Words written today versus your daily writing goal. Resets at midnight. Set your daily goal in Settings.">
       <span class="label">Today:</span>
       <span class="value" id="status-daily">0 / 1,000</span>
     </div>
@@ -255,22 +255,22 @@
         Export your manuscript in various formats for submission, sharing, or backup.
       </p>
 
-      <button class="btn" id="export-manuscript" style="width:100%;margin-bottom:8px;">
+      <button class="btn" id="export-manuscript" data-tooltip="Export in standard Shunn manuscript format: Courier 12pt, double-spaced, with proper headers and page breaks. This is the industry-standard format required by most literary agents and publishers for submissions." style="width:100%;margin-bottom:8px;">
         Standard Manuscript Format (HTML)
         <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
       </button>
 
-      <button class="btn" id="export-html" style="width:100%;margin-bottom:8px;">
+      <button class="btn" id="export-html" data-tooltip="Export as a beautifully formatted HTML document with clean typography. Ideal for reading on screen, sharing with beta readers, or printing a polished copy." style="width:100%;margin-bottom:8px;">
         Styled HTML
         <br><span style="font-size:0.75rem;color:var(--text-muted);">Beautiful reading format</span>
       </button>
 
-      <button class="btn" id="export-plain" style="width:100%;margin-bottom:8px;">
+      <button class="btn" id="export-plain" data-tooltip="Export as a universal plain text (.txt) file. Compatible with any text editor, word processor, or e-reader. All formatting is stripped to just raw text." style="width:100%;margin-bottom:8px;">
         Plain Text
         <br><span style="font-size:0.75rem;color:var(--text-muted);">Universal .txt format</span>
       </button>
 
-      <button class="btn" id="export-json" style="width:100%;margin-bottom:8px;">
+      <button class="btn" id="export-json" data-tooltip="Export a complete JSON backup of your entire project: all chapters, characters, notes, cover image, and project settings. Use this to create full backups or transfer your project between devices." style="width:100%;margin-bottom:8px;">
         Full Backup (JSON)
         <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
       </button>
@@ -279,7 +279,7 @@
     <div class="analysis-section" id="export-cover-section" style="display:none;">
       <h3>Cover Image</h3>
       <img id="export-cover-preview" class="export-cover-preview" style="display:none;" alt="Cover preview">
-      <button class="btn" id="export-cover-download" style="width:100%;margin-bottom:8px;">
+      <button class="btn" id="export-cover-download" data-tooltip="Download your AI-generated book cover as a high-resolution image file. Suitable for use in e-book publishing, print covers, or promotional materials." style="width:100%;margin-bottom:8px;">
         Download Cover Image (PNG)
         <br><span style="font-size:0.75rem;color:var(--text-muted);">High resolution book cover</span>
       </button>
@@ -306,14 +306,14 @@
       <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
         Describe what should happen in this scene. The more detail you provide, the better the output.
       </p>
-      <textarea class="form-input" id="generate-plot" rows="6" placeholder="e.g. Sarah discovers a hidden letter in her grandmother's attic that reveals a family secret. She confronts her mother about it over dinner. Tension builds as her mother tries to deflect..."></textarea>
+      <textarea class="form-input" id="generate-plot" rows="6" data-tooltip="Describe what happens in this scene. Include character actions, dialogue hints, emotional beats, and setting details. The more specific and detailed your description, the better the AI-generated prose will be." placeholder="e.g. Sarah discovers a hidden letter in her grandmother's attic that reveals a family secret. She confronts her mother about it over dinner. Tension builds as her mother tries to deflect..."></textarea>
     </div>
 
     <div class="analysis-section">
       <h3>Options</h3>
       <div class="form-group">
         <label>Approximate Words</label>
-        <select class="form-input" id="generate-word-target">
+        <select class="form-input" id="generate-word-target" data-tooltip="Choose how much prose to generate. Short scenes (~250 words) for brief moments or transitions. Standard (~500) for typical scenes. Long (~1,000) for detailed, multi-beat scenes. Full chapter (~2,000) for complete chapter drafts.">
           <option value="250">~250 (short scene)</option>
           <option value="500" selected>~500 (standard scene)</option>
           <option value="1000">~1,000 (long scene)</option>
@@ -322,19 +322,19 @@
       </div>
       <div class="form-group">
         <label>Tone (optional)</label>
-        <input type="text" class="form-input" id="generate-tone" placeholder="e.g. dark, humorous, suspenseful, literary">
+        <input type="text" class="form-input" id="generate-tone" data-tooltip="Set the emotional tone for this scene. Examples: dark and foreboding, lighthearted and humorous, tense and suspenseful, melancholic, lyrical and literary. Leave blank to let the AI match your existing tone." placeholder="e.g. dark, humorous, suspenseful, literary">
       </div>
       <div class="form-group">
         <label>Style Inspiration (optional)</label>
-        <input type="text" class="form-input" id="generate-style" placeholder="e.g. Cormac McCarthy, Donna Tartt, Stephen King">
+        <input type="text" class="form-input" id="generate-style" data-tooltip="Name an author whose writing style you'd like the AI to emulate. The AI will adapt its prose style, sentence structure, and vocabulary to match. Examples: Cormac McCarthy, Donna Tartt, Stephen King. Leave blank for a neutral literary style." placeholder="e.g. Cormac McCarthy, Donna Tartt, Stephen King">
       </div>
       <div class="form-group" style="display:flex;align-items:center;gap:10px;">
         <input type="checkbox" id="generate-continue" checked style="width:20px;height:20px;">
-        <label for="generate-continue" style="margin:0;">Continue from existing text in editor</label>
+        <label for="generate-continue" style="margin:0;" data-tooltip="When checked, the AI reads your existing text in the editor and continues seamlessly from where you left off, matching your established voice and narrative flow. Uncheck to generate a standalone passage.">Continue from existing text in editor</label>
       </div>
       <div class="form-group" style="display:flex;align-items:center;gap:10px;">
         <input type="checkbox" id="generate-use-characters" checked style="width:20px;height:20px;">
-        <label for="generate-use-characters" style="margin:0;">Include character profiles as context</label>
+        <label for="generate-use-characters" style="margin:0;" data-tooltip="When checked, the AI uses your character profiles (names, descriptions, roles, and personalities from the Characters tab) to keep characters consistent and in-character throughout the generated prose.">Include character profiles as context</label>
       </div>
     </div>
 
@@ -348,8 +348,8 @@
     <div id="generate-error" style="display:none;margin-bottom:16px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
 
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-primary" id="btn-generate-prose" style="flex:1;">Generate Prose</button>
-      <button class="btn" id="btn-generate-cancel" style="display:none;">Stop</button>
+      <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI. The generated prose will be appended to your current chapter in the editor. You can edit, revise, or regenerate as needed." style="flex:1;">Generate Prose</button>
+      <button class="btn" id="btn-generate-cancel" data-tooltip="Stop — Cancel the current AI generation. Any prose already received will remain in the editor." style="display:none;">Stop</button>
     </div>
 
     <div id="generate-no-key" style="display:none;margin-top:16px;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md);text-align:center;">
@@ -371,6 +371,9 @@
     <!-- Rendered dynamically -->
   </div>
 </div>
+
+<!-- Flyout Tooltip -->
+<div id="tooltip-flyout"><div class="tooltip-body"></div></div>
 
 <script src="https://js.puter.com/v2/"></script>
 <script type="module" src="js/app.js"></script>

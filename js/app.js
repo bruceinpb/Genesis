@@ -1148,7 +1148,7 @@ class App {
       <div class="analysis-section">
         <h3>Appearance</h3>
         <div class="form-group">
-          <label>Theme</label>
+          <label data-tooltip="Choose your editor color scheme. Dark reduces eye strain for nighttime writing. Light provides a clean daytime look. Sepia gives a warm, paper-like feel that's easy on the eyes.">Theme</label>
           <select class="form-input" id="setting-theme">
             <option value="dark" ${this.state.theme === 'dark' ? 'selected' : ''}>Dark</option>
             <option value="light" ${this.state.theme === 'light' ? 'selected' : ''}>Light</option>
@@ -1160,54 +1160,54 @@ class App {
       <div class="analysis-section">
         <h3>AI Prose Generation</h3>
         <div class="form-group">
-          <label>Anthropic API Key</label>
+          <label data-tooltip="Your Anthropic API key enables AI prose generation, story analysis, and structure analysis. The key is stored only on this device and is sent directly to Anthropic's API — never to any other server. You can protect it with a PIN below.">Anthropic API Key</label>
           <div id="api-key-locked" style="display:none;">
             <div style="display:flex;gap:8px;align-items:center;">
-              <input type="password" class="form-input" id="api-key-pin-input" placeholder="Enter PIN to unlock" style="flex:1;">
-              <button class="btn btn-sm" id="api-key-unlock-btn">Unlock</button>
+              <input type="password" class="form-input" id="api-key-pin-input" data-tooltip="Enter the PIN you set to unlock and view or change your API key." placeholder="Enter PIN to unlock" style="flex:1;">
+              <button class="btn btn-sm" id="api-key-unlock-btn" data-tooltip="Unlock — Verify your PIN to access the API key field.">Unlock</button>
             </div>
             <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">API key is PIN-protected.</p>
           </div>
           <div id="api-key-unlocked">
-            <input type="password" class="form-input" id="setting-api-key" value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
+            <input type="password" class="form-input" id="setting-api-key" data-tooltip="Paste your Anthropic API key here. It starts with 'sk-ant-'. Get one free at console.anthropic.com. Usage is billed directly to your Anthropic account." value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
             <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
               Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent-primary);">console.anthropic.com</a>. Stored locally on this device only.
             </p>
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-              <input type="password" class="form-input" id="api-key-set-pin" placeholder="${localStorage.getItem('genesis-api-pin') ? 'New PIN (leave blank to keep)' : 'Set a PIN to lock (optional)'}" style="flex:1;">
-              <button class="btn btn-sm" id="api-key-lock-btn">${localStorage.getItem('genesis-api-pin') ? 'Update PIN' : 'Set PIN'}</button>
-              ${localStorage.getItem('genesis-api-pin') ? '<button class="btn btn-sm" id="api-key-remove-pin">Remove PIN</button>' : ''}
+              <input type="password" class="form-input" id="api-key-set-pin" data-tooltip="Set a PIN code (at least 4 characters) to protect your API key. When locked, the key cannot be viewed or changed without entering the correct PIN. Useful on shared devices." placeholder="${localStorage.getItem('genesis-api-pin') ? 'New PIN (leave blank to keep)' : 'Set a PIN to lock (optional)'}" style="flex:1;">
+              <button class="btn btn-sm" id="api-key-lock-btn" data-tooltip="${localStorage.getItem('genesis-api-pin') ? 'Update PIN — Change your existing PIN to a new one.' : 'Set PIN — Protect your API key with a PIN code so others cannot view or change it.'}">${localStorage.getItem('genesis-api-pin') ? 'Update PIN' : 'Set PIN'}</button>
+              ${localStorage.getItem('genesis-api-pin') ? '<button class="btn btn-sm" id="api-key-remove-pin" data-tooltip="Remove PIN — Remove PIN protection from your API key. Anyone with access to this device will be able to view and change the key.">Remove PIN</button>' : ''}
             </div>
           </div>
         </div>
         <div class="form-group">
-          <label>AI Model</label>
+          <label data-tooltip="Choose which Claude AI model powers prose generation and analysis. Sonnet 4.5 is the best balance of quality, speed, and cost — recommended for most writers. Haiku 4.5 is faster and cheaper but produces slightly less polished prose. Opus 4.6 produces the highest quality literary prose but is slower and costs more per generation.">AI Model</label>
           <select class="form-input" id="setting-ai-model">
             <option value="claude-sonnet-4-5-20250929" ${this.generator?.model === 'claude-sonnet-4-5-20250929' ? 'selected' : ''}>Claude Sonnet 4.5 (recommended)</option>
             <option value="claude-haiku-4-5-20251001" ${this.generator?.model === 'claude-haiku-4-5-20251001' ? 'selected' : ''}>Claude Haiku 4.5 (faster, cheaper)</option>
             <option value="claude-opus-4-6" ${this.generator?.model === 'claude-opus-4-6' ? 'selected' : ''}>Claude Opus 4.6 (highest quality)</option>
           </select>
         </div>
-        <button class="btn btn-sm" id="save-api-settings" style="width:100%;">Save AI Settings</button>
+        <button class="btn btn-sm" id="save-api-settings" data-tooltip="Save your API key and AI model selection. These settings apply to all projects." style="width:100%;">Save AI Settings</button>
       </div>
 
       <div class="analysis-section">
         <h3>Cover Image Generation</h3>
         <div class="form-group">
-          <label>Hugging Face API Token</label>
-          <input type="password" class="form-input" id="setting-hf-token" value="${this._esc(this._hfToken || '')}" placeholder="hf_...">
+          <label data-tooltip="Your Hugging Face API token enables AI-generated book cover images using Stable Diffusion XL and FLUX models. Free tokens are available at huggingface.co/settings/tokens. The cover generator analyzes your story's content and genre to create a unique cover image.">Hugging Face API Token</label>
+          <input type="password" class="form-input" id="setting-hf-token" data-tooltip="Paste your Hugging Face API token here. It starts with 'hf_'. Free tokens have generous rate limits for image generation." value="${this._esc(this._hfToken || '')}" placeholder="hf_...">
           <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
             Free token from <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--accent-primary);">huggingface.co</a>. Used for AI cover art (FLUX / Stable Diffusion).
           </p>
         </div>
-        <button class="btn btn-sm" id="save-hf-settings" style="width:100%;">Save Cover Settings</button>
+        <button class="btn btn-sm" id="save-hf-settings" data-tooltip="Save your Hugging Face token. Once saved, use 'Create Cover' or 'Regenerate Cover' in the sidebar to generate AI cover art." style="width:100%;">Save Cover Settings</button>
       </div>
 
       <div class="analysis-section">
         <h3>Writing Goals</h3>
         <div class="form-group">
-          <label>Daily Word Goal</label>
-          <input type="number" class="form-input" id="setting-daily-goal" value="${this.state.dailyGoal}" min="100" step="100">
+          <label data-tooltip="Set your daily writing target in words. Your progress toward this goal is tracked in the status bar at the bottom of the screen and resets each day at midnight. A consistent daily goal helps build a productive writing habit.">Daily Word Goal</label>
+          <input type="number" class="form-input" id="setting-daily-goal" data-tooltip="Enter your daily word count target. Common goals: 500 (casual), 1000 (steady), 2000 (ambitious), 5000+ (NaNoWriMo pace)." value="${this.state.dailyGoal}" min="100" step="100">
         </div>
       </div>
 
@@ -1215,30 +1215,30 @@ class App {
       <div class="analysis-section">
         <h3>Project Settings</h3>
         <div class="form-group">
-          <label>Project Title</label>
+          <label data-tooltip="The title of your book or manuscript. This appears in the project list, on the AI-generated cover image, and in exported manuscripts.">Project Title</label>
           <input type="text" class="form-input" id="setting-project-name" value="${this._esc(project.title)}">
         </div>
         <div class="form-group">
-          <label>Genre</label>
+          <label data-tooltip="Your project's genre (e.g., Romance, Thriller, Fantasy, Literary Fiction, Sci-Fi, Horror, Mystery). The genre is used by the AI to match appropriate tone and conventions when generating prose, and to theme the cover art.">Genre</label>
           <input type="text" class="form-input" id="setting-project-genre" value="${this._esc(project.genre || '')}">
         </div>
         <div class="form-group">
-          <label>Word Count Goal</label>
+          <label data-tooltip="Your target total word count for the finished manuscript. Common targets: 50,000 (novella), 80,000 (standard novel), 100,000 (long novel), 120,000+ (epic/fantasy). This drives the progress percentage shown in the status bar.">Word Count Goal</label>
           <input type="number" class="form-input" id="setting-target-words" value="${project.wordCountGoal || 80000}" min="1000" step="1000">
         </div>
-        <button class="btn btn-primary" id="save-project-settings" style="width:100%;margin-top:8px;">Save Project Settings</button>
+        <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title, genre, and word count goal." style="width:100%;margin-top:8px;">Save Project Settings</button>
       </div>
 
       <div class="analysis-section">
         <h3>Data</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm" id="btn-export-json">Backup (JSON)</button>
+          <button class="btn btn-sm" id="btn-export-json" data-tooltip="Export a complete JSON backup of this project including all chapters, characters, notes, cover image, and settings. Use for backups or transferring your project to another device.">Backup (JSON)</button>
         </div>
       </div>
 
       <div class="analysis-section">
         <h3>Danger Zone</h3>
-        <button class="btn btn-sm" id="btn-delete-project" style="border-color:var(--danger);color:var(--danger);">Delete Project</button>
+        <button class="btn btn-sm" id="btn-delete-project" data-tooltip="Permanently delete this entire project and all its contents: chapters, characters, notes, and cover image. This action cannot be undone. You will be asked to confirm before deletion." style="border-color:var(--danger);color:var(--danger);">Delete Project</button>
       </div>
       ` : ''}
     `;
@@ -1576,6 +1576,116 @@ class App {
     // --- Before unload save ---
     window.addEventListener('beforeunload', () => {
       this._saveCurrentChapter();
+    });
+
+    // --- Flyout Tooltip System ---
+    this._initTooltips();
+  }
+
+  // ========================================
+  //  Flyout Tooltip System
+  // ========================================
+
+  _initTooltips() {
+    const flyout = document.getElementById('tooltip-flyout');
+    if (!flyout) return;
+    const body = flyout.querySelector('.tooltip-body');
+
+    let touchTimer = null;
+    let activeEl = null;
+    let hoverTimer = null;
+
+    const show = (el) => {
+      const text = el.dataset.tooltip;
+      if (!text) return;
+      body.textContent = text;
+      flyout.className = 'visible';
+      activeEl = el;
+
+      // Position the tooltip relative to the element
+      const rect = el.getBoundingClientRect();
+      const fw = flyout.offsetWidth;
+      const fh = flyout.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      // Horizontal: center on element, clamp to viewport
+      let left = rect.left + rect.width / 2 - fw / 2;
+      left = Math.max(8, Math.min(left, vw - fw - 8));
+
+      // Arrow horizontal position
+      const arrowX = Math.max(16, Math.min(rect.left + rect.width / 2 - left, fw - 16));
+      flyout.style.setProperty('--arrow-x', arrowX + 'px');
+
+      // Vertical: prefer below the element, flip above if not enough room
+      const gap = 8;
+      let top;
+      if (rect.bottom + gap + fh < vh) {
+        top = rect.bottom + gap;
+        flyout.classList.add('arrow-top');
+      } else {
+        top = rect.top - gap - fh;
+        flyout.classList.add('arrow-bottom');
+      }
+      top = Math.max(8, Math.min(top, vh - fh - 8));
+
+      flyout.style.left = left + 'px';
+      flyout.style.top = top + 'px';
+    };
+
+    const hide = () => {
+      flyout.className = '';
+      flyout.style.left = '';
+      flyout.style.top = '';
+      activeEl = null;
+      clearTimeout(touchTimer);
+      clearTimeout(hoverTimer);
+    };
+
+    // Touch: long-press (600ms hold) shows tooltip
+    document.addEventListener('touchstart', (e) => {
+      const el = e.target.closest('[data-tooltip]');
+      if (!el) { hide(); return; }
+      clearTimeout(touchTimer);
+      touchTimer = setTimeout(() => {
+        show(el);
+        // Prevent the tap from also firing as a click
+        el.addEventListener('click', preventClick, { once: true, capture: true });
+      }, 600);
+    }, { passive: true });
+
+    const preventClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    document.addEventListener('touchend', () => {
+      clearTimeout(touchTimer);
+    }, { passive: true });
+
+    document.addEventListener('touchmove', () => {
+      clearTimeout(touchTimer);
+    }, { passive: true });
+
+    // Tap anywhere dismisses tooltip
+    document.addEventListener('touchstart', (e) => {
+      if (activeEl && !e.target.closest('#tooltip-flyout')) {
+        // Small delay to avoid immediately dismissing on the same touch
+        setTimeout(() => { if (activeEl) hide(); }, 50);
+      }
+    }, { passive: true });
+
+    // Mouse: hover shows tooltip after 400ms delay
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest('[data-tooltip]');
+      if (!el || el === activeEl) return;
+      hide();
+      hoverTimer = setTimeout(() => show(el), 400);
+    });
+
+    document.addEventListener('mouseout', (e) => {
+      const el = e.target.closest('[data-tooltip]');
+      if (el) hide();
     });
   }
 
