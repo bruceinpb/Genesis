@@ -190,25 +190,40 @@ Guidelines for your prose:
   }
 
   /**
-   * Generate a cover image prompt by analyzing the story content.
-   * Returns a text prompt suitable for an image generation API.
+   * Generate cover design data by analyzing the story content.
+   * Returns a JSON object with colors, mood text, and visual elements
+   * that can be rendered client-side on a canvas.
    */
-  async generateCoverPrompt({ title, genre, proseExcerpt, characters }) {
+  async generateCoverDesign({ title, genre, proseExcerpt, characters }) {
     if (!this.apiKey) {
       throw new Error('No API key set. Go to Settings to add your Anthropic API key.');
     }
 
-    const systemPrompt = `You are an expert book cover designer and art director. Given details about a novel, generate a vivid, detailed image generation prompt for a compelling book cover. The prompt should describe a single striking visual scene that captures the essence and mood of the story. Focus on visual elements: composition, colors, lighting, mood, key imagery, and artistic style. Do NOT include any text, titles, or author names in the image description. Output ONLY the image prompt, nothing else.`;
+    const systemPrompt = `You are an expert book cover designer. Given a novel's details, create a cover design specification as JSON. Output ONLY valid JSON, no markdown, no explanation.
 
-    let userPrompt = `Generate a book cover image prompt for:\n\nTitle: ${title}\n`;
+The JSON must have this exact structure:
+{
+  "bgGradient": ["#hex1", "#hex2", "#hex3"],
+  "accentColor": "#hex",
+  "titleColor": "#hex",
+  "subtitleColor": "#hex",
+  "mood": "A short evocative tagline (max 8 words)",
+  "symbol": "A single unicode emoji that represents the story",
+  "pattern": "circles|waves|diamonds|stars|lines|dots",
+  "overlay": "dark|light|none"
+}
+
+Choose colors that evoke the story's mood and genre. The bgGradient should be 3 colors for a dramatic gradient. The pattern adds subtle visual texture. The mood is a short tagline for the cover.`;
+
+    let userPrompt = `Design a book cover for:\n\nTitle: ${title}\n`;
     if (genre) userPrompt += `Genre: ${genre}\n`;
     if (characters && characters.length > 0) {
-      userPrompt += `Key characters: ${characters.map(c => c.name + (c.description ? ' - ' + c.description : '')).join('; ')}\n`;
+      userPrompt += `Characters: ${characters.map(c => c.name).join(', ')}\n`;
     }
     if (proseExcerpt) {
-      userPrompt += `\nExcerpt from the novel:\n"""${proseExcerpt.slice(0, 3000)}"""\n`;
+      userPrompt += `\nExcerpt:\n"""${proseExcerpt.slice(0, 2000)}"""\n`;
     }
-    userPrompt += `\nGenerate a concise, vivid image prompt (2-3 sentences) for a professional book cover. Focus on mood, key visual elements, and artistic style. No text or typography in the image.`;
+    userPrompt += `\nOutput the JSON cover design specification only.`;
 
     const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
@@ -220,7 +235,7 @@ Guidelines for your prose:
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: 300,
+        max_tokens: 400,
         messages: [{ role: 'user', content: userPrompt }],
         system: systemPrompt
       })
@@ -234,7 +249,174 @@ Guidelines for your prose:
     }
 
     const result = await response.json();
-    return result.content?.[0]?.text?.trim() || '';
+    const text = result.content?.[0]?.text?.trim() || '';
+
+    // Parse JSON from response (handle potential markdown code blocks)
+    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    return JSON.parse(jsonStr);
+  }
+
+  /**
+   * Render a book cover design to a canvas and return as base64 PNG data URL.
+   */
+  renderCover(design, title, author, width = 600, height = 900) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    // Background gradient
+    const colors = design.bgGradient || ['#1a1a2e', '#16213e', '#0f3460'];
+    const grad = ctx.createLinearGradient(0, 0, width * 0.3, height);
+    grad.addColorStop(0, colors[0]);
+    grad.addColorStop(0.5, colors[1]);
+    grad.addColorStop(1, colors[2]);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Pattern overlay
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = design.accentColor || '#ffffff';
+    const pattern = design.pattern || 'circles';
+    this._drawPattern(ctx, pattern, width, height);
+    ctx.globalAlpha = 1.0;
+
+    // Dark/light overlay for readability
+    if (design.overlay === 'dark') {
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(0, 0, width, height);
+    } else if (design.overlay === 'light') {
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    // Accent bar at top
+    const accent = design.accentColor || '#e94560';
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 0, width, 6);
+
+    // Symbol (large, centered)
+    if (design.symbol) {
+      ctx.globalAlpha = 0.12;
+      ctx.font = `${Math.round(width * 0.5)}px serif`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = design.accentColor || '#ffffff';
+      ctx.fillText(design.symbol, width / 2, height * 0.52);
+      ctx.globalAlpha = 1.0;
+    }
+
+    // Title
+    ctx.textAlign = 'center';
+    ctx.fillStyle = design.titleColor || '#ffffff';
+    const titleSize = Math.round(width * 0.085);
+    ctx.font = `bold ${titleSize}px Georgia, serif`;
+    this._wrapText(ctx, title.toUpperCase(), width / 2, height * 0.28, width * 0.8, titleSize * 1.2);
+
+    // Mood / tagline
+    if (design.mood) {
+      ctx.fillStyle = design.subtitleColor || 'rgba(255,255,255,0.7)';
+      const moodSize = Math.round(width * 0.035);
+      ctx.font = `italic ${moodSize}px Georgia, serif`;
+      ctx.fillText(design.mood, width / 2, height * 0.58);
+    }
+
+    // Author name at bottom
+    if (author) {
+      ctx.fillStyle = design.subtitleColor || 'rgba(255,255,255,0.8)';
+      const authorSize = Math.round(width * 0.045);
+      ctx.font = `${authorSize}px Georgia, serif`;
+      ctx.fillText(author, width / 2, height * 0.88);
+    }
+
+    // Bottom accent bar
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, height - 6, width, 6);
+
+    // Subtle border
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(width * 0.05, height * 0.03, width * 0.9, height * 0.94);
+
+    return canvas.toDataURL('image/png');
+  }
+
+  _drawPattern(ctx, pattern, w, h) {
+    const step = 40;
+    switch (pattern) {
+      case 'circles':
+        for (let x = 0; x < w; x += step) {
+          for (let y = 0; y < h; y += step) {
+            ctx.beginPath();
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        break;
+      case 'waves':
+        for (let y = 0; y < h; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          for (let x = 0; x < w; x += 10) {
+            ctx.lineTo(x, y + Math.sin(x * 0.05) * 12);
+          }
+          ctx.stroke();
+        }
+        break;
+      case 'diamonds':
+        for (let x = 0; x < w; x += step) {
+          for (let y = 0; y < h; y += step) {
+            ctx.beginPath();
+            ctx.moveTo(x, y - 10);
+            ctx.lineTo(x + 10, y);
+            ctx.lineTo(x, y + 10);
+            ctx.lineTo(x - 10, y);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        break;
+      case 'stars':
+        for (let x = 20; x < w; x += step * 1.5) {
+          for (let y = 20; y < h; y += step * 1.5) {
+            ctx.font = '16px serif';
+            ctx.fillText('\u2726', x, y);
+          }
+        }
+        break;
+      case 'lines':
+        for (let i = -h; i < w + h; i += step) {
+          ctx.beginPath();
+          ctx.moveTo(i, 0);
+          ctx.lineTo(i + h, h);
+          ctx.stroke();
+        }
+        break;
+      default: // dots
+        for (let x = 0; x < w; x += step / 2) {
+          for (let y = 0; y < h; y += step / 2) {
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+    }
+  }
+
+  _wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+    const words = text.split(' ');
+    let line = '';
+    let currentY = y;
+    for (const word of words) {
+      const test = line + word + ' ';
+      if (ctx.measureText(test).width > maxWidth && line.length > 0) {
+        ctx.fillText(line.trim(), x, currentY);
+        line = word + ' ';
+        currentY += lineHeight;
+      } else {
+        line = test;
+      }
+    }
+    ctx.fillText(line.trim(), x, currentY);
   }
 }
 
