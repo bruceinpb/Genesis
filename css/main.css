@@ -108,9 +108,7 @@ body.no-bounce {
   opacity: 1;
 }
 
-#app.focus-mode ~ .focus-exit-btn {
-  display: flex;
-}
+/* JS toggles display:flex/none on #btn-exit-focus directly */
 
 /* ============================================
    Sidebar
