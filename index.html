@@ -343,6 +343,19 @@
         <input type="checkbox" id="generate-use-characters" checked style="width:20px;height:20px;">
         <label for="generate-use-characters" style="margin:0;" data-tooltip="When checked, the AI uses your character profiles (names, descriptions, roles, and personalities from the Characters tab) to keep characters consistent and in-character throughout the generated prose.">Include character profiles as context</label>
       </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+        <input type="checkbox" id="generate-use-notes" checked style="width:20px;height:20px;">
+        <label for="generate-use-notes" style="margin:0;" data-tooltip="When checked, the AI reads all your project notes (research, worldbuilding, plot notes) from the Notes tab and uses them as context to produce more accurate, on-topic prose.">Include project notes as context</label>
+      </div>
+    </div>
+
+    <div class="analysis-section">
+      <h3>AI Instructions</h3>
+      <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
+        Persistent rules the AI must follow for every generation in this project. These are given high priority in the prompt.
+      </p>
+      <textarea class="form-input" id="generate-ai-instructions" rows="4" data-tooltip="Enter rules or constraints the AI must follow for every prose generation. Examples: 'Each chapter covers 10 years of the protagonist's life', 'Write in first person present tense', 'Never use flashbacks'. These instructions are saved with the project and strongly emphasized in the AI prompt." placeholder="e.g. Each chapter covers exactly 10 years. Chapter 1 covers 1863-1873. Write in a formal, historical narrative style. Focus on factual events and real historical details."></textarea>
+      <button class="btn btn-sm" id="btn-save-ai-instructions" data-tooltip="Save these AI instructions to your project so they persist across sessions." style="width:100%;margin-top:6px;">Save Instructions</button>
     </div>
 
     <div id="generate-status" style="display:none;margin-bottom:16px;">
