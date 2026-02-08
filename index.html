@@ -74,7 +74,10 @@
   <aside class="sidebar">
     <div class="sidebar-header">
       <h1>Genesis 2</h1>
-      <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
+      <div style="display:flex;gap:2px;align-items:center;">
+        <button class="toolbar-btn" id="btn-book-structure" aria-label="Book Structure" data-tooltip="Book Structure — Configure the overall structure of your book: total words, number of chapters, subtitle, and generate AI-powered chapter outlines." style="font-size:0.7rem;padding:6px 8px;min-width:auto;min-height:auto;">Structure</button>
+        <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
+      </div>
     </div>
 
     <nav class="sidebar-nav">
@@ -188,6 +191,7 @@
       <button class="btn btn-primary continue-word-btn" data-words="1000" data-tooltip="Continue Writing ~1,000 words — Generate approximately 1,000 words of new prose, continuing from where the story left off." style="flex:1;">+1,000</button>
       <button class="btn btn-primary continue-word-btn" data-words="2000" data-tooltip="Continue Writing ~2,000 words — Generate approximately 2,000 words of new prose, continuing from where the story left off." style="flex:1;">+2,000</button>
     </div>
+    <button class="btn" id="btn-continue-rethink" data-tooltip="Rethink — Revise the current chapter's outline based on your instructions before continuing to write." style="font-size:0.8rem;">Rethink</button>
     <button class="btn" id="btn-continue-to-target" data-tooltip="Write to Goal — Calculate the remaining words needed to reach your project's word count goal, then generate prose to complete the story with a satisfying conclusion.">Write to Goal</button>
     <button class="btn btn-sm" id="btn-continue-dismiss" data-tooltip="Dismiss this bar." style="min-width:44px;">&times;</button>
   </div>
@@ -377,6 +381,108 @@
         You need an Anthropic API key to generate prose.
       </p>
       <button class="btn btn-sm btn-primary" id="btn-generate-open-settings">Open Settings to Add Key</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Book Structure Panel ===== -->
+<div class="panel" id="panel-book-structure">
+  <div class="panel-header">
+    <h2>Book Structure</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-book-structure-body">
+    <div class="analysis-section">
+      <h3>Book Details</h3>
+      <div class="form-group">
+        <label>Book Title</label>
+        <input type="text" class="form-input" id="bs-title" placeholder="Your book title">
+      </div>
+      <div class="form-group">
+        <label>Subtitle (optional)</label>
+        <input type="text" class="form-input" id="bs-subtitle" placeholder="A subtitle for your book">
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">If set, the subtitle appears on the cover image below the title in smaller text.</p>
+      </div>
+    </div>
+
+    <div class="analysis-section">
+      <h3>Book Size</h3>
+      <div class="form-group">
+        <label>Total Word Count Goal</label>
+        <input type="number" class="form-input" id="bs-total-words" value="80000" min="5000" step="1000" placeholder="80000">
+      </div>
+      <div class="form-group">
+        <label>Number of Chapters</label>
+        <input type="number" class="form-input" id="bs-num-chapters" value="20" min="1" max="200" placeholder="20">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <div class="stat-card" style="text-align:center;">
+          <div class="stat-value" id="bs-words-per-chapter">4,000</div>
+          <div class="stat-label">Approximate Words per Chapter</div>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
+    </div>
+
+    <div class="analysis-section">
+      <h3>AI Outline Generation</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Generate a detailed outline for each chapter based on your notes, characters, and book structure.
+        The AI will analyze all your project information and create ~200-250 word outlines per chapter,
+        auto-name each chapter, and populate the sidebar. Review and edit outlines before generating prose.
+      </p>
+      <div id="bs-outline-status" style="display:none;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="generate-spinner"></div>
+          <span id="bs-outline-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating outlines...</span>
+        </div>
+      </div>
+      <div id="bs-outline-error" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
+      <button class="btn btn-primary" id="btn-generate-outlines" style="width:100%;">Generate Outlines</button>
+      <p style="font-size:0.75rem;color:var(--text-muted);margin-top:8px;">
+        This will create chapters with outlines. Existing chapters will not be affected. Make sure you have entered notes, characters, and book structure information first.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Prose Review Modal ===== -->
+<div class="modal-overlay" id="prose-review-overlay">
+  <div class="modal" style="width:min(600px, 90vw);max-height:90vh;">
+    <div class="modal-header">
+      <h2>Prose Quality Review</h2>
+    </div>
+    <div class="modal-body" id="prose-review-body" style="overflow-y:auto;">
+      <!-- Rendered dynamically -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-prose-review-accept">Accept Prose</button>
+      <button class="btn btn-primary" id="btn-prose-review-rewrite">Rewrite Problem Areas</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Rethink Modal ===== -->
+<div class="modal-overlay" id="rethink-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Rethink Chapter Outline</h2>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Provide instructions for how the chapter outline should be revised. The AI will rewrite the outline based on your guidance.
+      </p>
+      <textarea class="form-input" id="rethink-prompt" rows="4" placeholder='e.g. "Enhance character X\'s role in this chapter" or "Do not discuss X, Y, or Z"'></textarea>
+      <div id="rethink-status" style="display:none;margin-top:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="generate-spinner"></div>
+          <span style="font-size:0.85rem;color:var(--accent-primary);">Rethinking outline...</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-rethink-cancel">Cancel</button>
+      <button class="btn btn-primary" id="btn-rethink-submit">Rethink</button>
     </div>
   </div>
 </div>

@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -54,7 +54,7 @@ class ProseGenerator {
     this.abortController = new AbortController();
 
     const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules });
-    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, genreRules, projectGoal });
+    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal });
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {
@@ -124,6 +124,228 @@ class ProseGenerator {
     }
   }
 
+  /**
+   * Generate detailed chapter outlines based on notes, characters, and book structure.
+   * Returns an array of { title, outline } objects for each chapter.
+   */
+  async generateOutlines({ title, subtitle, genre, totalWords, numChapters, characters, notes, aiInstructions }) {
+    if (!this.apiKey) {
+      throw new Error('No API key set. Go to Settings to add your Anthropic API key.');
+    }
+
+    const systemPrompt = `You are a master book architect and bestselling author. You create extraordinarily detailed chapter outlines that serve as the blueprint for an entire novel. Your outlines are specific, actionable, and rich with narrative detail.
+
+Your output must be valid JSON — an array of objects with "title" and "outline" fields. No markdown, no commentary, just JSON.`;
+
+    let userPrompt = `Create detailed chapter outlines for a ${numChapters}-chapter novel.
+
+Book Title: ${title}${subtitle ? `\nSubtitle: ${subtitle}` : ''}
+${genre ? `Genre: ${genre}` : ''}
+Target Total Words: ${totalWords.toLocaleString()} (~${Math.round(totalWords / numChapters).toLocaleString()} words per chapter)
+Number of Chapters: ${numChapters}`;
+
+    if (characters && characters.length > 0) {
+      userPrompt += '\n\nCharacters:';
+      for (const char of characters) {
+        userPrompt += `\n- ${char.name} (${char.role})`;
+        if (char.description) userPrompt += `: ${char.description}`;
+        if (char.motivation) userPrompt += ` | Motivation: ${char.motivation}`;
+        if (char.arc) userPrompt += ` | Arc: ${char.arc}`;
+      }
+    }
+
+    if (notes) {
+      userPrompt += `\n\nProject Notes & World-Building:\n${notes}`;
+    }
+
+    if (aiInstructions) {
+      userPrompt += `\n\nAuthor Instructions (MUST follow):\n${aiInstructions}`;
+    }
+
+    userPrompt += `\n\nFor each of the ${numChapters} chapters, provide:
+1. A descriptive chapter title that reflects the chapter's content
+2. A detailed outline of 200-250 words describing:
+   - The key events and scenes in the chapter
+   - Character actions, motivations, and emotional beats
+   - Important dialogue moments or revelations
+   - Setting and atmosphere details
+   - How the chapter connects to the overall narrative arc
+   - The chapter's role in building tension or advancing the plot
+
+Ensure narrative continuity across all chapters — each chapter should flow naturally from the previous one.
+
+Output ONLY a JSON array like: [{"title": "Chapter Title", "outline": "Detailed outline text..."}, ...]`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 8192,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const text = result.content?.[0]?.text?.trim() || '';
+
+    // Parse JSON from response (handle potential markdown wrapping)
+    let jsonStr = text;
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) jsonStr = jsonMatch[0];
+
+    try {
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      throw new Error('Failed to parse outline response. The AI returned invalid JSON.');
+    }
+  }
+
+  /**
+   * Rethink/revise a chapter outline based on user instructions.
+   */
+  async rethinkOutline({ currentOutline, chapterTitle, userInstructions, bookTitle, genre, characters, notes }) {
+    if (!this.apiKey) {
+      throw new Error('No API key set.');
+    }
+
+    const systemPrompt = `You are a master book architect revising a chapter outline. Output ONLY the revised outline text (200-250 words). No commentary, no labels, no JSON — just the outline text.`;
+
+    let userPrompt = `Revise this chapter outline based on the author's instructions.
+
+Book: ${bookTitle}${genre ? ` (${genre})` : ''}
+Chapter: ${chapterTitle}
+
+Current Outline:
+${currentOutline}
+
+Author's Revision Instructions:
+${userInstructions}`;
+
+    if (characters && characters.length > 0) {
+      userPrompt += '\n\nCharacters: ' + characters.map(c => `${c.name} (${c.role})`).join(', ');
+    }
+
+    if (notes) {
+      userPrompt += `\n\nProject Notes:\n${notes.slice(0, 2000)}`;
+    }
+
+    userPrompt += '\n\nWrite the revised outline (200-250 words). Output ONLY the outline text.';
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    return result.content?.[0]?.text?.trim() || '';
+  }
+
+  /**
+   * Score prose quality on a 100-point scale and detect AI patterns.
+   * Returns { score, label, issues[], aiPatterns[], summary }
+   */
+  async scoreProse(proseText) {
+    if (!this.apiKey) {
+      throw new Error('No API key set.');
+    }
+
+    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
+
+Your scoring criteria:
+- Sentence variety and rhythm (0-15)
+- Dialogue authenticity and distinction (0-15)
+- Sensory detail and showing vs telling (0-15)
+- Emotional resonance and character depth (0-15)
+- Vocabulary precision and word choice (0-10)
+- Narrative flow and pacing (0-10)
+- Originality and voice (0-10)
+- Technical execution (grammar, punctuation) (0-10)
+
+Known AI writing patterns to detect:
+- Overuse of "delicate", "intricate", "testament to", "tapestry", "symphony of"
+- Starting sentences with "As" or "While" excessively
+- Lists of three (tricolons) used too frequently
+- Purple prose or overly flowery descriptions
+- Telling emotions instead of showing them ("She felt sad")
+- Formulaic paragraph structures
+- Lack of authentic dialogue tags variety
+- Excessive use of em-dashes
+- Repetitive transitional phrases
+- Generic or vague descriptions lacking specificity
+
+Be HONEST. Most raw AI prose scores 45-65. Good human writing scores 70-85. Exceptional prose scores 85+.
+
+Output valid JSON only: {"score": number, "label": "string", "issues": [{"text": "quoted problematic passage", "problem": "description", "severity": "high|medium|low"}], "aiPatterns": [{"pattern": "pattern name", "examples": ["example from text"]}], "summary": "2-3 sentence overall assessment"}`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: `Score this prose and detect any AI patterns:\n\n"""${proseText.slice(-4000)}"""` }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const text = result.content?.[0]?.text?.trim() || '';
+
+    let jsonStr = text;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) jsonStr = jsonMatch[0];
+
+    try {
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      return { score: 0, label: 'Unable to score', issues: [], aiPatterns: [], summary: 'Scoring failed — could not parse response.' };
+    }
+  }
+
   _buildSystemPrompt({ tone, style, genre, genreRules }) {
     let prompt = `You are a world-class fiction author writing prose for a novel. Your writing should be vivid, engaging, and publication-ready.
 
@@ -137,7 +359,20 @@ Guidelines for your prose:
 - Write natural, character-distinct dialogue
 - Include internal thought and emotional resonance
 - Aim for a Flesch readability score of 60-80 (accessible but not simplistic)
-- Write ONLY the prose — no meta-commentary, no scene labels, no author notes`;
+- Write ONLY the prose — no meta-commentary, no scene labels, no author notes
+
+=== AVOID AI WRITING PATTERNS ===
+CRITICAL: Your prose must read as authentically human-written. Strictly avoid these known AI patterns:
+- Do NOT overuse words like "delicate", "intricate", "testament to", "tapestry", "symphony of", "dance of", "nestled", "whispering"
+- Do NOT start sentences with "As" or "While" excessively
+- Do NOT use tricolons (lists of three) more than once per 500 words
+- Do NOT write purple prose or overly flowery descriptions
+- Do NOT tell emotions ("She felt sad") — SHOW them through action and dialogue
+- Do NOT use formulaic paragraph structures (observation → feeling → action → reflection)
+- Do NOT overuse em-dashes — use varied punctuation
+- Do NOT use generic transitional phrases like "Meanwhile", "In that moment", "Little did she know"
+- Vary dialogue tags — not every line needs "said" or an action beat
+- Be specific, not generic — real details over vague descriptions`;
 
     if (genreRules) {
       prompt += `\n\n=== GENRE STYLE RULES (${genre}) ===\n${genreRules}`;
@@ -160,7 +395,7 @@ Guidelines for your prose:
     return prompt;
   }
 
-  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, wordTarget, concludeStory, genre, genreRules, projectGoal }) {
+  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal }) {
     let prompt = '';
 
     if (chapterTitle) {
@@ -176,6 +411,11 @@ Guidelines for your prose:
     if (aiInstructions) {
       prompt += `\n=== AUTHOR INSTRUCTIONS (MUST FOLLOW) ===\n${aiInstructions}\n=== END AUTHOR INSTRUCTIONS ===\n`;
       prompt += `CRITICAL: The above author instructions take priority over all other guidance. Follow them exactly.\n`;
+    }
+
+    if (chapterOutline) {
+      prompt += `\n=== CHAPTER OUTLINE (CANON — follow this precisely) ===\n${chapterOutline}\n=== END CHAPTER OUTLINE ===\n`;
+      prompt += `CRITICAL: The chapter outline above is the authoritative guide for this chapter's content. Follow it precisely while writing vivid, engaging prose.\n`;
     }
 
     prompt += `\nStory/Plot:\n${plot}\n`;
@@ -313,7 +553,7 @@ Guidelines for your prose:
    * @param {string} title - the project title
    * @returns {Promise<string>} - base64 data URL with title overlaid
    */
-  async overlayTitle(dataUrl, title) {
+  async overlayTitle(dataUrl, title, subtitle) {
     if (!title) return dataUrl;
     try {
       // Convert data URL to Blob → object URL (more reliable than loading huge data URLs)
@@ -344,21 +584,21 @@ Guidelines for your prose:
       URL.revokeObjectURL(objectUrl);
 
       // Add a gradient at the bottom for text readability
-      const grad = ctx.createLinearGradient(0, h * 0.6, 0, h);
+      const grad = ctx.createLinearGradient(0, h * 0.55, 0, h);
       grad.addColorStop(0, 'rgba(0,0,0,0)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.65)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.7)');
       ctx.fillStyle = grad;
-      ctx.fillRect(0, h * 0.6, w, h * 0.4);
+      ctx.fillRect(0, h * 0.55, w, h * 0.45);
 
       // Calculate font size — scale to fit width with padding
       const maxWidth = w * 0.85;
       let fontSize = Math.round(w * 0.08);
       ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
 
-      // Word-wrap the title into lines
-      const wrapText = (size) => {
-        ctx.font = `bold ${size}px Georgia, "Times New Roman", serif`;
-        const words = title.split(/\s+/);
+      // Word-wrap text into lines
+      const wrapText = (text, size, bold) => {
+        ctx.font = `${bold ? 'bold ' : ''}${size}px Georgia, "Times New Roman", serif`;
+        const words = text.split(/\s+/);
         const result = [];
         let current = '';
         for (const word of words) {
@@ -374,33 +614,60 @@ Guidelines for your prose:
         return result;
       };
 
-      let lines = wrapText(fontSize);
-      if (lines.length > 3) {
+      let titleLines = wrapText(title, fontSize, true);
+      if (titleLines.length > 3) {
         fontSize = Math.round(fontSize * 0.7);
-        lines = wrapText(fontSize);
+        titleLines = wrapText(title, fontSize, true);
+      }
+
+      // Calculate subtitle lines if present
+      const subtitleFontSize = Math.round(fontSize * 0.55);
+      let subtitleLines = [];
+      if (subtitle) {
+        subtitleLines = wrapText(subtitle, subtitleFontSize, false);
       }
 
       // Position text near the bottom
-      const lineHeight = fontSize * 1.3;
-      const totalTextHeight = lines.length * lineHeight;
+      const titleLineHeight = fontSize * 1.3;
+      const subtitleLineHeight = subtitleFontSize * 1.4;
+      const subtitleGap = subtitle ? subtitleFontSize * 0.8 : 0;
+      const totalTextHeight = (titleLines.length * titleLineHeight) + subtitleGap + (subtitleLines.length * subtitleLineHeight);
       const startY = h - totalTextHeight - h * 0.05;
 
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
 
-      for (let i = 0; i < lines.length; i++) {
+      // Draw title
+      ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+      for (let i = 0; i < titleLines.length; i++) {
         const x = w / 2;
-        const y = startY + i * lineHeight;
+        const y = startY + i * titleLineHeight;
 
-        // Dark outline stroke for high contrast
         ctx.strokeStyle = 'rgba(0,0,0,0.9)';
         ctx.lineWidth = Math.max(4, fontSize * 0.1);
         ctx.lineJoin = 'round';
-        ctx.strokeText(lines[i], x, y);
+        ctx.strokeText(titleLines[i], x, y);
 
-        // White fill
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(lines[i], x, y);
+        ctx.fillText(titleLines[i], x, y);
+      }
+
+      // Draw subtitle if present
+      if (subtitleLines.length > 0) {
+        ctx.font = `italic ${subtitleFontSize}px Georgia, "Times New Roman", serif`;
+        const subtitleStartY = startY + titleLines.length * titleLineHeight + subtitleGap;
+        for (let i = 0; i < subtitleLines.length; i++) {
+          const x = w / 2;
+          const y = subtitleStartY + i * subtitleLineHeight;
+
+          ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+          ctx.lineWidth = Math.max(2, subtitleFontSize * 0.08);
+          ctx.lineJoin = 'round';
+          ctx.strokeText(subtitleLines[i], x, y);
+
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.fillText(subtitleLines[i], x, y);
+        }
       }
 
       return canvas.toDataURL('image/jpeg', 0.9);

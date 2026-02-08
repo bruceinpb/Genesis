@@ -1612,3 +1612,105 @@ select.form-input {
 [data-theme="sepia"] #tooltip-flyout {
   background: rgba(30, 30, 40, 0.97);
 }
+
+/* ============================================
+   Book Structure Panel
+   ============================================ */
+
+.bs-words-calc {
+  transition: color 0.3s;
+}
+
+/* ============================================
+   Prose Quality Review
+   ============================================ */
+
+.prose-score-display {
+  text-align: center;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.prose-score-number {
+  font-size: 3rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.prose-score-number.score-excellent { color: var(--success); }
+.prose-score-number.score-good { color: var(--accent-primary); }
+.prose-score-number.score-fair { color: var(--warning); }
+.prose-score-number.score-poor { color: var(--danger); }
+
+.prose-score-label {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.prose-issues-list {
+  list-style: none;
+  padding: 0;
+}
+
+.prose-issue-item {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--warning);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.prose-issue-item.severity-high {
+  border-left-color: var(--danger);
+}
+
+.prose-issue-item.severity-low {
+  border-left-color: var(--info);
+}
+
+.prose-patterns-list {
+  list-style: none;
+  padding: 0;
+}
+
+.prose-pattern-item {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  background: rgba(255, 59, 48, 0.08);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.prose-pattern-item strong {
+  color: var(--danger);
+}
+
+/* ============================================
+   Chapter Outline Display
+   ============================================ */
+
+.chapter-outline-section {
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--accent-primary);
+}
+
+.chapter-outline-section h4 {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  color: var(--accent-primary);
+  margin-bottom: 6px;
+}
+
+.chapter-outline-section p {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
