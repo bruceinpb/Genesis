@@ -366,6 +366,7 @@
 
     <div style="display:flex;gap:8px;">
       <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI. The generated prose will be appended to your current chapter in the editor. You can edit, revise, or regenerate as needed." style="flex:1;">Generate Prose</button>
+      <button class="btn" id="btn-iterative-write" data-tooltip="Iterative Write — Generate ~100 words at a time, automatically scoring and refining each paragraph until it reaches 90% quality. Shows a progress bar while working. You approve each paragraph before moving to the next." style="flex:1;color:var(--accent-primary);border-color:var(--accent-primary);">Iterative Write</button>
       <button class="btn" id="btn-generate-cancel" data-tooltip="Stop — Cancel the current AI generation. Any prose already received will remain in the editor." style="display:none;">Stop</button>
     </div>
 
@@ -473,6 +474,69 @@
         <div class="scoring-progress-fill"></div>
       </div>
       <p style="font-size:0.8rem;color:var(--text-muted);margin-top:12px;">Analyzing prose quality&hellip;</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Iterative Writing Progress Overlay ===== -->
+<div class="modal-overlay" id="iterative-write-overlay">
+  <div class="modal" style="width:min(440px, 90vw);">
+    <div class="modal-body" style="padding:28px 24px;text-align:center;">
+      <div style="font-size:1rem;font-weight:700;color:var(--text-primary);margin-bottom:4px;">Iterative Writing</div>
+      <div id="iterative-phase-label" style="font-size:0.8rem;color:var(--accent-primary);margin-bottom:16px;">Generating paragraph&hellip;</div>
+
+      <div class="iterative-score-display">
+        <div id="iterative-score-value" class="iterative-score-number">--</div>
+        <div id="iterative-score-label" style="font-size:0.75rem;color:var(--text-muted);">Score / 100</div>
+      </div>
+
+      <div style="margin:16px 0;">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">
+          <span>Quality Score</span>
+          <span id="iterative-score-pct">0%</span>
+        </div>
+        <div class="iterative-progress-bar">
+          <div id="iterative-progress-fill" class="iterative-progress-fill" style="width:0%;"></div>
+          <div class="iterative-progress-threshold"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;font-size:0.7rem;color:var(--text-muted);margin-top:2px;">
+          <span>Target: 90%</span>
+        </div>
+      </div>
+
+      <div id="iterative-iteration-info" style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;">
+        Iteration: <span id="iterative-iteration-num">0</span> &bull; Best: <span id="iterative-best-score">--</span>
+      </div>
+
+      <div id="iterative-status-log" style="font-size:0.75rem;color:var(--text-muted);max-height:80px;overflow-y:auto;text-align:left;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:16px;">
+        Starting iterative writing&hellip;
+      </div>
+
+      <button class="btn btn-sm" id="btn-iterative-cancel" style="min-width:100px;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Iterative Writing Accept Overlay ===== -->
+<div class="modal-overlay" id="iterative-accept-overlay">
+  <div class="modal" style="width:min(480px, 90vw);">
+    <div class="modal-header">
+      <h2>Paragraph Ready</h2>
+    </div>
+    <div class="modal-body">
+      <div class="iterative-score-display" style="margin-bottom:12px;">
+        <div id="iterative-accept-score" class="iterative-score-number score-excellent">--</div>
+        <div style="font-size:0.8rem;color:var(--text-muted);">Quality Score Achieved</div>
+      </div>
+      <div id="iterative-accept-preview" style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6;padding:12px;background:var(--bg-secondary);border-radius:var(--radius-sm);max-height:200px;overflow-y:auto;margin-bottom:12px;"></div>
+      <p style="font-size:0.8rem;color:var(--text-muted);text-align:center;">
+        Accept this paragraph and continue to the next, or reject to keep refining.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-iterative-reject">Keep Refining</button>
+      <button class="btn btn-primary" id="btn-iterative-accept">Accept &amp; Continue</button>
+      <button class="btn" id="btn-iterative-accept-stop">Accept &amp; Stop</button>
     </div>
   </div>
 </div>

@@ -1917,6 +1917,437 @@ class App {
     }
   }
 
+  // ========================================
+  //  Iterative Writing Engine
+  // ========================================
+
+  /**
+   * Iterative Write: generates ~100 words, scores, rewrites until score >= 90,
+   * then asks user to accept before continuing to the next paragraph.
+   */
+  async _iterativeWrite() {
+    if (!this.generator.hasApiKey()) {
+      alert('No API key set. Go to Settings to add your Anthropic API key.');
+      return;
+    }
+
+    // Gather generation settings from the panel
+    const plot = document.getElementById('generate-plot')?.value?.trim();
+    if (!plot) {
+      alert('Please enter a story plot or description.');
+      return;
+    }
+
+    const tone = document.getElementById('generate-tone')?.value?.trim() || '';
+    const style = document.getElementById('generate-style')?.value?.trim() || '';
+    const useCharacters = document.getElementById('generate-use-characters')?.checked;
+    const useNotes = document.getElementById('generate-use-notes')?.checked;
+
+    // Store settings for the iterative session
+    this._iterativeSettings = { plot, tone, style, useCharacters, useNotes };
+    this._iterativeCancelled = false;
+
+    this._closeAllPanels();
+    this._hideWelcome();
+
+    // Start the iterative loop
+    await this._iterativeWriteLoop();
+  }
+
+  async _iterativeWriteLoop() {
+    if (this._iterativeCancelled) return;
+
+    const settings = this._iterativeSettings;
+    if (!settings) return;
+
+    // Show iterative writing overlay
+    this._showIterativeOverlay(true);
+    this._updateIterativePhase('Generating paragraph\u2026');
+    this._updateIterativeScore(null);
+    this._updateIterativeLog('Generating ~100 words\u2026');
+
+    // Gather context
+    const existingContent = this.editor.getContent();
+    this._preGenerationContent = existingContent;
+
+    let characters = [];
+    if (settings.useCharacters && this.state.currentProjectId) {
+      characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
+    }
+
+    let notes = '';
+    if (settings.useNotes && this.state.currentProjectId) {
+      const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId);
+      if (projectNotes.length > 0) {
+        notes = projectNotes.map(n => {
+          let entry = n.title;
+          if (n.type && n.type !== 'general') entry = `[${n.type}] ${entry}`;
+          if (n.content) entry += '\n' + n.content;
+          return entry;
+        }).join('\n\n');
+      }
+    }
+
+    const aiInstructions = this._currentProject?.aiInstructions || '';
+    let chapterTitle = '';
+    if (this.state.currentChapterId) {
+      try {
+        const chapter = await this.fs.getChapter(this.state.currentChapterId);
+        if (chapter) chapterTitle = chapter.title;
+      } catch (_) {}
+    }
+
+    const project = this._currentProject;
+    const genreId = project ? (project.genre || '') : '';
+    const subgenreId = project ? (project.subgenre || '') : '';
+    const genreInfo = this._getGenreRules(genreId, subgenreId);
+    const chapterOutline = this._currentChapterOutline || '';
+
+    // Generate ~100 words
+    const editorEl = this.editor.element;
+    let streamedText = '';
+
+    try {
+      await new Promise((resolve, reject) => {
+        if (this._iterativeCancelled) { resolve(); return; }
+
+        this.generator.generate(
+          {
+            plot: settings.plot,
+            existingContent,
+            chapterTitle,
+            characters,
+            notes,
+            chapterOutline,
+            aiInstructions,
+            tone: settings.tone,
+            style: settings.style,
+            wordTarget: 100,
+            genre: genreInfo?.label || '',
+            genreRules: genreInfo?.rules || '',
+            projectGoal: project?.wordCountGoal || 0,
+            voice: project?.voice || ''
+          },
+          {
+            onChunk: (text) => {
+              streamedText += text;
+              const startingContent = existingContent.trim() ? existingContent : '';
+              const paragraphs = streamedText.split('\n\n');
+              const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+              editorEl.innerHTML = startingContent + newHtml;
+              const container = editorEl.closest('.editor-area');
+              if (container) container.scrollTop = container.scrollHeight;
+              const wc = editorEl.textContent.match(/[a-zA-Z'''\u2019-]+/g) || [];
+              const wordsEl = document.getElementById('status-words');
+              if (wordsEl) wordsEl.textContent = wc.length.toLocaleString();
+              const fwcWords = document.getElementById('fwc-words');
+              if (fwcWords) fwcWords.textContent = wc.length.toLocaleString();
+            },
+            onDone: () => {
+              // Save generated content
+              const content = this.editor.getContent();
+              if (this.state.currentChapterId) {
+                this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+                this._updateLocalWordCounts(content);
+              }
+              resolve();
+            },
+            onError: (err) => reject(err)
+          }
+        );
+      });
+    } catch (err) {
+      this._showIterativeOverlay(false);
+      alert('Generation failed: ' + err.message);
+      return;
+    }
+
+    if (this._iterativeCancelled || !streamedText || streamedText.length < 20) {
+      this._showIterativeOverlay(false);
+      return;
+    }
+
+    // Store the generated text for the iteration loop
+    this._lastGeneratedText = streamedText;
+    this._lastGenSettings = {
+      plot: settings.plot, wordTarget: 100, tone: settings.tone,
+      style: settings.style, useCharacters: settings.useCharacters,
+      useNotes: settings.useNotes, chapterOutline
+    };
+
+    // Begin score-and-refine loop
+    await this._iterativeScoreAndRefine(streamedText, 0, 0);
+  }
+
+  /**
+   * Score the current paragraph and refine it if below 90%.
+   * Keeps iterating until score >= 90 or max iterations reached.
+   */
+  async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
+    if (this._iterativeCancelled) {
+      this._showIterativeOverlay(false);
+      return;
+    }
+
+    const MAX_ITERATIONS = 8;
+    iteration++;
+
+    this._updateIterativePhase('Scoring paragraph\u2026');
+    this._updateIterativeIteration(iteration, bestScore);
+    this._updateIterativeLog(`Iteration ${iteration}: Scoring\u2026`);
+
+    // Score the prose
+    let review;
+    try {
+      review = await this.generator.scoreProse(currentText, iteration > 1 ? {
+        isRewrite: true,
+        previousIssueCount: this._iterPrevIssueCount || 0,
+        previousScore: this._iterPrevScore || 0,
+        previousSubscores: this._iterPrevSubscores || {}
+      } : undefined);
+    } catch (err) {
+      this._updateIterativeLog(`Scoring failed: ${err.message}`);
+      this._showIterativeOverlay(false);
+      return;
+    }
+
+    if (this._iterativeCancelled) {
+      this._showIterativeOverlay(false);
+      return;
+    }
+
+    const score = review.score || 0;
+    if (score > bestScore) bestScore = score;
+
+    this._updateIterativeScore(score);
+    this._updateIterativeIteration(iteration, bestScore);
+    this._updateIterativeLog(`Iteration ${iteration}: Score = ${score}/100`);
+
+    // Store for next iteration context
+    this._iterPrevScore = score;
+    this._iterPrevIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+    this._iterPrevSubscores = review.subscores;
+
+    // Check if we've reached the target
+    if (score >= 90) {
+      this._showIterativeOverlay(false);
+      this._presentIterativeAccept(currentText, score);
+      return;
+    }
+
+    // Check if max iterations reached
+    if (iteration >= MAX_ITERATIONS) {
+      this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}`);
+      this._showIterativeOverlay(false);
+      this._presentIterativeAccept(currentText, score);
+      return;
+    }
+
+    // Rewrite to fix issues
+    this._updateIterativePhase('Refining paragraph\u2026');
+    this._updateIterativeLog(`Iteration ${iteration}: Fixing ${this._iterPrevIssueCount} issues\u2026`);
+
+    // Collect problems to fix (same logic as _rewriteProblems)
+    const problems = [];
+    if (review.aiPatterns) {
+      for (const p of review.aiPatterns) {
+        problems.push({
+          text: p.examples?.[0] || '',
+          description: `AI Pattern: ${p.pattern}`,
+          impact: p.estimatedImpact || 3,
+          severity: 'high'
+        });
+      }
+    }
+    if (review.issues) {
+      for (const issue of review.issues) {
+        if (issue.severity === 'low') continue;
+        problems.push({
+          text: issue.text || '',
+          description: issue.problem || '',
+          impact: issue.estimatedImpact || 1,
+          severity: issue.severity
+        });
+      }
+    }
+    problems.sort((a, b) => b.impact - a.impact);
+    const cappedProblems = problems.slice(0, 10);
+    const formattedProblems = cappedProblems.map(p => {
+      if (p.text) return `FIND: "${p.text}" \u2192 PROBLEM: ${p.description} [${p.severity}, ~${p.impact} pts]`;
+      return `${p.description} [${p.severity}, ~${p.impact} pts]`;
+    });
+
+    if (formattedProblems.length === 0) {
+      // No fixable issues but score is still < 90 — accept what we have
+      this._updateIterativeLog(`No fixable issues found at score ${score}. Presenting for review.`);
+      this._showIterativeOverlay(false);
+      this._presentIterativeAccept(currentText, score);
+      return;
+    }
+
+    // Gather context for rewrite
+    let characters = [];
+    if (this._iterativeSettings.useCharacters && this.state.currentProjectId) {
+      characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
+    }
+
+    let chapterTitle = '';
+    if (this.state.currentChapterId) {
+      try {
+        const chapter = await this.fs.getChapter(this.state.currentChapterId);
+        if (chapter) chapterTitle = chapter.title;
+      } catch (_) {}
+    }
+
+    const project = this._currentProject;
+    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+
+    // Rewrite
+    const baseContent = this._preGenerationContent || '';
+    const editorEl = this.editor.element;
+    editorEl.innerHTML = baseContent;
+
+    let rewrittenText = '';
+    try {
+      await new Promise((resolve, reject) => {
+        if (this._iterativeCancelled) { resolve(); return; }
+
+        this.generator.rewriteProse(
+          {
+            originalProse: currentText,
+            problems: formattedProblems,
+            userInstructions: '',
+            chapterTitle,
+            characters,
+            notes: '',
+            chapterOutline: this._currentChapterOutline || '',
+            aiInstructions: project?.aiInstructions || '',
+            tone: this._iterativeSettings.tone || '',
+            style: this._iterativeSettings.style || '',
+            wordTarget: 100,
+            genre: genreInfo?.label || '',
+            genreRules: genreInfo?.rules || '',
+            voice: project?.voice || '',
+            previousScore: score,
+            previousSubscores: review.subscores,
+            rewriteIteration: iteration
+          },
+          {
+            onChunk: (text) => {
+              rewrittenText += text;
+              const startingContent = baseContent.trim() ? baseContent : '';
+              const paragraphs = rewrittenText.split('\n\n');
+              const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+              editorEl.innerHTML = startingContent + newHtml;
+              const container = editorEl.closest('.editor-area');
+              if (container) container.scrollTop = container.scrollHeight;
+            },
+            onDone: () => {
+              const content = this.editor.getContent();
+              if (this.state.currentChapterId) {
+                this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+                this._updateLocalWordCounts(content);
+              }
+              resolve();
+            },
+            onError: (err) => reject(err)
+          }
+        );
+      });
+    } catch (err) {
+      this._updateIterativeLog(`Rewrite failed: ${err.message}`);
+      this._showIterativeOverlay(false);
+      return;
+    }
+
+    if (this._iterativeCancelled) {
+      this._showIterativeOverlay(false);
+      return;
+    }
+
+    // If rewrite produced text, use it; otherwise keep current
+    const nextText = rewrittenText && rewrittenText.length > 20 ? rewrittenText : currentText;
+    this._lastGeneratedText = nextText;
+
+    // Loop: score and refine again
+    await this._iterativeScoreAndRefine(nextText, iteration, bestScore);
+  }
+
+  /**
+   * Show the accept/reject dialog once score target is met (or iterations exhausted).
+   */
+  _presentIterativeAccept(text, score) {
+    const scoreEl = document.getElementById('iterative-accept-score');
+    if (scoreEl) {
+      scoreEl.textContent = score;
+      scoreEl.className = 'iterative-score-number ' + (
+        score >= 88 ? 'score-excellent' : score >= 78 ? 'score-good' :
+        score >= 65 ? 'score-fair' : 'score-poor'
+      );
+    }
+
+    const previewEl = document.getElementById('iterative-accept-preview');
+    if (previewEl) {
+      previewEl.textContent = text;
+    }
+
+    this._iterativeAcceptText = text;
+
+    const overlay = document.getElementById('iterative-accept-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  _showIterativeOverlay(show) {
+    const overlay = document.getElementById('iterative-write-overlay');
+    if (overlay) {
+      if (show) {
+        overlay.classList.add('visible');
+      } else {
+        overlay.classList.remove('visible');
+      }
+    }
+  }
+
+  _updateIterativePhase(text) {
+    const el = document.getElementById('iterative-phase-label');
+    if (el) el.textContent = text;
+  }
+
+  _updateIterativeScore(score) {
+    const numEl = document.getElementById('iterative-score-value');
+    const pctEl = document.getElementById('iterative-score-pct');
+    const fillEl = document.getElementById('iterative-progress-fill');
+
+    if (score === null || score === undefined) {
+      if (numEl) { numEl.textContent = '--'; numEl.className = 'iterative-score-number'; }
+      if (pctEl) pctEl.textContent = '0%';
+      if (fillEl) { fillEl.style.width = '0%'; fillEl.className = 'iterative-progress-fill'; }
+      return;
+    }
+
+    const scoreClass = score >= 88 ? 'score-excellent' : score >= 78 ? 'score-good' :
+                       score >= 65 ? 'score-fair' : 'score-poor';
+
+    if (numEl) { numEl.textContent = score; numEl.className = 'iterative-score-number ' + scoreClass; }
+    if (pctEl) pctEl.textContent = score + '%';
+    if (fillEl) { fillEl.style.width = score + '%'; fillEl.className = 'iterative-progress-fill ' + scoreClass; }
+  }
+
+  _updateIterativeIteration(iteration, bestScore) {
+    const numEl = document.getElementById('iterative-iteration-num');
+    const bestEl = document.getElementById('iterative-best-score');
+    if (numEl) numEl.textContent = iteration;
+    if (bestEl) bestEl.textContent = bestScore > 0 ? bestScore : '--';
+  }
+
+  _updateIterativeLog(message) {
+    const logEl = document.getElementById('iterative-status-log');
+    if (logEl) {
+      logEl.textContent += '\n' + message;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+
   _showProseReview(review, generatedText) {
     const body = document.getElementById('prose-review-body');
     if (!body) return;
@@ -2758,6 +3189,41 @@ class App {
         this._autoWriteToGoal = false;
         this._setGenerateStatus(false);
         this._showContinueBar(true);
+      }
+      if (e.target.id === 'btn-iterative-write') {
+        await this._iterativeWrite();
+      }
+      if (e.target.id === 'btn-iterative-cancel') {
+        this._iterativeCancelled = true;
+        this.generator.cancel();
+        this._showIterativeOverlay(false);
+        this._showContinueBar(true);
+      }
+      if (e.target.id === 'btn-iterative-accept') {
+        // Accept and continue to next paragraph
+        document.getElementById('iterative-accept-overlay')?.classList.remove('visible');
+        // Reset log for next paragraph
+        const logEl = document.getElementById('iterative-status-log');
+        if (logEl) logEl.textContent = 'Starting next paragraph\u2026';
+        // Continue the loop for the next paragraph
+        await this._iterativeWriteLoop();
+      }
+      if (e.target.id === 'btn-iterative-accept-stop') {
+        // Accept and stop
+        document.getElementById('iterative-accept-overlay')?.classList.remove('visible');
+        this._iterativeCancelled = true;
+        this._showContinueBar(true);
+      }
+      if (e.target.id === 'btn-iterative-reject') {
+        // Reject — keep refining the same paragraph
+        document.getElementById('iterative-accept-overlay')?.classList.remove('visible');
+        const logEl = document.getElementById('iterative-status-log');
+        if (logEl) logEl.textContent = 'Continuing refinement\u2026';
+        // Reset iteration tracking and continue refining
+        this._iterPrevScore = 0;
+        this._iterPrevIssueCount = 0;
+        this._iterPrevSubscores = {};
+        await this._iterativeScoreAndRefine(this._iterativeAcceptText || this._lastGeneratedText, 0, 0);
       }
       if (e.target.id === 'btn-generate-open-settings') {
         this._closeAllPanels();
