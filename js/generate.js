@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal, voice }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, concludeStory, genre, genreRules, projectGoal, voice }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -54,7 +54,7 @@ class ProseGenerator {
     this.abortController = new AbortController();
 
     const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice });
-    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal });
+    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal });
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {
@@ -67,7 +67,7 @@ class ProseGenerator {
         },
         body: JSON.stringify({
           model: this.model,
-          max_tokens: 4096,
+          max_tokens: maxTokens || 4096,
           stream: true,
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }]
@@ -576,7 +576,7 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
    * Rewrite prose to fix identified problems and/or apply user instructions.
    * Streams the response, replacing (not appending to) the original prose.
    */
-  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, genre, genreRules, voice, previousScore, previousSubscores, rewriteIteration }, { onChunk, onDone, onError }) {
+  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, genre, genreRules, voice, previousScore, previousSubscores, rewriteIteration }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -683,7 +683,7 @@ You MUST be EXTREMELY conservative:
         },
         body: JSON.stringify({
           model: this.model,
-          max_tokens: 4096,
+          max_tokens: maxTokens || 4096,
           stream: true,
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }]
