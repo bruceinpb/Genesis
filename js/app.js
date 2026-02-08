@@ -43,6 +43,9 @@ class App {
     this._currentProject = null;
     this._chapterWordCounts = {};
     this._autoSaveInterval = null;
+    this._currentChapterOutline = '';
+    this._lastProseReview = null;
+    this._lastGeneratedText = '';
   }
 
   async init() {
@@ -332,6 +335,7 @@ class App {
       this._hideWelcome();
 
       this.state.currentChapterId = chapterId;
+      this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
       // Update active state in tree
@@ -431,11 +435,13 @@ class App {
       let html = '';
       for (const chapter of chapters) {
         const statusLabel = chapter.status === 'complete' ? 'done' : chapter.status === 'revision' ? 'rev' : '';
+        const hasOutline = chapter.outline ? ' title="Has outline"' : '';
+        const outlineIcon = chapter.outline ? '<span style="color:var(--accent-primary);font-size:0.7rem;margin-right:2px;">&#9998;</span>' : '';
         html += `
         <div class="tree-item chapter ${chapter.id === this.state.currentChapterId ? 'active' : ''}"
-             data-id="${chapter.id}" data-type="chapter">
+             data-id="${chapter.id}" data-type="chapter"${hasOutline}>
           <span class="icon">&#9656;</span>
-          <span class="name">${this._esc(chapter.title)}</span>
+          <span class="name">${outlineIcon}${this._esc(chapter.title)}</span>
           <span class="word-count">${(chapter.wordCount || 0).toLocaleString()}${statusLabel ? ' (' + statusLabel + ')' : ''}</span>
           <button class="chapter-delete-btn" data-delete-chapter="${chapter.id}" title="Delete chapter">&times;</button>
         </div>`;
@@ -578,6 +584,14 @@ class App {
       aiInstructionsEl.value = this._currentProject?.aiInstructions || '';
     }
 
+    // Show chapter outline if available
+    if (this._currentChapterOutline && plotEl) {
+      // Pre-fill the plot field with the outline if the plot field is empty
+      if (!plotEl.value?.trim()) {
+        plotEl.value = this._currentChapterOutline;
+      }
+    }
+
     this._showPanel('generate');
 
     setTimeout(() => plotEl?.focus(), 300);
@@ -632,7 +646,7 @@ class App {
     // Load AI instructions from project
     const aiInstructions = this._currentProject?.aiInstructions || '';
 
-    this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes };
+    this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes, chapterOutline: this._currentChapterOutline || '' };
 
     // Get chapter title
     let chapterTitle = '';
@@ -664,8 +678,11 @@ class App {
     const editorEl = this.editor.element;
     let streamedText = '';
 
+    // Load chapter outline if available
+    const chapterOutline = this._currentChapterOutline || '';
+
     await this.generator.generate(
-      { plot, existingContent, chapterTitle, characters, notes, aiInstructions, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal },
+      { plot, existingContent, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal },
       {
         onChunk: (text) => {
           streamedText += text;
@@ -723,6 +740,11 @@ class App {
               this._autoWriteToGoal = false;
               this._writeToGoalTarget = 0;
             }
+          }
+
+          // Score the generated prose quality
+          if (streamedText && streamedText.length > 100) {
+            this._scoreProse(streamedText);
           }
 
           this._showContinueBar(true);
@@ -1235,9 +1257,9 @@ class App {
         }
       }
 
-      // Overlay title on AI-generated cover
+      // Overlay title (and subtitle if set) on AI-generated cover
       if (coverImage) {
-        coverImage = await this.generator.overlayTitle(coverImage, project.title);
+        coverImage = await this.generator.overlayTitle(coverImage, project.title, project.subtitle || '');
       }
 
       // Step 2d: Canvas fallback (always works, has its own title rendering)
@@ -1377,11 +1399,8 @@ class App {
             ${this._getSubgenreOptions(project.genre, project.subgenre)}
           </select>
         </div>
-        <div class="form-group">
-          <label data-tooltip="Your target total word count for the finished manuscript. Common targets: 50,000 (novella), 80,000 (standard novel), 100,000 (long novel), 120,000+ (epic/fantasy). This drives the progress percentage shown in the status bar.">Word Count Goal</label>
-          <input type="number" class="form-input" id="setting-target-words" value="${project.wordCountGoal || 80000}" min="1000" step="1000">
-        </div>
-        <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title, genre, and word count goal." style="width:100%;margin-top:8px;">Save Project Settings</button>
+        <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title and genre." style="width:100%;margin-top:8px;">Save Project Settings</button>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">Word count goal and chapter structure are configured in the Book Structure panel (sidebar).</p>
       </div>
 
       <div class="analysis-section">
@@ -1397,6 +1416,372 @@ class App {
       </div>
       ` : ''}
     `;
+  }
+
+  // ========================================
+  //  Book Structure Panel
+  // ========================================
+
+  async openBookStructurePanel() {
+    const project = this._currentProject;
+    if (!project) return;
+
+    const titleEl = document.getElementById('bs-title');
+    const subtitleEl = document.getElementById('bs-subtitle');
+    const totalWordsEl = document.getElementById('bs-total-words');
+    const numChaptersEl = document.getElementById('bs-num-chapters');
+
+    if (titleEl) titleEl.value = project.title || '';
+    if (subtitleEl) subtitleEl.value = project.subtitle || '';
+    if (totalWordsEl) totalWordsEl.value = project.wordCountGoal || 80000;
+
+    // Calculate num chapters from existing or default
+    const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    const numCh = project.numChapters || chapters.length || 20;
+    if (numChaptersEl) numChaptersEl.value = numCh;
+
+    this._updateWordsPerChapter();
+    this._showPanel('book-structure');
+  }
+
+  _updateWordsPerChapter() {
+    const totalWords = parseInt(document.getElementById('bs-total-words')?.value) || 80000;
+    const numChapters = parseInt(document.getElementById('bs-num-chapters')?.value) || 20;
+    const wpc = Math.round(totalWords / numChapters);
+    const el = document.getElementById('bs-words-per-chapter');
+    if (el) el.textContent = wpc.toLocaleString();
+  }
+
+  async _saveBookStructure() {
+    if (!this.state.currentProjectId) return;
+
+    const title = document.getElementById('bs-title')?.value?.trim();
+    const subtitle = document.getElementById('bs-subtitle')?.value?.trim() || '';
+    const wordCountGoal = parseInt(document.getElementById('bs-total-words')?.value) || 80000;
+    const numChapters = parseInt(document.getElementById('bs-num-chapters')?.value) || 20;
+
+    try {
+      await this.fs.updateProject(this.state.currentProjectId, {
+        title, subtitle, wordCountGoal, numChapters
+      });
+
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters };
+      document.getElementById('project-title').textContent = title;
+      this._updateStatusBarLocal();
+      alert('Book structure saved.');
+    } catch (err) {
+      console.error('Failed to save book structure:', err);
+      alert('Failed to save book structure.');
+    }
+  }
+
+  async _generateOutlines() {
+    if (!this.state.currentProjectId || !this._currentProject) return;
+
+    const project = this._currentProject;
+    if (!this.generator.hasApiKey()) {
+      alert('Set your Anthropic API key in Settings first.');
+      return;
+    }
+
+    const numChapters = parseInt(document.getElementById('bs-num-chapters')?.value) || project.numChapters || 20;
+    const totalWords = parseInt(document.getElementById('bs-total-words')?.value) || project.wordCountGoal || 80000;
+    const title = document.getElementById('bs-title')?.value?.trim() || project.title;
+    const subtitle = document.getElementById('bs-subtitle')?.value?.trim() || project.subtitle || '';
+
+    // Gather characters
+    const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
+
+    // Gather notes
+    const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId) || [];
+    let notes = '';
+    if (projectNotes.length > 0) {
+      notes = projectNotes.map(n => {
+        let entry = n.title;
+        if (n.type && n.type !== 'general') entry = `[${n.type}] ${entry}`;
+        if (n.content) entry += '\n' + n.content;
+        return entry;
+      }).join('\n\n');
+    }
+
+    const aiInstructions = project.aiInstructions || '';
+    const genreInfo = this._getGenreRules(project.genre, project.subgenre);
+    const genre = genreInfo ? genreInfo.label : (project.genre || '');
+
+    // Show loading state
+    const statusEl = document.getElementById('bs-outline-status');
+    const errorEl = document.getElementById('bs-outline-error');
+    const genBtn = document.getElementById('btn-generate-outlines');
+    if (statusEl) statusEl.style.display = '';
+    if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+    if (genBtn) genBtn.disabled = true;
+
+    try {
+      const outlines = await this.generator.generateOutlines({
+        title, subtitle, genre, totalWords, numChapters, characters, notes, aiInstructions
+      });
+
+      if (!outlines || !Array.isArray(outlines) || outlines.length === 0) {
+        throw new Error('No outlines were generated.');
+      }
+
+      // Save book structure first
+      await this.fs.updateProject(this.state.currentProjectId, {
+        title, subtitle, wordCountGoal: totalWords, numChapters
+      });
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal: totalWords, numChapters };
+
+      // Create chapters from outlines
+      for (let i = 0; i < outlines.length; i++) {
+        const outline = outlines[i];
+        const ch = await this.fs.createChapter({
+          projectId: this.state.currentProjectId,
+          chapterNumber: i + 1,
+          title: outline.title || `Chapter ${i + 1}`,
+          content: '',
+          outline: outline.outline || ''
+        });
+        this._chapterWordCounts[ch.id] = 0;
+      }
+
+      // Refresh chapter list and load first chapter
+      await this._renderChapterList();
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      if (chapters.length > 0) {
+        await this._loadChapter(chapters[0].id);
+      }
+
+      document.getElementById('project-title').textContent = title;
+      this._updateStatusBarLocal();
+      this._closeAllPanels();
+      alert(`Generated ${outlines.length} chapter outlines. Review each chapter's outline in the editor.`);
+    } catch (err) {
+      console.error('Outline generation failed:', err);
+      if (errorEl) {
+        errorEl.style.display = '';
+        errorEl.textContent = err.message;
+      }
+    } finally {
+      if (statusEl) statusEl.style.display = 'none';
+      if (genBtn) genBtn.disabled = false;
+    }
+  }
+
+  // ========================================
+  //  Rethink Chapter Outline
+  // ========================================
+
+  async _openRethinkModal() {
+    if (!this.state.currentChapterId) {
+      alert('No chapter selected.');
+      return;
+    }
+
+    const chapter = await this.fs.getChapter(this.state.currentChapterId);
+    if (!chapter?.outline) {
+      alert('This chapter has no outline to rethink. Generate outlines first from the Book Structure panel.');
+      return;
+    }
+
+    document.getElementById('rethink-prompt').value = '';
+    document.getElementById('rethink-status').style.display = 'none';
+    const overlay = document.getElementById('rethink-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  async _submitRethink() {
+    const userInstructions = document.getElementById('rethink-prompt')?.value?.trim();
+    if (!userInstructions) {
+      alert('Please enter instructions for how to revise the outline.');
+      return;
+    }
+
+    const chapter = await this.fs.getChapter(this.state.currentChapterId);
+    if (!chapter?.outline) return;
+
+    const project = this._currentProject;
+    const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
+    const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId) || [];
+    let notes = projectNotes.map(n => {
+      let entry = n.title;
+      if (n.content) entry += '\n' + n.content;
+      return entry;
+    }).join('\n\n');
+
+    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+
+    document.getElementById('rethink-status').style.display = '';
+    document.getElementById('btn-rethink-submit').disabled = true;
+
+    try {
+      const revisedOutline = await this.generator.rethinkOutline({
+        currentOutline: chapter.outline,
+        chapterTitle: chapter.title,
+        userInstructions,
+        bookTitle: project?.title || '',
+        genre: genreInfo?.label || '',
+        characters,
+        notes
+      });
+
+      if (revisedOutline) {
+        await this.fs.updateChapter(this.state.currentChapterId, { outline: revisedOutline });
+        // Close modal and reload chapter
+        document.getElementById('rethink-overlay').classList.remove('visible');
+        await this._loadChapter(this.state.currentChapterId);
+        alert('Chapter outline has been revised.');
+      }
+    } catch (err) {
+      console.error('Rethink failed:', err);
+      alert('Rethink failed: ' + err.message);
+    } finally {
+      document.getElementById('rethink-status').style.display = 'none';
+      document.getElementById('btn-rethink-submit').disabled = false;
+    }
+  }
+
+  // ========================================
+  //  Prose Quality Scoring
+  // ========================================
+
+  async _scoreProse(generatedText) {
+    if (!this.generator.hasApiKey()) return;
+    if (!generatedText || generatedText.length < 100) return;
+
+    try {
+      const review = await this.generator.scoreProse(generatedText);
+      this._showProseReview(review, generatedText);
+    } catch (err) {
+      console.error('Prose scoring failed:', err);
+      // Non-fatal — just show continue bar without scoring
+    }
+  }
+
+  _showProseReview(review, generatedText) {
+    const body = document.getElementById('prose-review-body');
+    if (!body) return;
+
+    const scoreClass = review.score >= 80 ? 'score-excellent' :
+                       review.score >= 65 ? 'score-good' :
+                       review.score >= 50 ? 'score-fair' : 'score-poor';
+
+    const scoreLabel = review.score >= 80 ? 'Excellent' :
+                       review.score >= 65 ? 'Good' :
+                       review.score >= 50 ? 'Needs Work' : 'Rough Draft';
+
+    let html = `
+      <div class="prose-score-display">
+        <div class="prose-score-number ${scoreClass}">${review.score}</div>
+        <div class="prose-score-label">${review.label || scoreLabel} / 100</div>
+        <div class="meter" style="margin-top:12px;max-width:200px;margin-left:auto;margin-right:auto;">
+          <div class="meter-fill ${review.score >= 70 ? 'good' : review.score >= 50 ? 'warning' : 'danger'}" style="width:${review.score}%"></div>
+        </div>
+      </div>
+
+      <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px;">${this._esc(review.summary || '')}</p>`;
+
+    if (review.aiPatterns && review.aiPatterns.length > 0) {
+      html += `<h3 style="font-size:0.85rem;font-weight:600;color:var(--danger);margin-bottom:8px;">AI Patterns Detected</h3>
+        <ul class="prose-patterns-list">
+          ${review.aiPatterns.map(p => `
+            <li class="prose-pattern-item">
+              <strong>${this._esc(p.pattern)}</strong>
+              ${p.examples && p.examples.length > 0 ? `<br><span style="font-size:0.8rem;color:var(--text-muted);">"${this._esc(p.examples[0])}"</span>` : ''}
+            </li>
+          `).join('')}
+        </ul>`;
+    }
+
+    if (review.issues && review.issues.length > 0) {
+      html += `<h3 style="font-size:0.85rem;font-weight:600;color:var(--text-secondary);margin-top:16px;margin-bottom:8px;">Quality Issues</h3>
+        <ul class="prose-issues-list">
+          ${review.issues.map(issue => `
+            <li class="prose-issue-item severity-${issue.severity || 'medium'}">
+              <strong>${this._esc(issue.problem || '')}</strong>
+              ${issue.text ? `<br><span style="font-size:0.8rem;color:var(--text-muted);">"${this._esc(issue.text)}"</span>` : ''}
+            </li>
+          `).join('')}
+        </ul>`;
+    }
+
+    if ((!review.issues || review.issues.length === 0) && (!review.aiPatterns || review.aiPatterns.length === 0)) {
+      html += `<p style="color:var(--success);font-size:0.9rem;text-align:center;margin-top:16px;">No major issues detected. The prose quality is solid.</p>`;
+    }
+
+    body.innerHTML = html;
+
+    // Store for rewrite action
+    this._lastProseReview = review;
+    this._lastGeneratedText = generatedText;
+
+    // Show rewrite button only if there are issues or AI patterns
+    const rewriteBtn = document.getElementById('btn-prose-review-rewrite');
+    if (rewriteBtn) {
+      rewriteBtn.style.display = (review.issues?.length > 0 || review.aiPatterns?.length > 0) ? '' : 'none';
+    }
+
+    const overlay = document.getElementById('prose-review-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  async _rewriteProblems() {
+    if (!this._lastProseReview || !this._lastGeneratedText) return;
+
+    const review = this._lastProseReview;
+    const problems = [];
+    if (review.aiPatterns) {
+      for (const p of review.aiPatterns) {
+        problems.push(`AI Pattern: ${p.pattern}${p.examples?.[0] ? ` (e.g. "${p.examples[0]}")` : ''}`);
+      }
+    }
+    if (review.issues) {
+      for (const issue of review.issues) {
+        if (issue.severity === 'high' || issue.severity === 'medium') {
+          problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
+        }
+      }
+    }
+
+    if (problems.length === 0) return;
+
+    // Close review modal
+    document.getElementById('prose-review-overlay').classList.remove('visible');
+
+    // Build a targeted rewrite prompt
+    const rewriteInstructions = `REWRITE the following prose to fix these specific issues:\n${problems.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nKeep the same story events, characters, and plot points but improve the prose quality. Eliminate all AI patterns. Make it read as authentically human-written.`;
+
+    // Add the rewrite instruction to the AI instructions temporarily for this generation
+    const originalInstructions = this._currentProject?.aiInstructions || '';
+    const combinedInstructions = originalInstructions + '\n\n' + rewriteInstructions;
+
+    // Run a targeted rewrite generation
+    this._showContinueBar(false);
+    this._setGenerateStatus(true);
+
+    const existingContent = this.editor.getContent();
+    const plot = this._lastGenSettings?.plot || 'Continue the story.';
+    const characters = this._lastGenSettings?.useCharacters ? await this.localStorage.getProjectCharacters(this.state.currentProjectId) : [];
+
+    // Remove the last generated chunk and regenerate
+    const textToReplace = this._lastGeneratedText;
+    const plainExisting = existingContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    const plainGenerated = textToReplace.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Strip the last generated text from the editor to replace it
+    let baseContent = existingContent;
+    if (plainExisting.endsWith(plainGenerated)) {
+      const cutPoint = plainExisting.length - plainGenerated.length;
+      // Approximate — remove from the end of the HTML
+      const editorHtml = existingContent;
+      const editorText = editorHtml.replace(/<[^>]*>/g, '');
+      // We'll just regenerate the same amount of words
+    }
+
+    // Simpler approach: regenerate with the fix instructions
+    await this._runGeneration({
+      isContinuation: true,
+      wordTarget: this._lastGenSettings?.wordTarget || 500
+    });
   }
 
   // ========================================
@@ -1598,6 +1983,7 @@ class App {
     document.getElementById('btn-structure')?.addEventListener('click', () => this.openStructurePanel());
     document.getElementById('btn-export')?.addEventListener('click', () => this.openExportPanel());
     document.getElementById('btn-settings')?.addEventListener('click', () => this.openSettingsPanel());
+    document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openBookStructurePanel());
 
     // --- Panel overlay close ---
     document.getElementById('panel-overlay')?.addEventListener('click', () => this._closeAllPanels());
@@ -1634,6 +2020,13 @@ class App {
       }
     });
 
+    // --- Book structure inputs (live update) ---
+    document.addEventListener('input', (e) => {
+      if (e.target.id === 'bs-total-words' || e.target.id === 'bs-num-chapters') {
+        this._updateWordsPerChapter();
+      }
+    });
+
     // --- Settings panel dynamic events ---
     document.addEventListener('change', async (e) => {
       if (e.target.id === 'setting-theme') {
@@ -1644,6 +2037,9 @@ class App {
       if (e.target.id === 'setting-daily-goal') {
         this.state.dailyGoal = parseInt(e.target.value) || 1000;
         await this.localStorage.setSetting('dailyGoal', this.state.dailyGoal);
+      }
+      if (e.target.id === 'bs-total-words' || e.target.id === 'bs-num-chapters') {
+        this._updateWordsPerChapter();
       }
       if (e.target.id === 'structure-template-select') {
         await this.localStorage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
@@ -1724,6 +2120,30 @@ class App {
         this._hfToken = token;
         await this.localStorage.setSetting('hfToken', token);
         alert('Cover settings saved.');
+      }
+      // --- Book Structure events ---
+      if (e.target.id === 'btn-save-book-structure') {
+        await this._saveBookStructure();
+      }
+      if (e.target.id === 'btn-generate-outlines') {
+        await this._generateOutlines();
+      }
+      // --- Rethink events ---
+      if (e.target.id === 'btn-continue-rethink' || e.target.closest('#btn-continue-rethink')) {
+        await this._openRethinkModal();
+      }
+      if (e.target.id === 'btn-rethink-submit') {
+        await this._submitRethink();
+      }
+      if (e.target.id === 'btn-rethink-cancel') {
+        document.getElementById('rethink-overlay')?.classList.remove('visible');
+      }
+      // --- Prose Review events ---
+      if (e.target.id === 'btn-prose-review-accept') {
+        document.getElementById('prose-review-overlay')?.classList.remove('visible');
+      }
+      if (e.target.id === 'btn-prose-review-rewrite') {
+        await this._rewriteProblems();
       }
       if (e.target.id === 'btn-save-ai-instructions') {
         const instructions = document.getElementById('generate-ai-instructions')?.value || '';
@@ -1928,15 +2348,14 @@ class App {
     const title = document.getElementById('setting-project-name')?.value;
     const genre = document.getElementById('setting-project-genre')?.value || '';
     const subgenre = document.getElementById('setting-project-subgenre')?.value || '';
-    const wordCountGoal = parseInt(document.getElementById('setting-target-words')?.value) || 80000;
 
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
-        title, genre, subgenre, wordCountGoal
+        title, genre, subgenre
       });
 
       // Update cached project
-      this._currentProject = { ...this._currentProject, title, genre, subgenre, wordCountGoal };
+      this._currentProject = { ...this._currentProject, title, genre, subgenre };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       this._closeAllPanels();

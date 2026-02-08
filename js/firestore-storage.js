@@ -92,6 +92,7 @@ class FirestoreStorage {
       chapterNumber: data.chapterNumber || 1,
       title: data.title || 'Untitled Chapter',
       content: data.content || '',
+      outline: data.outline || '',
       wordCount: 0,
       status: data.status || 'draft',
       createdAt: new Date(),
