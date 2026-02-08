@@ -616,7 +616,11 @@ class App {
     let concludeStory = options.concludeStory || false;
     const project = this._currentProject;
     const projectGoal = project ? (project.wordCountGoal || 0) : 0;
-    const genre = project ? (project.genre || '') : '';
+    const genreId = project ? (project.genre || '') : '';
+    const subgenreId = project ? (project.subgenre || '') : '';
+    const genreInfo = this._getGenreRules(genreId, subgenreId);
+    const genre = genreInfo ? genreInfo.label : '';
+    const genreRules = genreInfo ? genreInfo.rules : '';
 
     this._showContinueBar(false);
     this._setGenerateStatus(true);
@@ -630,7 +634,7 @@ class App {
     let streamedText = '';
 
     await this.generator.generate(
-      { plot, existingContent, chapterTitle, characters, tone, style, wordTarget, concludeStory, genre, projectGoal },
+      { plot, existingContent, chapterTitle, characters, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal },
       {
         onChunk: (text) => {
           streamedText += text;
@@ -1329,8 +1333,18 @@ class App {
           <input type="text" class="form-input" id="setting-project-name" value="${this._esc(project.title)}">
         </div>
         <div class="form-group">
-          <label data-tooltip="Your project's genre (e.g., Romance, Thriller, Fantasy, Literary Fiction, Sci-Fi, Horror, Mystery). The genre is used by the AI to match appropriate tone and conventions when generating prose, and to theme the cover art.">Genre</label>
-          <input type="text" class="form-input" id="setting-project-genre" value="${this._esc(project.genre || '')}">
+          <label data-tooltip="Select your project's literary genre. The AI uses genre-specific prose style rules to maintain consistent tone, pacing, and conventions throughout your manuscript. This prevents style drift during long writing sessions.">Genre</label>
+          <select class="form-input" id="setting-project-genre">
+            <option value="">— Select Genre —</option>
+            ${(window.GENRE_DATA || []).map(g => `<option value="${g.id}" ${(project.genre === g.id) ? 'selected' : ''}>${g.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group" id="subgenre-group" style="${project.subgenre ? '' : 'display:none;'}">
+          <label data-tooltip="Refine your genre selection with a subgenre. Subgenres provide more specific prose style rules — for example, 'Cozy Mystery' vs 'Noir' produce very different writing styles. The AI will follow these specialized rules.">Subgenre</label>
+          <select class="form-input" id="setting-project-subgenre">
+            <option value="">— None (use main genre rules) —</option>
+            ${this._getSubgenreOptions(project.genre, project.subgenre)}
+          </select>
         </div>
         <div class="form-group">
           <label data-tooltip="Your target total word count for the finished manuscript. Common targets: 50,000 (novella), 80,000 (standard novel), 100,000 (long novel), 120,000+ (epic/fantasy). This drives the progress percentage shown in the status bar.">Word Count Goal</label>
@@ -1590,6 +1604,20 @@ class App {
         await this.localStorage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
         await this.openStructurePanel();
       }
+      if (e.target.id === 'setting-project-genre') {
+        const genreId = e.target.value;
+        const subGroup = document.getElementById('subgenre-group');
+        const subSelect = document.getElementById('setting-project-subgenre');
+        if (subGroup && subSelect) {
+          if (genreId) {
+            subSelect.innerHTML = '<option value="">— None (use main genre rules) —</option>' + this._getSubgenreOptions(genreId, '');
+            subGroup.style.display = '';
+          } else {
+            subSelect.innerHTML = '<option value="">— None (use main genre rules) —</option>';
+            subGroup.style.display = 'none';
+          }
+        }
+      }
     });
 
     document.addEventListener('click', async (e) => {
@@ -1845,16 +1873,17 @@ class App {
   async _saveProjectSettings() {
     if (!this.state.currentProjectId) return;
     const title = document.getElementById('setting-project-name')?.value;
-    const genre = document.getElementById('setting-project-genre')?.value;
+    const genre = document.getElementById('setting-project-genre')?.value || '';
+    const subgenre = document.getElementById('setting-project-subgenre')?.value || '';
     const wordCountGoal = parseInt(document.getElementById('setting-target-words')?.value) || 80000;
 
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
-        title, genre, wordCountGoal
+        title, genre, subgenre, wordCountGoal
       });
 
       // Update cached project
-      this._currentProject = { ...this._currentProject, title, genre, wordCountGoal };
+      this._currentProject = { ...this._currentProject, title, genre, subgenre, wordCountGoal };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       this._closeAllPanels();
@@ -2016,6 +2045,31 @@ class App {
       const result = prompt(label, defaultValue);
       resolve(result);
     });
+  }
+
+  _getSubgenreOptions(genreId, selectedSubgenre) {
+    if (!genreId || !window.GENRE_DATA) return '';
+    const genre = window.GENRE_DATA.find(g => g.id === genreId);
+    if (!genre || !genre.subgenres) return '';
+    return genre.subgenres.map(s =>
+      `<option value="${s.id}" ${selectedSubgenre === s.id ? 'selected' : ''}>${s.label}</option>`
+    ).join('');
+  }
+
+  _getGenreRules(genreId, subgenreId) {
+    if (!genreId || !window.GENRE_DATA) return null;
+    const genre = window.GENRE_DATA.find(g => g.id === genreId);
+    if (!genre) return null;
+    let rules = genre.rules;
+    let label = genre.label;
+    if (subgenreId && genre.subgenres) {
+      const sub = genre.subgenres.find(s => s.id === subgenreId);
+      if (sub) {
+        rules += '\n\nSubgenre-specific rules (' + sub.label + '): ' + sub.rules;
+        label = sub.label;
+      }
+    }
+    return { label, rules };
   }
 
   _esc(str) {

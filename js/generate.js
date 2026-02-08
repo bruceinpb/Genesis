@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, tone, style, wordTarget, concludeStory, genre, projectGoal }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -53,8 +53,8 @@ class ProseGenerator {
 
     this.abortController = new AbortController();
 
-    const systemPrompt = this._buildSystemPrompt({ tone, style });
-    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, projectGoal });
+    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules });
+    const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, genreRules, projectGoal });
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {
@@ -124,7 +124,7 @@ class ProseGenerator {
     }
   }
 
-  _buildSystemPrompt({ tone, style }) {
+  _buildSystemPrompt({ tone, style, genre, genreRules }) {
     let prompt = `You are a world-class fiction author writing prose for a novel. Your writing should be vivid, engaging, and publication-ready.
 
 Guidelines for your prose:
@@ -139,6 +139,17 @@ Guidelines for your prose:
 - Aim for a Flesch readability score of 60-80 (accessible but not simplistic)
 - Write ONLY the prose — no meta-commentary, no scene labels, no author notes`;
 
+    if (genreRules) {
+      prompt += `\n\n=== GENRE STYLE RULES (${genre}) ===\n${genreRules}`;
+      prompt += `\n\n=== STYLE CONSISTENCY ===`;
+      prompt += `\nCRITICAL: Maintain a consistent prose style throughout. Do NOT shift between styles mid-passage.`;
+      prompt += `\n- Keep the same narrative voice, tense, and point of view from start to finish`;
+      prompt += `\n- Do NOT switch from prose to poetry, verse, rhyming couplets, or song lyrics unless the genre rules specifically call for it`;
+      prompt += `\n- Do NOT adopt a different genre's conventions partway through`;
+      prompt += `\n- If continuing existing text, match the established voice and style exactly`;
+      prompt += `\n- Consistency is more important than creativity — never drift from the selected genre style`;
+    }
+
     if (tone) {
       prompt += `\n- Tone: ${tone}`;
     }
@@ -149,7 +160,7 @@ Guidelines for your prose:
     return prompt;
   }
 
-  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, projectGoal }) {
+  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, genreRules, projectGoal }) {
     let prompt = '';
 
     if (chapterTitle) {
@@ -183,6 +194,9 @@ Guidelines for your prose:
       if (plainText.length > 0) {
         const truncated = plainText.slice(-3000);
         prompt += `\nContinue from this existing text (pick up exactly where it leaves off):\n"""${truncated}"""\n`;
+        if (genreRules) {
+          prompt += `\nREMINDER: Match the prose style, voice, and tone of the existing text above. Stay within the ${genre} genre conventions. Do NOT change styles.`;
+        }
       }
     }
 
