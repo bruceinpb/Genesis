@@ -754,6 +754,7 @@ class App {
 
     this._showContinueBar(false);
     this._setGenerateStatus(true);
+    this._generateCancelled = false;
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
 
@@ -761,91 +762,189 @@ class App {
     this._hideWelcome();
 
     const editorEl = this.editor.element;
-    let streamedText = '';
 
     // Load chapter outline if available
     const chapterOutline = this._currentChapterOutline || '';
 
-    await this.generator.generate(
-      { plot, existingContent, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal, voice: project?.voice || '' },
-      {
-        onChunk: (text) => {
-          streamedText += text;
-          const startingContent = existingContent.trim() ? existingContent : '';
-          const paragraphs = streamedText.split('\n\n');
-          const newHtml = paragraphs
-            .map(p => {
-              const lines = p.replace(/\n/g, '<br>');
-              return `<p>${lines}</p>`;
-            })
-            .join('');
-          editorEl.innerHTML = startingContent + newHtml;
-          const container = editorEl.closest('.editor-area');
-          if (container) container.scrollTop = container.scrollHeight;
-          // Update word count live during streaming
-          const wc = editorEl.textContent.match(/[a-zA-Z'''\u2019-]+/g) || [];
-          const chapterWords = wc.length;
-          const wordsEl = document.getElementById('status-words');
-          if (wordsEl) wordsEl.textContent = chapterWords.toLocaleString();
-          const fwcWords = document.getElementById('fwc-words');
-          if (fwcWords) fwcWords.textContent = chapterWords.toLocaleString();
-          this._updateLocalWordCounts(editorEl.innerHTML);
-          this._trackDailyWords(chapterWords);
-        },
-        onDone: async () => {
-          this._setGenerateStatus(false);
-          const content = this.editor.getContent();
-          if (this.state.currentChapterId) {
-            try {
-              await this.fs.updateChapter(this.state.currentChapterId, { content });
-            } catch (_) {}
-            this._updateLocalWordCounts(content);
-          }
+    // --- Chunked generation with scoring between chunks ---
+    // Break the total word target into ~300-word chunks.
+    // After each chunk, halt and score the prose, then continue.
+    const CHUNK_SIZE = 300;
+    const maxTokensPerChunk = 800; // ~300 words
+    let wordsGenerated = 0;
+    let chunkNum = 0;
+    let allStreamedText = '';
 
-          // Write to Goal: check if we need another chunk
-          if (this._autoWriteToGoal && this._writeToGoalTarget > 0) {
-            const currentTotal = this._getTotalWordCount();
-            const goal = this._writeToGoalTarget;
-            const maxOverage = this._writeToGoalMaxOverage || Math.round(goal * 0.03);
-            const remaining = goal - currentTotal;
+    // Show iterative overlay for the scoring phases
+    this._showIterativeOverlay(true);
+    this._showIterativeScoringNotice(false);
+    this._updateIterativeScore(null);
+    this._updateIterativeIteration(0, 0);
+    const logEl = document.getElementById('iterative-status-log');
+    if (logEl) logEl.textContent = `Generating ~${wordTarget} words in scored chunks\u2026`;
 
-            if (remaining > maxOverage * -1 && remaining > 50) {
-              // Still have words to write — schedule next chunk
-              const nextChunk = Math.min(remaining, 2000);
-              const isLastChunk = remaining <= 2000;
-              setTimeout(() => this._runGeneration({
-                isContinuation: true,
-                wordTarget: nextChunk,
-                concludeStory: isLastChunk,
-                writeToGoal: true
-              }), 1500);
-              return;
-            } else {
-              // Goal reached (within 3% overage) — stop
-              this._autoWriteToGoal = false;
-              this._writeToGoalTarget = 0;
+    while (wordsGenerated < wordTarget && !this._generateCancelled) {
+      chunkNum++;
+      const remaining = wordTarget - wordsGenerated;
+      const thisChunkTarget = Math.min(CHUNK_SIZE, remaining);
+      const isLastChunk = remaining <= CHUNK_SIZE;
+
+      this._updateIterativeChunk(chunkNum);
+      this._updateIterativePhase('Generating\u2026');
+      this._updateIterativeLog(`Chunk ${chunkNum}: Generating ~${thisChunkTarget} words\u2026`);
+
+      let streamedText = '';
+      const currentExisting = this.editor.getContent();
+
+      try {
+        await new Promise((resolve, reject) => {
+          if (this._generateCancelled) { resolve(); return; }
+
+          this.generator.generate(
+            {
+              plot,
+              existingContent: currentExisting,
+              chapterTitle,
+              characters,
+              notes,
+              chapterOutline,
+              aiInstructions,
+              tone,
+              style,
+              wordTarget: thisChunkTarget,
+              maxTokens: maxTokensPerChunk,
+              concludeStory: isLastChunk && concludeStory,
+              genre,
+              genreRules,
+              projectGoal,
+              voice: project?.voice || ''
+            },
+            {
+              onChunk: (text) => {
+                streamedText += text;
+                const startingContent = currentExisting.trim() ? currentExisting : '';
+                const paragraphs = streamedText.split('\n\n');
+                const newHtml = paragraphs
+                  .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+                  .join('');
+                editorEl.innerHTML = startingContent + newHtml;
+                const container = editorEl.closest('.editor-area');
+                if (container) container.scrollTop = container.scrollHeight;
+                const wc = editorEl.textContent.match(/[a-zA-Z'''\u2019-]+/g) || [];
+                const chapterWords = wc.length;
+                const wordsEl = document.getElementById('status-words');
+                if (wordsEl) wordsEl.textContent = chapterWords.toLocaleString();
+                const fwcWords = document.getElementById('fwc-words');
+                if (fwcWords) fwcWords.textContent = chapterWords.toLocaleString();
+                this._updateLocalWordCounts(editorEl.innerHTML);
+                this._trackDailyWords(chapterWords);
+              },
+              onDone: () => {
+                const content = this.editor.getContent();
+                if (this.state.currentChapterId) {
+                  this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+                  this._updateLocalWordCounts(content);
+                }
+                resolve();
+              },
+              onError: (err) => reject(err)
             }
-          }
+          );
+        });
+      } catch (err) {
+        this._setGenerateStatus(false);
+        this._showIterativeOverlay(false);
+        this._autoWriteToGoal = false;
+        this._writeToGoalTarget = 0;
+        this._showPanel('generate');
+        if (errEl) {
+          errEl.style.display = 'block';
+          errEl.textContent = err.message;
+        }
+        return;
+      }
 
-          // Score the generated prose quality
-          if (streamedText && streamedText.length > 100) {
-            this._scoreProse(streamedText);
-          }
+      if (this._generateCancelled) break;
 
-          this._showContinueBar(true);
-        },
-        onError: (err) => {
-          this._setGenerateStatus(false);
-          this._autoWriteToGoal = false;
-          this._writeToGoalTarget = 0;
-          this._showPanel('generate');
-          if (errEl) {
-            errEl.style.display = 'block';
-            errEl.textContent = err.message;
-          }
+      // Count words in this chunk
+      const chunkWords = (streamedText.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+      wordsGenerated += chunkWords;
+      allStreamedText += streamedText;
+
+      this._updateIterativeLog(`Chunk ${chunkNum}: Generated ${chunkWords} words (${wordsGenerated}/${wordTarget} total)`);
+
+      // If chunk was too small or empty, stop to avoid infinite loop
+      if (chunkWords < 10) break;
+
+      // --- Score this chunk ---
+      if (streamedText.length > 50) {
+        this._updateIterativePhase('Scoring\u2026');
+        this._showIterativeScoringNotice(true);
+        this._updateIterativeLog(`Chunk ${chunkNum}: Scoring\u2026`);
+
+        try {
+          const review = await this.generator.scoreProse(streamedText);
+          this._showIterativeScoringNotice(false);
+
+          const score = review.score || 0;
+          this._updateIterativeScore(score);
+          this._updateIterativeIteration(chunkNum, score);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${score}/100 (${review.label || ''})`);
+
+          // Brief pause so user can see the score
+          await new Promise(r => setTimeout(r, 1500));
+        } catch (err) {
+          this._showIterativeScoringNotice(false);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Scoring failed: ${err.message}`);
         }
       }
-    );
+
+      // Check if we should stop (close to target or generation cancelled)
+      if (wordsGenerated >= wordTarget * 0.9) break;
+    }
+
+    // All chunks done
+    this._setGenerateStatus(false);
+    this._showIterativeOverlay(false);
+
+    // Save final content
+    const finalContent = this.editor.getContent();
+    if (this.state.currentChapterId) {
+      try {
+        await this.fs.updateChapter(this.state.currentChapterId, { content: finalContent });
+      } catch (_) {}
+      this._updateLocalWordCounts(finalContent);
+    }
+
+    // Write to Goal: check if we need another chunk
+    if (this._autoWriteToGoal && this._writeToGoalTarget > 0) {
+      const currentTotal = this._getTotalWordCount();
+      const goal = this._writeToGoalTarget;
+      const maxOverage = this._writeToGoalMaxOverage || Math.round(goal * 0.03);
+      const remaining = goal - currentTotal;
+
+      if (remaining > maxOverage * -1 && remaining > 50) {
+        const nextChunk = Math.min(remaining, 2000);
+        const isLastChunkForGoal = remaining <= 2000;
+        setTimeout(() => this._runGeneration({
+          isContinuation: true,
+          wordTarget: nextChunk,
+          concludeStory: isLastChunkForGoal,
+          writeToGoal: true
+        }), 1500);
+        return;
+      } else {
+        this._autoWriteToGoal = false;
+        this._writeToGoalTarget = 0;
+      }
+    }
+
+    // Final scoring of all generated prose
+    if (allStreamedText && allStreamedText.length > 100) {
+      this._scoreProse(allStreamedText);
+    }
+
+    this._showContinueBar(true);
   }
 
   _showContinueBar(show) {
@@ -3251,8 +3350,11 @@ class App {
       }
       if (e.target.id === 'btn-generate-cancel') {
         this.generator.cancel();
+        this._generateCancelled = true;
         this._autoWriteToGoal = false;
         this._setGenerateStatus(false);
+        this._showIterativeOverlay(false);
+        this._showIterativeScoringNotice(false);
         this._showContinueBar(true);
       }
       if (e.target.id === 'btn-iterative-write') {
@@ -3260,8 +3362,11 @@ class App {
       }
       if (e.target.id === 'btn-iterative-cancel') {
         this._iterativeCancelled = true;
+        this._generateCancelled = true;
         this.generator.cancel();
         this._showIterativeOverlay(false);
+        this._showIterativeScoringNotice(false);
+        this._setGenerateStatus(false);
         this._showContinueBar(true);
       }
       if (e.target.id === 'btn-iterative-accept') {
