@@ -701,6 +701,8 @@ class App {
     }
 
     const existingContent = this.editor.getContent();
+    // Store pre-generation content so rewrite can roll back to it
+    this._preGenerationContent = existingContent;
     let characters = [];
     if (useCharacters && this.state.currentProjectId) {
       characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
@@ -1878,7 +1880,7 @@ class App {
     if (overlay) overlay.classList.add('visible');
   }
 
-  async _rewriteProblems() {
+  async _rewriteProblems(userInstructions) {
     if (!this._lastProseReview || !this._lastGeneratedText) return;
 
     const review = this._lastProseReview;
@@ -1896,46 +1898,147 @@ class App {
       }
     }
 
-    if (problems.length === 0) return;
+    if (problems.length === 0 && !userInstructions) return;
 
     // Close review modal
     document.getElementById('prose-review-overlay').classList.remove('visible');
 
-    // Build a targeted rewrite prompt
-    const rewriteInstructions = `REWRITE the following prose to fix these specific issues:\n${problems.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nKeep the same story events, characters, and plot points but improve the prose quality. Eliminate all AI patterns. Make it read as authentically human-written.`;
-
-    // Add the rewrite instruction to the AI instructions temporarily for this generation
-    const originalInstructions = this._currentProject?.aiInstructions || '';
-    const combinedInstructions = originalInstructions + '\n\n' + rewriteInstructions;
-
-    // Run a targeted rewrite generation
     this._showContinueBar(false);
     this._setGenerateStatus(true);
 
-    const existingContent = this.editor.getContent();
-    const plot = this._lastGenSettings?.plot || 'Continue the story.';
-    const characters = this._lastGenSettings?.useCharacters ? await this.localStorage.getProjectCharacters(this.state.currentProjectId) : [];
+    // Roll back the editor to the content before the last generation
+    const baseContent = this._preGenerationContent || '';
+    const editorEl = this.editor.element;
+    editorEl.innerHTML = baseContent;
 
-    // Remove the last generated chunk and regenerate
-    const textToReplace = this._lastGeneratedText;
-    const plainExisting = existingContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-    const plainGenerated = textToReplace.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    // Gather context for the rewrite
+    const characters = this._lastGenSettings?.useCharacters
+      ? await this.localStorage.getProjectCharacters(this.state.currentProjectId)
+      : [];
 
-    // Strip the last generated text from the editor to replace it
-    let baseContent = existingContent;
-    if (plainExisting.endsWith(plainGenerated)) {
-      const cutPoint = plainExisting.length - plainGenerated.length;
-      // Approximate — remove from the end of the HTML
-      const editorHtml = existingContent;
-      const editorText = editorHtml.replace(/<[^>]*>/g, '');
-      // We'll just regenerate the same amount of words
+    let notes = '';
+    if (this._lastGenSettings?.useNotes && this.state.currentProjectId) {
+      const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId);
+      if (projectNotes.length > 0) {
+        notes = projectNotes.map(n => {
+          let entry = n.title;
+          if (n.type && n.type !== 'general') entry = `[${n.type}] ${entry}`;
+          if (n.content) entry += '\n' + n.content;
+          return entry;
+        }).join('\n\n');
+      }
     }
 
-    // Simpler approach: regenerate with the fix instructions
-    await this._runGeneration({
-      isContinuation: true,
-      wordTarget: this._lastGenSettings?.wordTarget || 500
-    });
+    let chapterTitle = '';
+    if (this.state.currentChapterId) {
+      try {
+        const chapter = await this.fs.getChapter(this.state.currentChapterId);
+        if (chapter) chapterTitle = chapter.title;
+      } catch (_) {}
+    }
+
+    const project = this._currentProject;
+    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+
+    let streamedText = '';
+
+    await this.generator.rewriteProse(
+      {
+        originalProse: this._lastGeneratedText,
+        problems,
+        userInstructions: userInstructions || '',
+        chapterTitle,
+        characters,
+        notes,
+        chapterOutline: this._currentChapterOutline || '',
+        aiInstructions: project?.aiInstructions || '',
+        tone: this._lastGenSettings?.tone || '',
+        style: this._lastGenSettings?.style || '',
+        wordTarget: this._lastGenSettings?.wordTarget || 500,
+        genre: genreInfo?.label || '',
+        genreRules: genreInfo?.rules || ''
+      },
+      {
+        onChunk: (text) => {
+          streamedText += text;
+          const startingContent = baseContent.trim() ? baseContent : '';
+          const paragraphs = streamedText.split('\n\n');
+          const newHtml = paragraphs
+            .map(p => {
+              const lines = p.replace(/\n/g, '<br>');
+              return `<p>${lines}</p>`;
+            })
+            .join('');
+          editorEl.innerHTML = startingContent + newHtml;
+          const container = editorEl.closest('.editor-area');
+          if (container) container.scrollTop = container.scrollHeight;
+          // Update word count live
+          const wc = editorEl.textContent.match(/[a-zA-Z'''\u2019-]+/g) || [];
+          const chapterWords = wc.length;
+          const wordsEl = document.getElementById('status-words');
+          if (wordsEl) wordsEl.textContent = chapterWords.toLocaleString();
+          const fwcWords = document.getElementById('fwc-words');
+          if (fwcWords) fwcWords.textContent = chapterWords.toLocaleString();
+          this._updateLocalWordCounts(editorEl.innerHTML);
+          this._trackDailyWords(chapterWords);
+        },
+        onDone: async () => {
+          this._setGenerateStatus(false);
+          const content = this.editor.getContent();
+          if (this.state.currentChapterId) {
+            try {
+              await this.fs.updateChapter(this.state.currentChapterId, { content });
+            } catch (_) {}
+            this._updateLocalWordCounts(content);
+          }
+
+          // Re-score the rewritten prose
+          if (streamedText && streamedText.length > 100) {
+            this._scoreProse(streamedText);
+          }
+
+          this._showContinueBar(true);
+        },
+        onError: (err) => {
+          this._setGenerateStatus(false);
+          alert('Rewrite failed: ' + err.message);
+        }
+      }
+    );
+  }
+
+  _openProseRethinkModal() {
+    if (!this._lastGeneratedText) {
+      alert('No generated prose to rethink.');
+      return;
+    }
+
+    // Close the prose review modal
+    document.getElementById('prose-review-overlay')?.classList.remove('visible');
+
+    document.getElementById('prose-rethink-prompt').value = '';
+    document.getElementById('prose-rethink-status').style.display = 'none';
+    document.getElementById('btn-prose-rethink-submit').disabled = false;
+    const overlay = document.getElementById('prose-rethink-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  async _submitProseRethink() {
+    const userInstructions = document.getElementById('prose-rethink-prompt')?.value?.trim();
+    if (!userInstructions) {
+      alert('Please enter instructions for how to revise the prose.');
+      return;
+    }
+
+    // Show spinner and disable button
+    document.getElementById('prose-rethink-status').style.display = '';
+    document.getElementById('btn-prose-rethink-submit').disabled = true;
+
+    // Close the modal
+    document.getElementById('prose-rethink-overlay')?.classList.remove('visible');
+
+    // Rewrite with user instructions (problems from last review are also included)
+    await this._rewriteProblems(userInstructions);
   }
 
   // ========================================
@@ -2369,8 +2472,13 @@ class App {
         await this._rewriteProblems();
       }
       if (e.target.id === 'btn-prose-review-rethink') {
-        document.getElementById('prose-review-overlay')?.classList.remove('visible');
-        await this._openRethinkModal();
+        this._openProseRethinkModal();
+      }
+      if (e.target.id === 'btn-prose-rethink-submit') {
+        await this._submitProseRethink();
+      }
+      if (e.target.id === 'btn-prose-rethink-cancel') {
+        document.getElementById('prose-rethink-overlay')?.classList.remove('visible');
       }
       if (e.target.id === 'btn-save-ai-instructions') {
         const instructions = document.getElementById('generate-ai-instructions')?.value || '';

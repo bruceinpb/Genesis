@@ -468,6 +468,142 @@ CRITICAL: Your prose must read as authentically human-written. Strictly avoid th
   }
 
   /**
+   * Rewrite prose to fix identified problems and/or apply user instructions.
+   * Streams the response, replacing (not appending to) the original prose.
+   */
+  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, genre, genreRules }, { onChunk, onDone, onError }) {
+    if (!this.apiKey) {
+      onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
+      return;
+    }
+
+    this.abortController = new AbortController();
+
+    let systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules });
+    systemPrompt += `\n\n=== REWRITE MODE ===
+You are REWRITING existing prose to fix specific issues. Rules:
+- Maintain the same story events, characters, plot points, and narrative arc
+- Preserve the narrative voice, tense, and point of view
+- Fix ONLY the identified problems — do not introduce new issues
+- If problems are minor, make surgical fixes to the affected passages
+- If problems are pervasive, do a complete rewrite while preserving the story
+- Output ONLY the rewritten prose — no commentary, no labels, no meta-text`;
+
+    let userPrompt = '';
+    if (chapterTitle) {
+      userPrompt += `Chapter: ${chapterTitle}\n`;
+    }
+    if (genre) {
+      userPrompt += `Genre: ${genre}\n`;
+    }
+
+    if (aiInstructions) {
+      userPrompt += `\n=== AUTHOR INSTRUCTIONS (MUST FOLLOW) ===\n${aiInstructions}\n=== END AUTHOR INSTRUCTIONS ===\n`;
+    }
+
+    if (chapterOutline) {
+      userPrompt += `\n=== CHAPTER OUTLINE (reference) ===\n${chapterOutline}\n=== END CHAPTER OUTLINE ===\n`;
+    }
+
+    userPrompt += `\n=== ORIGINAL PROSE TO REWRITE ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n`;
+
+    if (problems && problems.length > 0) {
+      userPrompt += `\n=== ISSUES TO FIX ===\n`;
+      problems.forEach((p, i) => {
+        userPrompt += `${i + 1}. ${p}\n`;
+      });
+      userPrompt += `=== END ISSUES ===\n`;
+    }
+
+    if (userInstructions) {
+      userPrompt += `\n=== AUTHOR'S REVISION INSTRUCTIONS ===\n${userInstructions}\n=== END REVISION INSTRUCTIONS ===\n`;
+    }
+
+    if (characters && characters.length > 0) {
+      userPrompt += '\nCharacters:\n';
+      for (const char of characters) {
+        userPrompt += `- ${char.name} (${char.role})`;
+        if (char.description) userPrompt += `: ${char.description}`;
+        userPrompt += '\n';
+      }
+    }
+
+    if (notes) {
+      userPrompt += `\nAdditional context/notes:\n${notes}\n`;
+    }
+
+    const target = wordTarget || 500;
+    userPrompt += `\nRewrite the prose (~${target} words), fixing all identified issues while keeping the same story events and characters. Output ONLY the rewritten prose.`;
+
+    try {
+      const response = await fetch(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: 4096,
+          stream: true,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        }),
+        signal: this.abortController.signal
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        let msg = `API error (${response.status})`;
+        try {
+          const parsed = JSON.parse(errorBody);
+          msg = parsed.error?.message || msg;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+
+            try {
+              const event = JSON.parse(data);
+              if (event.type === 'content_block_delta' && event.delta?.text) {
+                onChunk(event.delta.text);
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      this.abortController = null;
+      onDone();
+    } catch (err) {
+      this.abortController = null;
+      if (err.name === 'AbortError') {
+        onDone();
+      } else {
+        onError(err);
+      }
+    }
+  }
+
+  /**
    * Generate a cover image prompt by analyzing the story content.
    * Uses Claude to create a vivid image generation prompt.
    */
