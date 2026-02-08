@@ -2003,7 +2003,7 @@ class App {
     const genreInfo = this._getGenreRules(genreId, subgenreId);
     const chapterOutline = this._currentChapterOutline || '';
 
-    // Generate ~100 words
+    // Generate ~100 words — hard limit via maxTokens to prevent overrun
     const editorEl = this.editor.element;
     let streamedText = '';
 
@@ -2013,7 +2013,7 @@ class App {
 
         this.generator.generate(
           {
-            plot: settings.plot,
+            plot: settings.plot + '\n\nCRITICAL CONSTRAINT: Write EXACTLY ONE PARAGRAPH of approximately 80-120 words. STOP after one paragraph. Do NOT write more than 150 words under any circumstances.',
             existingContent,
             chapterTitle,
             characters,
@@ -2023,6 +2023,7 @@ class App {
             tone: settings.tone,
             style: settings.style,
             wordTarget: 100,
+            maxTokens: 250,
             genre: genreInfo?.label || '',
             genreRules: genreInfo?.rules || '',
             projectGoal: project?.wordCountGoal || 0,
@@ -2069,6 +2070,10 @@ class App {
 
     // Store the generated text for the iteration loop
     this._lastGeneratedText = streamedText;
+    this._iterativeBestText = null;
+    this._iterPrevScore = 0;
+    this._iterPrevIssueCount = 0;
+    this._iterPrevSubscores = {};
     this._lastGenSettings = {
       plot: settings.plot, wordTarget: 100, tone: settings.tone,
       style: settings.style, useCharacters: settings.useCharacters,
@@ -2117,29 +2122,49 @@ class App {
     }
 
     const score = review.score || 0;
-    if (score > bestScore) bestScore = score;
 
-    this._updateIterativeScore(score);
+    // Track best-scoring text — revert to it if score drops
+    if (score > bestScore) {
+      bestScore = score;
+      this._iterativeBestText = currentText;
+    } else if (score < bestScore && this._iterativeBestText && iteration > 1) {
+      // Score dropped — revert to best version
+      this._updateIterativeLog(`Iteration ${iteration}: Score dropped (${score} < best ${bestScore}). Reverting to best version.`);
+      currentText = this._iterativeBestText;
+
+      // Restore best text in editor
+      const baseContent = this._preGenerationContent || '';
+      const editorEl = this.editor.element;
+      const paragraphs = currentText.split('\n\n');
+      const restoredHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+      editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + restoredHtml;
+      if (this.state.currentChapterId) {
+        this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+      }
+      this._lastGeneratedText = currentText;
+    }
+
+    this._updateIterativeScore(bestScore);
     this._updateIterativeIteration(iteration, bestScore);
-    this._updateIterativeLog(`Iteration ${iteration}: Score = ${score}/100`);
+    this._updateIterativeLog(`Iteration ${iteration}: Score = ${score}/100${score < bestScore ? ` (best: ${bestScore})` : ''}`);
 
     // Store for next iteration context
     this._iterPrevScore = score;
     this._iterPrevIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
     this._iterPrevSubscores = review.subscores;
 
-    // Check if we've reached the target
-    if (score >= 90) {
+    // Check if we've reached the target (use bestScore which may be from a previous iteration)
+    if (bestScore >= 90) {
       this._showIterativeOverlay(false);
-      this._presentIterativeAccept(currentText, score);
+      this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
       return;
     }
 
-    // Check if max iterations reached
+    // Check if max iterations reached — present the best version we have
     if (iteration >= MAX_ITERATIONS) {
       this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}`);
       this._showIterativeOverlay(false);
-      this._presentIterativeAccept(currentText, score);
+      this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
       return;
     }
 
@@ -2216,7 +2241,7 @@ class App {
           {
             originalProse: currentText,
             problems: formattedProblems,
-            userInstructions: '',
+            userInstructions: 'CRITICAL: The rewritten paragraph must be approximately the same length as the original (~80-120 words, one paragraph only). Do NOT expand or add extra paragraphs.',
             chapterTitle,
             characters,
             notes: '',
@@ -2225,6 +2250,7 @@ class App {
             tone: this._iterativeSettings.tone || '',
             style: this._iterativeSettings.style || '',
             wordTarget: 100,
+            maxTokens: 250,
             genre: genreInfo?.label || '',
             genreRules: genreInfo?.rules || '',
             voice: project?.voice || '',
