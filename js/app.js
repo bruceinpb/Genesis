@@ -1836,6 +1836,7 @@ class App {
     this._rewriteIteration = 0;
     this._previousRewriteScore = null;
     this._previousRewriteIssueCount = null;
+    this._previousRewriteText = null;
 
     // Show scoring progress bar
     this._showScoringProgress(true);
@@ -1850,7 +1851,7 @@ class App {
     }
   }
 
-  async _scoreProseAfterRewrite(generatedText, previousScore, previousIssueCount) {
+  async _scoreProseAfterRewrite(generatedText, previousScore, previousIssueCount, previousSubscores) {
     if (!this.generator.hasApiKey()) return;
     if (!generatedText || generatedText.length < 100) return;
 
@@ -1860,7 +1861,9 @@ class App {
     try {
       const review = await this.generator.scoreProse(generatedText, {
         isRewrite: true,
-        previousIssueCount
+        previousIssueCount,
+        previousScore,
+        previousSubscores
       });
 
       // Add comparison data to the review for display
@@ -1875,8 +1878,35 @@ class App {
       if (scoreDelta <= 1 && this._rewriteIteration >= 2) {
         review._convergenceWarning = true;
       }
-      if (scoreDelta < 0 && this._rewriteIteration >= 1) {
+
+      // If score dropped, automatically revert to the previous version
+      // This is the key safeguard: rewrites should never make things worse
+      if (scoreDelta < 0 && this._previousRewriteText) {
         review._scoreDecreased = true;
+        review._revertedToPrevious = true;
+
+        // Restore the previous (better-scoring) text
+        const baseContent = this._preGenerationContent || '';
+        const editorEl = this.editor.element;
+        const paragraphs = this._previousRewriteText.split('\n\n');
+        const restoredHtml = paragraphs
+          .map(p => {
+            const lines = p.replace(/\n/g, '<br>');
+            return `<p>${lines}</p>`;
+          })
+          .join('');
+        editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + restoredHtml;
+
+        // Save the reverted content
+        if (this.state.currentChapterId) {
+          try {
+            await this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() });
+          } catch (_) {}
+          this._updateLocalWordCounts(this.editor.getContent());
+        }
+
+        // Reset the generated text to the previous version
+        this._lastGeneratedText = this._previousRewriteText;
       }
 
       this._showScoringProgress(false);
@@ -1914,8 +1944,11 @@ class App {
       </div>`;
     }
     if (review._scoreDecreased) {
+      const revertNote = review._revertedToPrevious
+        ? ' <strong>The previous (higher-scoring) version has been automatically restored.</strong>'
+        : '';
       convergenceHtml = `<div style="background:var(--danger-bg, rgba(220,53,69,0.15));border:1px solid var(--danger, #dc3545);border-radius:var(--radius-sm);padding:10px;margin:12px 0;font-size:0.85rem;">
-        <strong>Score decreased after rewrite.</strong> The rewrite introduced new issues while fixing old ones. Further automated rewrites are unlikely to help. Consider accepting the prose and making targeted manual edits for remaining issues.
+        <strong>Score decreased after rewrite.</strong> The rewrite introduced new issues while fixing old ones.${revertNote} Consider accepting the prose and making targeted manual edits for remaining issues.
       </div>`;
     }
 
@@ -2053,28 +2086,56 @@ class App {
 
     const review = this._lastProseReview;
     const problems = [];
+
+    // Always include AI patterns — these are high-priority
     if (review.aiPatterns) {
       for (const p of review.aiPatterns) {
-        problems.push(`AI Pattern: ${p.pattern}${p.examples?.[0] ? ` (e.g. "${p.examples[0]}")` : ''}`);
-      }
-    }
-    if (review.issues) {
-      for (const issue of review.issues) {
-        if (severityFilter === 'high') {
-          if (issue.severity === 'high') {
-            problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
-          }
-        } else if (severityFilter === 'all') {
-          problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
-        } else {
-          if (issue.severity === 'high' || issue.severity === 'medium') {
-            problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
-          }
-        }
+        problems.push({
+          text: p.examples?.[0] || '',
+          description: `AI Pattern: ${p.pattern}`,
+          impact: p.estimatedImpact || 3,
+          severity: 'high',
+          category: 'ai-pattern'
+        });
       }
     }
 
-    if (problems.length === 0 && !userInstructions) return;
+    // Filter and collect issues — NEVER include low-severity issues in rewrites
+    // Low-severity fixes almost always introduce new problems that outweigh the benefit
+    if (review.issues) {
+      for (const issue of review.issues) {
+        // Skip low-severity issues entirely — they cause more harm than good
+        if (issue.severity === 'low') continue;
+
+        if (severityFilter === 'high' && issue.severity !== 'high') continue;
+
+        problems.push({
+          text: issue.text || '',
+          description: issue.problem || '',
+          impact: issue.estimatedImpact || 1,
+          severity: issue.severity,
+          category: issue.category || 'other'
+        });
+      }
+    }
+
+    // Sort by estimated impact (highest first) so the most valuable fixes are prioritized
+    problems.sort((a, b) => b.impact - a.impact);
+
+    // Cap at 10 issues per rewrite pass to prevent the AI from being overwhelmed
+    // Trying to fix too many issues at once is the primary cause of score degradation
+    const MAX_ISSUES_PER_PASS = 10;
+    const cappedProblems = problems.slice(0, MAX_ISSUES_PER_PASS);
+
+    // Format problems as precise, actionable instructions
+    const formattedProblems = cappedProblems.map(p => {
+      if (p.text) {
+        return `FIND: "${p.text}" → PROBLEM: ${p.description} [${p.severity}, ~${p.impact} pts]`;
+      }
+      return `${p.description} [${p.severity}, ~${p.impact} pts]`;
+    });
+
+    if (formattedProblems.length === 0 && !userInstructions) return;
 
     // Track rewrite iterations for convergence detection
     this._rewriteIteration = (this._rewriteIteration || 0) + 1;
@@ -2082,7 +2143,8 @@ class App {
     const previousSubscores = review.subscores;
     const previousIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
 
-    // Store previous score for comparison after rewrite
+    // Store previous text so we can revert if score drops
+    this._previousRewriteText = this._lastGeneratedText;
     this._previousRewriteScore = previousScore;
     this._previousRewriteIssueCount = previousIssueCount;
 
@@ -2131,7 +2193,7 @@ class App {
     await this.generator.rewriteProse(
       {
         originalProse: this._lastGeneratedText,
-        problems,
+        problems: formattedProblems,
         userInstructions: userInstructions || '',
         chapterTitle,
         characters,
@@ -2184,7 +2246,7 @@ class App {
 
           // Re-score the rewritten prose with rewrite context
           if (streamedText && streamedText.length > 100) {
-            this._scoreProseAfterRewrite(streamedText, previousScore, previousIssueCount);
+            this._scoreProseAfterRewrite(streamedText, previousScore, previousIssueCount, previousSubscores);
           }
 
           this._showContinueBar(true);
