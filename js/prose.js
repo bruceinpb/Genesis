@@ -37,6 +37,27 @@ class ProseAnalyzer {
       'needle in a haystack', 'once in a lifetime', 'tip of the iceberg'
     ];
 
+    // PET phrases — Physical Emotional Telling: lazy body-reaction shortcuts
+    this.petPhrases = [
+      'throat tightened', 'throat constricted', 'chest tightened', 'chest constricted',
+      'breath caught', 'breath hitched', 'held .* breath',
+      'stomach churned', 'stomach dropped', 'stomach knotted', 'stomach clenched', 'stomach sank',
+      'heart pounded', 'heart hammered', 'heart raced', 'heart sank', 'heart clenched', 'heart skipped',
+      'blood ran cold', 'blood drained',
+      'eyes widened', 'eyes narrowed', 'eyes burned', 'eyes stung', 'eyes glistened', 'eyes welled',
+      'jaw clenched', 'jaw tightened', 'teeth gritted',
+      'fists? clenched', 'fists? balled', 'hands? trembled', 'hands? shook',
+      'shoulders tensed', 'shoulders slumped', 'spine stiffened',
+      'knees weakened', 'knees buckled', 'legs turned to',
+      'skin crawled', 'skin prickled', 'hairs? stood on end', 'goosebumps',
+      'bile rose', 'mouth went dry', 'swallowed hard', 'swallowed thickly',
+      'tears pricked', 'tears threatened', 'vision blurred',
+      'voice cracked', 'voice broke', 'voice wavered', 'voice trembled',
+      'chill ran down', 'chill ran up', 'shiver ran through',
+      'weight settled in', 'nostrils flared', 'lip trembled', 'lip quivered',
+      'pulse quickened', 'pulse raced', 'temples throbbed'
+    ];
+
     // Words that often indicate passive voice
     this.passiveHelpers = new Set([
       'was', 'were', 'been', 'being', 'is', 'are', 'am'
@@ -67,6 +88,7 @@ class ProseAnalyzer {
       pacing: this._getPacing(paragraphs, sentences),
       dialogue: this._getDialogueRatio(cleanText),
       cliches: this._findCliches(cleanText),
+      petPhrases: this._findPetPhrases(cleanText),
       passiveVoice: this._findPassiveVoice(sentences),
       adverbs: this._findAdverbs(words),
       repetition: this._findRepetition(words),
@@ -95,6 +117,7 @@ class ProseAnalyzer {
       pacing: { avgParagraphLength: 0, dialogueBeats: 0 },
       dialogue: { ratio: 0, wordCount: 0 },
       cliches: [],
+      petPhrases: [],
       passiveVoice: { instances: [], percentage: 0 },
       adverbs: { list: [], percentage: 0 },
       repetition: [],
@@ -283,6 +306,21 @@ class ProseAnalyzer {
     return found;
   }
 
+  _findPetPhrases(text) {
+    const lower = text.toLowerCase();
+    const found = [];
+
+    this.petPhrases.forEach(phrase => {
+      const regex = new RegExp(phrase, 'gi');
+      const matches = lower.match(regex);
+      if (matches) {
+        found.push({ phrase, count: matches.length });
+      }
+    });
+
+    return found;
+  }
+
   _findPassiveVoice(sentences) {
     const instances = [];
     let passiveCount = 0;
@@ -419,6 +457,12 @@ class ProseAnalyzer {
 
     // Cliche penalty
     if (analysis.cliches.length > 0) score -= analysis.cliches.length * 2;
+
+    // PET phrase penalty — these are lazy emotional shortcuts
+    if (analysis.petPhrases && analysis.petPhrases.length > 0) {
+      const petCount = analysis.petPhrases.reduce((s, p) => s + p.count, 0);
+      score -= Math.min(15, petCount * 3); // -3 per PET phrase, max -15
+    }
 
     // Lexical diversity bonus
     if (analysis.wordChoice.uniqueWordRatio > 0.5) score += 3;

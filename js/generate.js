@@ -283,31 +283,80 @@ ${userInstructions}`;
 
     const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
 
-Your scoring criteria:
-- Sentence variety and rhythm (0-15)
-- Dialogue authenticity and distinction (0-15)
-- Sensory detail and showing vs telling (0-15)
-- Emotional resonance and character depth (0-15)
-- Vocabulary precision and word choice (0-10)
-- Narrative flow and pacing (0-10)
-- Originality and voice (0-10)
-- Technical execution (grammar, punctuation) (0-10)
+SCORING INSTRUCTIONS — Score each sub-category independently, then sum them:
+1. Sentence variety and rhythm (0-15): Count sentence length variation. If most sentences are similar length, score 4-6. If there's genuine variety between short punchy and long flowing, score 10+.
+2. Dialogue authenticity (0-15): Does each character sound distinct? Are dialogue tags varied and natural? No dialogue = score 0 for this category.
+3. Sensory detail / showing vs telling (0-15): Count instances of SHOWING (concrete action, sensory detail) vs TELLING (stating emotions directly). Heavy telling = 3-5. Mostly showing = 10+.
+4. Emotional resonance and character depth (0-15): Are emotions conveyed through behavior, not named? Is there interiority beyond surface reactions?
+5. Vocabulary precision (0-10): Are words specific and earned? Or generic and interchangeable?
+6. Narrative flow and pacing (0-10): Does the prose move at the right speed? Are transitions smooth?
+7. Originality and voice (0-10): Does this feel like a distinct author's voice? Or generic AI prose?
+8. Technical execution (0-10): Grammar, punctuation, paragraph breaks.
 
-Known AI writing patterns to detect:
-- Overuse of "delicate", "intricate", "testament to", "tapestry", "symphony of"
-- Starting sentences with "As" or "While" excessively
+CRITICAL SCORING RULES:
+- You MUST report individual sub-scores in a "subscores" object
+- The total score MUST equal the sum of all sub-scores — do NOT round or adjust
+- Do NOT default to any particular score. Score each dimension independently based on evidence
+- Raw AI prose typically scores 40-60. Competent fiction scores 65-78. Strong human writing scores 78-88. Exceptional literary prose scores 88+
+- A score above 90 should be RARE and reserved for genuinely exceptional prose
+- Be specific: cite exact passages as evidence for each sub-score
+
+KNOWN AI WRITING PATTERNS to detect:
+- Overuse of "delicate", "intricate", "testament to", "tapestry", "symphony of", "dance of", "nestled", "whispering"
+- Starting sentences with "As" or "While" excessively (count them)
 - Lists of three (tricolons) used too frequently
 - Purple prose or overly flowery descriptions
-- Telling emotions instead of showing them ("She felt sad")
-- Formulaic paragraph structures
+- Telling emotions instead of showing them ("She felt sad", "He was angry")
+- Formulaic paragraph structures (observation → feeling → action → reflection)
 - Lack of authentic dialogue tags variety
 - Excessive use of em-dashes
-- Repetitive transitional phrases
+- Repetitive transitional phrases ("Meanwhile", "In that moment")
 - Generic or vague descriptions lacking specificity
 
-Be HONEST. Most raw AI prose scores 45-65. Good human writing scores 70-85. Exceptional prose scores 85+.
+PET PHRASES (Physical Emotional Telling) — these are CLICHED BODY-REACTION SHORTCUTS that substitute for genuine emotional writing. Flag ALL of these:
+- throat tightened/constricted, chest tightened/constricted
+- breath caught, breath hitched, held his/her breath
+- stomach churned/dropped/knotted/clenched/sank
+- heart pounded/hammered/raced/sank/clenched/skipped
+- blood ran cold, blood drained from face
+- eyes widened/narrowed/burned/stung/glistened/welled
+- jaw clenched/tightened, teeth gritted
+- fists clenched/balled, hands trembled/shook
+- shoulders tensed/slumped, spine stiffened
+- knees weakened/buckled, legs turned to jelly
+- skin crawled/prickled, hairs stood on end, goosebumps
+- bile rose, mouth went dry, swallowed hard/thickly
+- tears streamed/pricked/threatened, vision blurred
+- voice cracked/broke/wavered/trembled
+- a chill ran down/up spine, shiver ran through
+- weight settled in chest/stomach, pit in stomach
+- nostrils flared, lip trembled/quivered
+- pulse quickened/raced, temples throbbed
 
-Output valid JSON only: {"score": number, "label": "string", "issues": [{"text": "quoted problematic passage", "problem": "description", "severity": "high|medium|low"}], "aiPatterns": [{"pattern": "pattern name", "examples": ["example from text"]}], "summary": "2-3 sentence overall assessment"}`;
+Each PET phrase found should be flagged as a SEPARATE issue with severity "high" because these are lazy emotional shortcuts. The goal is prose that SHOWS emotion through character-specific action and context, not generic body reactions.
+
+IMPORTANT: The total score = sum of subscores. Report both.
+
+Output valid JSON only:
+{
+  "score": number,
+  "label": "string (Exceptional/Strong/Good/Competent/Needs Work/Rough Draft)",
+  "subscores": {
+    "sentenceVariety": number,
+    "dialogueAuthenticity": number,
+    "sensoryDetail": number,
+    "emotionalResonance": number,
+    "vocabularyPrecision": number,
+    "narrativeFlow": number,
+    "originalityVoice": number,
+    "technicalExecution": number
+  },
+  "issues": [{"text": "quoted problematic passage", "problem": "description", "severity": "high|medium|low", "category": "pet-phrase|telling|cliche|weak-words|passive|structure|pacing|other", "estimatedImpact": number}],
+  "aiPatterns": [{"pattern": "pattern name", "examples": ["example from text"], "estimatedImpact": number}],
+  "summary": "2-3 sentence overall assessment"
+}
+
+For "estimatedImpact": estimate how many points the score would improve if this specific issue were fixed (1-5 points per issue).`;
 
     const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
@@ -319,8 +368,8 @@ Output valid JSON only: {"score": number, "label": "string", "issues": [{"text":
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: 2048,
-        messages: [{ role: 'user', content: `Score this prose and detect any AI patterns:\n\n"""${proseText.slice(-4000)}"""` }],
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: `Score this prose critically and detect ALL AI patterns and PET phrases. Be thorough and honest — do not default to any particular score. Score each sub-category independently based on evidence from the text, then sum them:\n\n"""${proseText.slice(-6000)}"""` }],
         system: systemPrompt
       })
     });
@@ -340,9 +389,22 @@ Output valid JSON only: {"score": number, "label": "string", "issues": [{"text":
     if (jsonMatch) jsonStr = jsonMatch[0];
 
     try {
-      return JSON.parse(jsonStr);
+      const parsed = JSON.parse(jsonStr);
+      // Validate: if subscores exist, ensure score = sum of subscores
+      if (parsed.subscores) {
+        const sum = Object.values(parsed.subscores).reduce((a, b) => a + (Number(b) || 0), 0);
+        parsed.score = Math.round(sum);
+      }
+      // Assign label based on actual score
+      if (parsed.score >= 88) parsed.label = 'Exceptional';
+      else if (parsed.score >= 78) parsed.label = 'Strong - Distinctive Human Voice';
+      else if (parsed.score >= 65) parsed.label = 'Good - Strong Human Voice';
+      else if (parsed.score >= 50) parsed.label = 'Competent - Needs Polish';
+      else if (parsed.score >= 35) parsed.label = 'Needs Work';
+      else parsed.label = 'Rough Draft';
+      return parsed;
     } catch (e) {
-      return { score: 0, label: 'Unable to score', issues: [], aiPatterns: [], summary: 'Scoring failed — could not parse response.' };
+      return { score: 0, label: 'Unable to score', issues: [], aiPatterns: [], subscores: {}, summary: 'Scoring failed — could not parse response.' };
     }
   }
 
@@ -372,7 +434,19 @@ CRITICAL: Your prose must read as authentically human-written. Strictly avoid th
 - Do NOT overuse em-dashes — use varied punctuation
 - Do NOT use generic transitional phrases like "Meanwhile", "In that moment", "Little did she know"
 - Vary dialogue tags — not every line needs "said" or an action beat
-- Be specific, not generic — real details over vague descriptions`;
+- Be specific, not generic — real details over vague descriptions
+
+=== AVOID PET PHRASES (Physical Emotional Telling) ===
+CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These are LAZY and signal AI-generated prose:
+- NEVER write: throat tightened, chest tightened, breath caught, breath hitched, stomach churned/dropped/knotted
+- NEVER write: heart pounded/hammered/raced/sank, blood ran cold, eyes widened/narrowed/burned/stung
+- NEVER write: jaw clenched, fists clenched/balled, hands trembled, shoulders tensed/slumped
+- NEVER write: knees weakened/buckled, skin crawled/prickled, bile rose, mouth went dry, swallowed hard
+- NEVER write: voice cracked/broke/wavered, a chill ran down spine, pulse quickened/raced
+- Instead: Show emotion through CHARACTER-SPECIFIC action, dialogue, and environmental interaction
+- Example BAD: "His throat tightened as fear gripped him."
+- Example GOOD: "He grabbed the doorframe. The words wouldn't come — just that high, thin sound his mother always mistook for laughter."
+- A maximum of ONE subtle physical reaction per 1000 words is acceptable, but ONLY if it's specific to the character`;
 
     if (genreRules) {
       prompt += `\n\n=== GENRE STYLE RULES (${genre}) ===\n${genreRules}`;
@@ -487,7 +561,14 @@ You are REWRITING existing prose to fix specific issues. Rules:
 - Fix ONLY the identified problems — do not introduce new issues
 - If problems are minor, make surgical fixes to the affected passages
 - If problems are pervasive, do a complete rewrite while preserving the story
-- Output ONLY the rewritten prose — no commentary, no labels, no meta-text`;
+- Output ONLY the rewritten prose — no commentary, no labels, no meta-text
+
+=== PET PHRASE ELIMINATION ===
+When fixing PET phrases (Physical Emotional Telling), do NOT just swap one PET phrase for another.
+Instead, replace each with character-specific action, environmental interaction, or dialogue that reveals the emotion:
+- BAD fix: "His throat tightened" → "His chest constricted" (still a PET phrase!)
+- GOOD fix: "His throat tightened" → "He grabbed the back of his neck and stared at the floor tile."
+- The goal is to SHOW emotion through unique, specific behavior — not name the body sensation`;
 
     let userPrompt = '';
     if (chapterTitle) {
