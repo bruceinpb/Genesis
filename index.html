@@ -499,6 +499,30 @@
   </div>
 </div>
 
+<!-- ===== Accept Chapter Outline Confirmation Modal ===== -->
+<div class="modal-overlay" id="accept-outline-overlay">
+  <div class="modal" style="width:min(440px, 90vw);">
+    <div class="modal-header">
+      <h2>Have You Entered AI Data?</h2>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.9rem;color:var(--text-secondary);line-height:1.5;">
+        Before generating prose, please confirm you have filled out the necessary information in the AI section of the program:
+      </p>
+      <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:12px 0 0 16px;">
+        <li>Characters and their profiles</li>
+        <li>Project notes and world-building details</li>
+        <li>AI instructions and writing preferences</li>
+        <li>Genre and style settings</li>
+      </ul>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-accept-outline-cancel">Cancel</button>
+      <button class="btn btn-primary" id="btn-accept-outline-continue">Continue</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== Settings Panel ===== -->
 <div class="panel" id="panel-settings">
   <div class="panel-header">

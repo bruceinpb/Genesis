@@ -352,6 +352,78 @@ body.no-bounce {
   }
 }
 
+/* Chapter Toolbar (Select All, Delete Selected, Accept Outline) */
+.chapter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.chapter-select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: nowrap;
+}
+
+.chapter-select-all-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+
+.chapter-toolbar-btn {
+  font-size: 0.7rem !important;
+  padding: 4px 8px !important;
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.chapter-delete-selected-btn {
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+  margin-left: auto;
+}
+
+.chapter-delete-selected-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chapter-delete-selected-btn:not(:disabled):hover {
+  background: rgba(231, 76, 60, 0.1);
+}
+
+.chapter-accept-outline-btn {
+  border-color: var(--accent-primary) !important;
+  color: var(--accent-primary) !important;
+}
+
+.chapter-accept-outline-btn:hover {
+  background: var(--accent-subtle);
+}
+
+/* Chapter Checkbox */
+.chapter-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  accent-color: var(--accent-primary);
+}
+
 /* New item button */
 .tree-add {
   display: flex;

@@ -445,6 +445,20 @@ class App {
       const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
 
       let html = '';
+
+      // Chapter toolbar with Select All, Delete Selected, Accept Outline
+      if (chapters.length > 0) {
+        html += `
+        <div class="chapter-toolbar">
+          <label class="chapter-select-all-label">
+            <input type="checkbox" id="chapter-select-all" title="Select All">
+            <span>Select All</span>
+          </label>
+          <button class="btn btn-sm chapter-toolbar-btn chapter-delete-selected-btn" id="btn-delete-selected-chapters" disabled title="Delete selected chapters">Delete Selected</button>
+          <button class="btn btn-sm chapter-toolbar-btn chapter-accept-outline-btn" id="btn-accept-chapter-outline" title="Accept outline and begin prose generation">Accept Outline</button>
+        </div>`;
+      }
+
       for (const chapter of chapters) {
         const statusLabel = chapter.status === 'complete' ? 'done' : chapter.status === 'revision' ? 'rev' : '';
         const hasOutline = chapter.outline ? ' title="Has outline"' : '';
@@ -452,6 +466,7 @@ class App {
         html += `
         <div class="tree-item chapter ${chapter.id === this.state.currentChapterId ? 'active' : ''}"
              data-id="${chapter.id}" data-type="chapter"${hasOutline}>
+          <input type="checkbox" class="chapter-checkbox" data-chapter-id="${chapter.id}" title="Select chapter">
           <span class="icon">&#9656;</span>
           <span class="name">${outlineIcon}${this._esc(chapter.title)}</span>
           <span class="word-count">${(chapter.wordCount || 0).toLocaleString()}${statusLabel ? ' (' + statusLabel + ')' : ''}</span>
@@ -1915,6 +1930,34 @@ class App {
 
     // --- Sidebar content clicks (event delegation) ---
     document.querySelector('.sidebar-content')?.addEventListener('click', async (e) => {
+      // Handle chapter checkbox clicks
+      if (e.target.classList.contains('chapter-checkbox')) {
+        e.stopPropagation();
+        this._updateDeleteSelectedBtn();
+        return;
+      }
+
+      // Handle Select All checkbox
+      if (e.target.id === 'chapter-select-all') {
+        e.stopPropagation();
+        this._toggleSelectAll(e.target.checked);
+        return;
+      }
+
+      // Handle Delete Selected button
+      if (e.target.id === 'btn-delete-selected-chapters' || e.target.closest('#btn-delete-selected-chapters')) {
+        e.stopPropagation();
+        await this._deleteSelectedChapters();
+        return;
+      }
+
+      // Handle Accept Chapter Outline button
+      if (e.target.id === 'btn-accept-chapter-outline' || e.target.closest('#btn-accept-chapter-outline')) {
+        e.stopPropagation();
+        this._showAcceptOutlineConfirmation();
+        return;
+      }
+
       // Handle chapter delete button
       const deleteBtn = e.target.closest('.chapter-delete-btn');
       if (deleteBtn) {
@@ -2170,6 +2213,13 @@ class App {
           this._currentProject = { ...this._currentProject, aiInstructions: instructions };
           alert('AI instructions saved.');
         }
+      }
+      // --- Accept Outline confirmation modal events ---
+      if (e.target.id === 'btn-accept-outline-continue') {
+        await this._acceptChapterOutlineAndGenerate();
+      }
+      if (e.target.id === 'btn-accept-outline-cancel') {
+        document.getElementById('accept-outline-overlay')?.classList.remove('visible');
       }
       if (e.target.id === 'btn-generate-prose') {
         await this._runGeneration();
@@ -2442,6 +2492,108 @@ class App {
       console.error('Failed to delete chapter:', err);
       alert('Failed to delete chapter.');
     }
+  }
+
+  _updateDeleteSelectedBtn() {
+    const checked = document.querySelectorAll('.chapter-checkbox:checked');
+    const btn = document.getElementById('btn-delete-selected-chapters');
+    if (btn) {
+      btn.disabled = checked.length === 0;
+      btn.textContent = checked.length > 0 ? `Delete Selected (${checked.length})` : 'Delete Selected';
+    }
+    // Sync "Select All" checkbox state
+    const selectAll = document.getElementById('chapter-select-all');
+    const allBoxes = document.querySelectorAll('.chapter-checkbox');
+    if (selectAll && allBoxes.length > 0) {
+      selectAll.checked = checked.length === allBoxes.length;
+      selectAll.indeterminate = checked.length > 0 && checked.length < allBoxes.length;
+    }
+  }
+
+  _toggleSelectAll(checked) {
+    document.querySelectorAll('.chapter-checkbox').forEach(cb => {
+      cb.checked = checked;
+    });
+    this._updateDeleteSelectedBtn();
+  }
+
+  async _deleteSelectedChapters() {
+    const checked = document.querySelectorAll('.chapter-checkbox:checked');
+    if (checked.length === 0) return;
+
+    const count = checked.length;
+    if (!confirm(`Delete ${count} selected chapter${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+    try {
+      const idsToDelete = Array.from(checked).map(cb => cb.dataset.chapterId);
+
+      for (const chapterId of idsToDelete) {
+        if (this.state.currentChapterId === chapterId) {
+          this.state.currentChapterId = null;
+          this.editor.clear();
+          this._showWelcome();
+          const wcEl = document.getElementById('status-words');
+          if (wcEl) wcEl.textContent = '0';
+          const fwcWords = document.getElementById('fwc-words');
+          if (fwcWords) fwcWords.textContent = '0';
+        }
+
+        await this.fs.deleteChapter(chapterId);
+        delete this._chapterWordCounts[chapterId];
+      }
+
+      // Renumber remaining chapters
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const orderedIds = chapters.map(ch => ch.id);
+      if (orderedIds.length > 0) {
+        await this.fs.reorderChapters(this.state.currentProjectId, orderedIds);
+      }
+
+      await this._renderChapterList();
+      this._updateStatusBarLocal();
+    } catch (err) {
+      console.error('Failed to delete selected chapters:', err);
+      alert('Failed to delete selected chapters.');
+    }
+  }
+
+  _showAcceptOutlineConfirmation() {
+    const overlay = document.getElementById('accept-outline-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  async _acceptChapterOutlineAndGenerate() {
+    // Close the confirmation modal
+    const overlay = document.getElementById('accept-outline-overlay');
+    if (overlay) overlay.classList.remove('visible');
+
+    // Ensure we have a current chapter with an outline
+    if (!this.state.currentChapterId) {
+      alert('Please select a chapter first.');
+      return;
+    }
+
+    if (!this._currentChapterOutline) {
+      alert('The current chapter has no outline. Generate outlines first via Structure.');
+      return;
+    }
+
+    if (!this.generator.hasApiKey()) {
+      alert('Set your Anthropic API key in Settings first.');
+      return;
+    }
+
+    // Open the generate panel with outline pre-filled, then auto-trigger generation
+    await this.openGeneratePanel();
+
+    // Auto-fill the plot field with the chapter outline if not already set
+    const plotEl = document.getElementById('generate-plot');
+    if (plotEl && !plotEl.value?.trim()) {
+      plotEl.value = this._currentChapterOutline;
+    }
+
+    // Trigger generation
+    await this._runGeneration();
   }
 
   async _openCharacterEditor(charId) {
