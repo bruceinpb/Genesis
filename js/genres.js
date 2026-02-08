@@ -237,6 +237,127 @@ const GENRE_DATA = [
       { id: 'erotica-historical', label: 'Historical Erotica', rules: 'Period settings with explicit content. Social constraints create erotic tension. Authentic historical detail enhances the forbidden nature of encounters.' },
       { id: 'erotica-paranormal', label: 'Paranormal Erotica', rules: 'Supernatural beings and scenarios heighten the erotic elements. Fantasy fulfillment through magical or otherworldly encounters.' }
     ]
+  },
+  {
+    id: 'biography-memoir',
+    label: 'Biography & Memoir',
+    rules: 'Write in compelling narrative prose that reads like a novel while remaining factually grounded. Bring real people to life through vivid scene-setting, authentic dialogue (reconstructed from research), and rich sensory detail. Show the subject\'s inner world through documented actions, letters, interviews, and historical context. Balance factual accuracy with storytelling momentum. Use dramatic structure—rising action, turning points, and resolution. The prose should be engaging and literary, not encyclopedic or dry. Every chapter should read like a story, not a Wikipedia article.',
+    subgenres: [
+      { id: 'bio-historical', label: 'Historical Biography', rules: 'Biography of a historical figure set against their era. Extensive period detail—politics, culture, daily life of the time. Immerse the reader in the subject\'s world. Chernow/McCullough/Isaacson tradition. Research must be meticulous. Weave historical events into the personal narrative.' },
+      { id: 'bio-political', label: 'Political Biography', rules: 'Focus on political figures and their exercise of power. Show the machinery of politics—campaigns, alliances, betrayals, policy battles. Caro tradition. Balance the public figure with the private person. Political context must be accessible to general readers.' },
+      { id: 'bio-celebrity', label: 'Celebrity/Entertainment Biography', rules: 'Biography of artists, musicians, actors, or cultural icons. Capture the creative process and public persona vs. private reality. Show the era\'s cultural landscape. Behind-the-scenes authenticity. The subject\'s art/work should come alive on the page.' },
+      { id: 'bio-military', label: 'Military Biography', rules: 'Biography of military leaders or war heroes. Authentic military detail—strategy, combat, chain of command. Show both battlefield courage and human vulnerability. The fog of war rendered vividly. Ambrose/Atkinson tradition.' },
+      { id: 'bio-sports', label: 'Sports Biography', rules: 'Biography of athletes and sports figures. Capture the physicality and drama of competition. Training, sacrifice, triumph, and failure. The sport itself must come alive through vivid play-by-play prose. Show the person behind the athlete.' },
+      { id: 'bio-memoir', label: 'Memoir', rules: 'First-person narrative of the author\'s own life experiences. Focus on theme rather than chronological completeness. Emotional honesty and vulnerability are paramount. Specific sensory memories bring scenes to life. Reflection and meaning-making distinguish memoir from autobiography. Karr/Didion/Knausgaard tradition.' },
+      { id: 'bio-autobiography', label: 'Autobiography', rules: 'Comprehensive first-person life narrative, typically chronological. The author\'s authentic voice is everything. Balance major life events with intimate personal moments. Self-awareness without excessive self-congratulation. Historical context grounds the personal story.' },
+      { id: 'bio-true-adventure', label: 'True Adventure/Exploration', rules: 'Biography or memoir centered on extraordinary journeys, expeditions, or survival. Cinematic, propulsive prose. The environment is a character—mountains, oceans, polar ice. Physical danger creates narrative tension. Krakauer/Lansing tradition.' }
+    ]
+  },
+  {
+    id: 'christian-fiction',
+    label: 'Christian/Inspirational Fiction',
+    rules: 'Faith is woven naturally into the narrative without being preachy or didactic. Characters struggle authentically with doubt, temptation, and spiritual growth. Show faith through actions and choices, not sermons. Clean content—no explicit sexual content, minimal profanity. Themes of redemption, grace, forgiveness, and hope. The story must work as compelling fiction first; the inspirational element should feel organic, not forced.',
+    subgenres: [
+      { id: 'christian-romance', label: 'Christian Romance', rules: 'Love story centered on faith-compatible values. Clean romance with emotional depth—longing, tenderness, commitment. Physical intimacy is implied or behind closed doors. Couples often grow in faith together. Karen Kingsbury/Francine Rivers tradition.' },
+      { id: 'christian-historical', label: 'Christian Historical', rules: 'Historical fiction with faith themes. Authentic period detail and language. Characters navigate historical challenges through faith. Biblical-era, colonial, Civil War, and WWII settings are popular. Thoene/Austin tradition.' },
+      { id: 'christian-suspense', label: 'Christian Suspense/Thriller', rules: 'Suspenseful plot with spiritual warfare or faith-tested-by-danger themes. Clean but intense—violence is present but not gratuitous. The protagonist\'s faith is challenged by the crisis. Dee Henderson/Terri Blackstock tradition.' },
+      { id: 'christian-fantasy', label: 'Christian Fantasy/Allegory', rules: 'Fantasy or speculative fiction with Christian themes and allegory. Spiritual truths embedded in imaginative world-building. C.S. Lewis/Tolkien tradition. Good vs. evil with theological resonance. Magic may be reframed as spiritual gifts or divine power.' },
+      { id: 'christian-biblical', label: 'Biblical Fiction', rules: 'Fictionalized narratives of Biblical events and characters. Bring ancient settings to life with rich sensory detail. Imagine the interior lives of figures like Moses, David, Mary Magdalene, or Paul. Faithful to scripture while filling gaps with plausible fiction. Extensive historical and archaeological research.' },
+      { id: 'christian-amish', label: 'Amish Fiction', rules: 'Set in Amish communities with authentic cultural detail—plain dress, Pennsylvania Dutch phrases, farming life, Ordnung rules. Themes of community vs. individual desire, forgiveness, and simple living. Often romance-centered. Beverly Lewis tradition.' }
+    ]
+  },
+  {
+    id: 'lgbtq-fiction',
+    label: 'LGBTQ+ Fiction',
+    rules: 'Center LGBTQ+ characters and experiences authentically. Identity, coming out, found family, and self-acceptance are common themes but not required—queer characters can simply exist in any genre. Avoid stereotypes and tragic-only narratives. Show the full range of queer experience—joy, love, community, and ordinary life alongside struggle. Sensitivity to intersectional identities. The prose should reflect the character\'s authentic voice and worldview.',
+    subgenres: [
+      { id: 'lgbtq-romance-mm', label: 'M/M Romance', rules: 'Male/male love story. Authentic emotional connection between male characters. Range from sweet to explicit. Avoid fetishizing—write fully realized people. Strong character voice and chemistry.' },
+      { id: 'lgbtq-romance-ff', label: 'F/F Romance (Sapphic)', rules: 'Female/female love story. Authentic sapphic experience. Can range from sweet to steamy. Avoid male-gaze framing. Center women\'s emotional and physical experiences. Miller/Waters tradition.' },
+      { id: 'lgbtq-literary', label: 'Queer Literary Fiction', rules: 'Literary prose exploring LGBTQ+ identity, culture, and experience with depth and nuance. Complex characterization and thematic ambition. Baldwin/Cunningham/Winterson tradition. Identity as one facet of a rich human story.' },
+      { id: 'lgbtq-ya', label: 'LGBTQ+ Young Adult', rules: 'Teen protagonists navigating identity and first love. Hopeful, affirming tone. Coming-out stories or narratives where being queer is simply part of life. Age-appropriate content. Albertalli/Thomas tradition.' },
+      { id: 'lgbtq-fantasy-scifi', label: 'Queer Speculative Fiction', rules: 'Fantasy or science fiction with LGBTQ+ protagonists and themes. Imagined worlds that explore gender and sexuality in new ways. Diverse relationship structures. Jemisin/Leckie/Solomon tradition.' }
+    ]
+  },
+  {
+    id: 'paranormal',
+    label: 'Paranormal Fiction',
+    rules: 'Supernatural elements are central—ghosts, psychics, vampires, shapeshifters, angels, demons, or other entities. Establish consistent rules for how the paranormal works in your world. Balance the supernatural with grounded human emotion. The paranormal elements should drive both plot and character development. Atmosphere and mood are essential—create a sense of the uncanny.',
+    subgenres: [
+      { id: 'paranormal-romance', label: 'Paranormal Romance', rules: 'Love story between human and supernatural being, or between supernatural beings. The paranormal nature creates unique romantic tension and obstacles. Fated mates, forbidden love, and supernatural bonding tropes. Ward/Feehan/Singh tradition.' },
+      { id: 'paranormal-mystery', label: 'Paranormal Mystery', rules: 'Mystery or detective story with supernatural elements. Psychic detectives, ghost witnesses, or magical forensics. The paranormal ability both helps and complicates the investigation. Harris/Harrison tradition.' },
+      { id: 'paranormal-urban', label: 'Paranormal Urban', rules: 'Supernatural beings and events in modern city settings. Hidden supernatural communities coexisting with mundane world. Fast-paced with action and attitude. Can overlap with urban fantasy but focuses more on the paranormal elements than world-building.' },
+      { id: 'paranormal-ghost', label: 'Ghost Story', rules: 'Ghosts and hauntings as central element. Can be atmospheric and literary or action-oriented. The ghost\'s unfinished business drives the plot. Historical layers—the past bleeding into the present. Straub/Hill tradition.' },
+      { id: 'paranormal-womens', label: "Paranormal Women's Fiction", rules: 'Women over 40 discovering supernatural abilities or entering paranormal worlds. Themes of reinvention, empowerment, and second chances. Humor and heart alongside the supernatural. Growing genre with dedicated readership.' }
+    ]
+  },
+  {
+    id: 'african-american',
+    label: 'African American Fiction',
+    rules: 'Center Black characters and experiences authentically. Rich cultural specificity—family traditions, community bonds, cultural touchstones, and the full spectrum of Black life. Prose should reflect authentic voice and vernacular without caricature. Themes can range from historical struggle to contemporary joy, from literary introspection to commercial entertainment. Avoid monolithic portrayals—show diversity within the community. Morrison/Butler/Whitehead tradition.',
+    subgenres: [
+      { id: 'aa-literary', label: 'African American Literary', rules: 'Literary fiction exploring the Black experience with depth, nuance, and prose mastery. Themes of identity, history, family, and systemic injustice rendered with artistic ambition. Morrison/Ellison/Baldwin/Ward tradition. Language itself is a tool of cultural expression.' },
+      { id: 'aa-romance', label: 'African American Romance', rules: 'Love stories centering Black couples. Authentic cultural context—family dynamics, community expectations, cultural traditions. Range from sweet to steamy. Beverly Jenkins/Alyssa Cole tradition.' },
+      { id: 'aa-urban', label: 'Urban Fiction/Street Lit', rules: 'Gritty, realistic stories of urban life. Drug culture, street politics, survival, and loyalty. Raw, unflinching prose with authentic street vernacular. Sister Souljah/K\'wan tradition. Fast-paced with high stakes.' },
+      { id: 'aa-historical', label: 'African American Historical', rules: 'Historical fiction exploring Black history—slavery, Reconstruction, Harlem Renaissance, Civil Rights, Great Migration, and beyond. Extensive research grounds the narrative. Honor the weight of history while telling compelling individual stories. Haley/Jones/Gyasi tradition.' },
+      { id: 'aa-christian', label: 'African American Christian', rules: 'Faith-centered fiction with Black characters and church culture. The Black church as community anchor. Themes of faith, family, and perseverance. Clean content with spiritual depth. ReShonda Tate Billingsley tradition.' }
+    ]
+  },
+  {
+    id: 'true-crime',
+    label: 'True Crime',
+    rules: 'Narrative nonfiction about real crimes. Tell the story with novelistic techniques—scene-setting, dialogue reconstruction, character development—while maintaining factual integrity. Build suspense even when the outcome is known. Show the human cost of crime—victims, perpetrators, investigators, and communities. Ethical sensitivity toward victims and their families. Thorough research from court records, interviews, and primary sources. Capote/Rule/Larson tradition.',
+    subgenres: [
+      { id: 'truecrime-serial', label: 'Serial Killer', rules: 'Investigation and psychology of serial murderers. Build dread through pattern recognition. Profile the killer\'s psychology without glorifying. Show the detective work and forensic breakthroughs. Douglas/Olsen tradition.' },
+      { id: 'truecrime-investigation', label: 'Criminal Investigation', rules: 'Focus on the investigative process—detectives, forensics, legal proceedings. Procedural detail rendered as compelling narrative. The investigation itself is the story. Cold cases and wrongful convictions are popular subthemes.' },
+      { id: 'truecrime-white-collar', label: 'White Collar Crime', rules: 'Financial fraud, corporate crime, scams, and con artists. Make complex financial schemes accessible and dramatic. The charm of the con artist vs. the devastation of victims. Carreyrou/Kolhatkar tradition.' },
+      { id: 'truecrime-memoir', label: 'True Crime Memoir', rules: 'First-person account of experiencing or investigating crime. Personal stake raises emotional intensity. The author\'s journey of understanding parallels the reader\'s. Memoir techniques blend with investigative reporting.' }
+    ]
+  },
+  {
+    id: 'narrative-nonfiction',
+    label: 'Narrative Nonfiction',
+    rules: 'Tell true stories using fiction techniques—scene construction, dialogue, character development, narrative arc, and vivid prose. The facts are sacred but the storytelling should be compelling. Extensive research underpins every scene. Show, don\'t tell—let events and details convey meaning rather than editorializing. Immersive, transporting prose that makes the reader forget they\'re reading nonfiction.',
+    subgenres: [
+      { id: 'narrnf-history', label: 'Narrative History', rules: 'Historical events told as gripping stories. Bring eras alive through individual experiences and sensory detail. McCullough/Ambrose/Larson tradition. The sweep of history through intimate human stories.' },
+      { id: 'narrnf-science', label: 'Science/Nature Writing', rules: 'Scientific discoveries, natural phenomena, or environmental stories told with literary prose. Make complex science accessible and wondrous. Sacks/Mukherjee/Kolbert tradition. The natural world as source of narrative drama.' },
+      { id: 'narrnf-journalism', label: 'Literary Journalism', rules: 'Long-form journalism with literary ambition. Deep reporting rendered as immersive narrative. New Journalism tradition—Wolfe/Didion/Talese. Scene-by-scene construction with full characterization.' },
+      { id: 'narrnf-travel', label: 'Travel Writing', rules: 'Places and journeys rendered with vivid, evocative prose. Cultural observation, personal reflection, and sensory immersion. Theroux/Chatwin/Bryson tradition. The destination should come alive for the armchair traveler.' },
+      { id: 'narrnf-essay', label: 'Personal Essay/Creative Nonfiction', rules: 'Reflective, literary essays exploring ideas through personal experience. Voice-driven prose with intellectual depth. Montaigne/Didion/Rankine tradition. The essay as art form—intimate, probing, and beautifully crafted.' }
+    ]
+  },
+  {
+    id: 'new-adult',
+    label: 'New Adult',
+    rules: 'Protagonist aged 18-25 navigating the transition to adulthood—college, first jobs, new independence, serious relationships, and identity formation. More mature content than YA—explicit romance, heavier themes, adult consequences. Voice should feel authentically young adult without being teen. The stakes of "firsts"—first real love, first heartbreak, first major failure. Fast-paced with high emotional intensity.',
+    subgenres: [
+      { id: 'na-romance', label: 'New Adult Romance', rules: 'College-age or early-twenties romance. First serious relationships, intense chemistry, and emotional growth. Can be steamy or sweet. Campus settings, first apartments, found friend groups. The intensity of young love rendered vividly.' },
+      { id: 'na-fantasy', label: 'New Adult Fantasy', rules: 'Fantasy with protagonists in the 18-25 range. Magical academies, coming-into-power narratives. More complex world-building and darker themes than YA fantasy. Maas/Bardugo tradition.' },
+      { id: 'na-contemporary', label: 'New Adult Contemporary', rules: 'Realistic fiction about young adults navigating post-high-school life. College pressures, early career struggles, evolving family dynamics. Mental health and identity exploration. Raw, honest voice.' },
+      { id: 'na-dark', label: 'New Adult Dark/Bully Romance', rules: 'Intense, edgy romance with morally complex dynamics. Power imbalances, enemies-to-lovers, dark academia settings. Explicit content with emotional depth. Anti-heroes and complicated heroines.' }
+    ]
+  },
+  {
+    id: 'sports-fiction',
+    label: 'Sports Fiction',
+    rules: 'Athletics and competition drive the narrative. Capture the physicality, strategy, and emotion of sport through vivid, kinetic prose. Training montages, game-day tension, and locker-room camaraderie. Show the sacrifice and dedication behind athletic achievement. Sports should be rendered with enough authentic detail to satisfy fans but enough story to engage non-fans. The sport is the backdrop for human drama—ambition, rivalry, teamwork, and redemption.',
+    subgenres: [
+      { id: 'sports-baseball', label: 'Baseball Fiction', rules: 'America\'s pastime as story engine. The rhythm of the season, the crack of the bat, the tension of a full count. Nostalgia and tradition. Malamud/Kinsella tradition. Baseball\'s mythology and metaphor.' },
+      { id: 'sports-football', label: 'Football Fiction', rules: 'Gridiron drama—Friday night lights to professional leagues. Team dynamics, coaching strategy, and the violence of the game. Small-town identity, college recruitment, and NFL pressure. Bissinger tradition.' },
+      { id: 'sports-boxing-mma', label: 'Boxing/Fighting Fiction', rules: 'The primal drama of one-on-one combat. Training discipline, weight cutting, and the fight game\'s dark side. Poverty-to-glory narratives. The ring as metaphor for life\'s struggles. Rocky/Creed tradition in fiction form.' },
+      { id: 'sports-romance', label: 'Sports Romance', rules: 'Romance centered on athletes—hockey players, football stars, baseball heartthrobs. Behind-the-scenes team dynamics meet love story. Balancing career ambition with relationship. The athlete\'s body and discipline as romantic elements. Trending genre on all platforms.' }
+    ]
+  },
+  {
+    id: 'poetry',
+    label: 'Poetry',
+    rules: 'Every word must earn its place. Compress meaning into the most powerful possible language. Use line breaks, white space, and rhythm as structural tools. Image and metaphor carry emotional weight. Sound matters—assonance, consonance, alliteration, and internal rhyme create music. Show emotional truth through specific, concrete imagery rather than abstract statements. Read your work aloud—the ear should be as satisfied as the eye.',
+    subgenres: [
+      { id: 'poetry-free-verse', label: 'Free Verse', rules: 'No fixed meter or rhyme scheme. Line breaks and rhythm create organic structure. Each poem finds its own form. Image-driven with precise language. The dominant mode of contemporary poetry.' },
+      { id: 'poetry-formal', label: 'Formal/Traditional', rules: 'Structured forms—sonnets, villanelles, sestinas, ghazals, pantoums. Meter and rhyme scheme are integral. The constraint of form generates creative energy. Mastery of prosody required.' },
+      { id: 'poetry-narrative', label: 'Narrative Poetry', rules: 'Story told in verse. Character, plot, and setting rendered poetically. Epic poems, verse novels, and ballads. Homer to Carson tradition. Pacing must serve both story and lyric.' },
+      { id: 'poetry-spoken-word', label: 'Spoken Word/Performance', rules: 'Written for oral performance. Rhythm, repetition, and rhetorical power. Direct emotional impact. Political and personal themes. The page version should convey the energy of live delivery.' },
+      { id: 'poetry-prose-poetry', label: 'Prose Poetry', rules: 'Poetry written in paragraph form without line breaks. Lyric intensity in prose shape. Dream logic, compression, and image-density. Baudelaire/Simic tradition. The boundary between prose and poetry is the subject itself.' }
+    ]
   }
 ];
 
