@@ -685,6 +685,31 @@
   </div>
 </div>
 
+<!-- ===== Prose Rethink Modal ===== -->
+<div class="modal-overlay" id="prose-rethink-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Rethink Prose</h2>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Describe how the prose should be revised. The AI will rewrite the prose based on your instructions while keeping the same story events and characters.
+      </p>
+      <textarea class="form-input" id="prose-rethink-prompt" rows="4" placeholder='e.g. "Make the dialogue more natural" or "Add more sensory detail to the opening scene" or "Reduce the purple prose"'></textarea>
+      <div id="prose-rethink-status" style="display:none;margin-top:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="generate-spinner"></div>
+          <span style="font-size:0.85rem;color:var(--accent-primary);">Rewriting prose...</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-prose-rethink-cancel">Cancel</button>
+      <button class="btn btn-primary" id="btn-prose-rethink-submit">Rewrite</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== Settings Panel ===== -->
 <div class="panel" id="panel-settings">
   <div class="panel-header">
