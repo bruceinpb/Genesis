@@ -323,6 +323,35 @@ body.no-bounce {
   font-family: var(--font-mono);
 }
 
+.chapter-delete-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  margin-left: 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chapter-delete-btn:hover {
+  color: var(--danger);
+  background: rgba(231, 76, 60, 0.1);
+}
+
+.tree-item.chapter:hover .chapter-delete-btn {
+  display: inline-flex;
+}
+
+@media (pointer: coarse) {
+  .chapter-delete-btn {
+    display: inline-flex;
+  }
+}
+
 /* New item button */
 .tree-add {
   display: flex;
