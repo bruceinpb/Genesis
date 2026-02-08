@@ -1817,70 +1817,138 @@ class App {
     const body = document.getElementById('prose-review-body');
     if (!body) return;
 
-    const scoreClass = review.score >= 80 ? 'score-excellent' :
-                       review.score >= 65 ? 'score-good' :
-                       review.score >= 50 ? 'score-fair' : 'score-poor';
-
-    const scoreLabel = review.score >= 80 ? 'Excellent' :
-                       review.score >= 65 ? 'Good' :
-                       review.score >= 50 ? 'Needs Work' : 'Rough Draft';
+    const scoreClass = review.score >= 88 ? 'score-excellent' :
+                       review.score >= 78 ? 'score-good' :
+                       review.score >= 65 ? 'score-fair' : 'score-poor';
 
     let html = `
       <div class="prose-score-display">
         <div class="prose-score-number ${scoreClass}">${review.score}</div>
-        <div class="prose-score-label">${review.label || scoreLabel} / 100</div>
+        <div class="prose-score-label">${this._esc(review.label || '')} / 100</div>
         <div class="meter" style="margin-top:12px;max-width:200px;margin-left:auto;margin-right:auto;">
           <div class="meter-fill ${review.score >= 70 ? 'good' : review.score >= 50 ? 'warning' : 'danger'}" style="width:${review.score}%"></div>
         </div>
-      </div>
+      </div>`;
 
-      <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px;">${this._esc(review.summary || '')}</p>`;
+    // Sub-scores breakdown
+    if (review.subscores) {
+      const subScoreLabels = {
+        sentenceVariety: { label: 'Sentence Variety & Rhythm', max: 15 },
+        dialogueAuthenticity: { label: 'Dialogue Authenticity', max: 15 },
+        sensoryDetail: { label: 'Sensory Detail / Show vs Tell', max: 15 },
+        emotionalResonance: { label: 'Emotional Resonance & Depth', max: 15 },
+        vocabularyPrecision: { label: 'Vocabulary Precision', max: 10 },
+        narrativeFlow: { label: 'Narrative Flow & Pacing', max: 10 },
+        originalityVoice: { label: 'Originality & Voice', max: 10 },
+        technicalExecution: { label: 'Technical Execution', max: 10 }
+      };
+      html += `<div class="prose-subscores">`;
+      for (const [key, info] of Object.entries(subScoreLabels)) {
+        const val = review.subscores[key] ?? 0;
+        const pct = Math.round((val / info.max) * 100);
+        const barClass = pct >= 80 ? 'good' : pct >= 55 ? 'warning' : 'danger';
+        html += `
+          <div class="prose-subscore-row">
+            <span class="prose-subscore-label">${info.label}</span>
+            <span class="prose-subscore-value">${val}/${info.max}</span>
+            <div class="prose-subscore-bar"><div class="meter-fill ${barClass}" style="width:${pct}%"></div></div>
+          </div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `<p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px;">${this._esc(review.summary || '')}</p>`;
 
     if (review.aiPatterns && review.aiPatterns.length > 0) {
-      html += `<h3 style="font-size:0.85rem;font-weight:600;color:var(--danger);margin-bottom:8px;">AI Patterns Detected</h3>
+      const totalAiImpact = review.aiPatterns.reduce((s, p) => s + (p.estimatedImpact || 0), 0);
+      html += `<h3 style="font-size:0.85rem;font-weight:600;color:var(--danger);margin-bottom:8px;">AI Patterns Detected${totalAiImpact > 0 ? ` <span class="prose-impact-badge">fixing could add ~${totalAiImpact} pts</span>` : ''}</h3>
         <ul class="prose-patterns-list">
           ${review.aiPatterns.map(p => `
             <li class="prose-pattern-item">
-              <strong>${this._esc(p.pattern)}</strong>
+              <strong>${this._esc(p.pattern)}</strong>${p.estimatedImpact ? ` <span class="prose-impact-inline">+${p.estimatedImpact}</span>` : ''}
               ${p.examples && p.examples.length > 0 ? `<br><span style="font-size:0.8rem;color:var(--text-muted);">"${this._esc(p.examples[0])}"</span>` : ''}
             </li>
           `).join('')}
         </ul>`;
     }
 
-    if (review.issues && review.issues.length > 0) {
-      html += `<h3 style="font-size:0.85rem;font-weight:600;color:var(--text-secondary);margin-top:16px;margin-bottom:8px;">Quality Issues</h3>
-        <ul class="prose-issues-list">
+    // Separate issues by severity
+    const highIssues = (review.issues || []).filter(i => i.severity === 'high');
+    const mediumIssues = (review.issues || []).filter(i => i.severity === 'medium');
+    const lowIssues = (review.issues || []).filter(i => i.severity === 'low');
+    const hasIssues = highIssues.length > 0 || mediumIssues.length > 0 || lowIssues.length > 0;
+
+    if (hasIssues) {
+      const totalHighImpact = highIssues.reduce((s, i) => s + (i.estimatedImpact || 0), 0);
+      const totalMedImpact = mediumIssues.reduce((s, i) => s + (i.estimatedImpact || 0), 0);
+      const totalLowImpact = lowIssues.reduce((s, i) => s + (i.estimatedImpact || 0), 0);
+      const totalAllImpact = totalHighImpact + totalMedImpact + totalLowImpact;
+
+      html += `<h3 style="font-size:0.85rem;font-weight:600;color:var(--text-secondary);margin-top:16px;margin-bottom:8px;">Quality Issues (${review.issues.length})${totalAllImpact > 0 ? ` <span class="prose-impact-badge">fixing all could add ~${totalAllImpact} pts</span>` : ''}</h3>`;
+
+      // Filter toggle buttons
+      html += `<div class="prose-filter-bar">
+        <button class="prose-filter-btn active" data-filter="all">All (${review.issues.length})</button>
+        <button class="prose-filter-btn prose-filter-high" data-filter="high">Serious (${highIssues.length})${totalHighImpact > 0 ? ` +${totalHighImpact}` : ''}</button>
+        <button class="prose-filter-btn prose-filter-medium" data-filter="medium">Moderate (${mediumIssues.length})${totalMedImpact > 0 ? ` +${totalMedImpact}` : ''}</button>
+        <button class="prose-filter-btn prose-filter-low" data-filter="low">Minor (${lowIssues.length})${totalLowImpact > 0 ? ` +${totalLowImpact}` : ''}</button>
+      </div>`;
+
+      html += `<ul class="prose-issues-list">
           ${review.issues.map(issue => `
-            <li class="prose-issue-item severity-${issue.severity || 'medium'}">
-              <strong>${this._esc(issue.problem || '')}</strong>
+            <li class="prose-issue-item severity-${issue.severity || 'medium'}" data-severity="${issue.severity || 'medium'}">
+              <strong>${this._esc(issue.problem || '')}</strong>${issue.estimatedImpact ? ` <span class="prose-impact-inline">+${issue.estimatedImpact}</span>` : ''}${issue.category ? ` <span class="prose-category-tag">${this._esc(issue.category)}</span>` : ''}
               ${issue.text ? `<br><span style="font-size:0.8rem;color:var(--text-muted);">"${this._esc(issue.text)}"</span>` : ''}
             </li>
           `).join('')}
         </ul>`;
     }
 
-    if ((!review.issues || review.issues.length === 0) && (!review.aiPatterns || review.aiPatterns.length === 0)) {
+    if (!hasIssues && (!review.aiPatterns || review.aiPatterns.length === 0)) {
       html += `<p style="color:var(--success);font-size:0.9rem;text-align:center;margin-top:16px;">No major issues detected. The prose quality is solid.</p>`;
     }
 
     body.innerHTML = html;
 
+    // Wire up severity filter buttons
+    body.querySelectorAll('.prose-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        body.querySelectorAll('.prose-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const filter = btn.dataset.filter;
+        body.querySelectorAll('.prose-issue-item').forEach(item => {
+          if (filter === 'all') {
+            item.style.display = '';
+          } else {
+            item.style.display = item.dataset.severity === filter ? '' : 'none';
+          }
+        });
+      });
+    });
+
     // Store for rewrite action
     this._lastProseReview = review;
     this._lastGeneratedText = generatedText;
 
-    // Show rewrite button only if there are issues or AI patterns
+    // Show rewrite buttons based on issue severity
+    const hasAnyIssues = review.issues?.length > 0 || review.aiPatterns?.length > 0;
+    const hasHighIssues = (review.issues || []).some(i => i.severity === 'high') || review.aiPatterns?.length > 0;
+
     const rewriteBtn = document.getElementById('btn-prose-review-rewrite');
     if (rewriteBtn) {
-      rewriteBtn.style.display = (review.issues?.length > 0 || review.aiPatterns?.length > 0) ? '' : 'none';
+      rewriteBtn.style.display = hasAnyIssues ? '' : 'none';
+    }
+
+    const rewriteSeriousBtn = document.getElementById('btn-prose-review-rewrite-serious');
+    if (rewriteSeriousBtn) {
+      rewriteSeriousBtn.style.display = hasHighIssues ? '' : 'none';
     }
 
     const overlay = document.getElementById('prose-review-overlay');
     if (overlay) overlay.classList.add('visible');
   }
 
-  async _rewriteProblems(userInstructions) {
+  async _rewriteProblems(userInstructions, severityFilter) {
     if (!this._lastProseReview || !this._lastGeneratedText) return;
 
     const review = this._lastProseReview;
@@ -1892,8 +1960,19 @@ class App {
     }
     if (review.issues) {
       for (const issue of review.issues) {
-        if (issue.severity === 'high' || issue.severity === 'medium') {
+        // If severityFilter is 'high', only include high-severity issues
+        // Otherwise include high and medium as before
+        if (severityFilter === 'high') {
+          if (issue.severity === 'high') {
+            problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
+          }
+        } else if (severityFilter === 'all') {
+          // Fix all issues regardless of severity
           problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
+        } else {
+          if (issue.severity === 'high' || issue.severity === 'medium') {
+            problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
+          }
         }
       }
     }
@@ -2469,7 +2548,10 @@ class App {
         document.getElementById('prose-review-overlay')?.classList.remove('visible');
       }
       if (e.target.id === 'btn-prose-review-rewrite') {
-        await this._rewriteProblems();
+        await this._rewriteProblems(null, 'all');
+      }
+      if (e.target.id === 'btn-prose-review-rewrite-serious') {
+        await this._rewriteProblems(null, 'high');
       }
       if (e.target.id === 'btn-prose-review-rethink') {
         this._openProseRethinkModal();
