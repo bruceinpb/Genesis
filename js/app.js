@@ -1923,7 +1923,7 @@ class App {
 
   /**
    * Iterative Write: generates ~100 words, scores, rewrites until score >= 90,
-   * then asks user to accept before continuing to the next paragraph.
+   * then automatically continues to the next chunk. Repeats until cancelled.
    */
   async _iterativeWrite() {
     if (!this.generator.hasApiKey()) {
@@ -1946,6 +1946,7 @@ class App {
     // Store settings for the iterative session
     this._iterativeSettings = { plot, tone, style, useCharacters, useNotes };
     this._iterativeCancelled = false;
+    this._iterativeChunkNum = 0;
 
     this._closeAllPanels();
     this._hideWelcome();
@@ -1960,11 +1961,19 @@ class App {
     const settings = this._iterativeSettings;
     if (!settings) return;
 
-    // Show iterative writing overlay
+    // Advance chunk counter
+    this._iterativeChunkNum = (this._iterativeChunkNum || 0) + 1;
+
+    // Show iterative writing overlay with fresh state for new chunk
     this._showIterativeOverlay(true);
+    this._showIterativeScoringNotice(false);
+    this._updateIterativeChunk(this._iterativeChunkNum);
     this._updateIterativePhase('Generating paragraph\u2026');
     this._updateIterativeScore(null);
-    this._updateIterativeLog('Generating ~100 words\u2026');
+    this._updateIterativeIteration(0, 0);
+    // Clear log for new chunk
+    const logEl = document.getElementById('iterative-status-log');
+    if (logEl) logEl.textContent = `Chunk ${this._iterativeChunkNum}: Generating ~100 words\u2026`;
 
     // Gather context
     const existingContent = this.editor.getContent();
@@ -2087,6 +2096,7 @@ class App {
   /**
    * Score the current paragraph and refine it if below 90%.
    * Keeps iterating until score >= 90 or max iterations reached.
+   * When score >= 90%, automatically proceeds to the next chunk.
    */
   async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
     if (this._iterativeCancelled) {
@@ -2097,7 +2107,9 @@ class App {
     const MAX_ITERATIONS = 8;
     iteration++;
 
-    this._updateIterativePhase('Scoring paragraph\u2026');
+    // Show prominent scoring notice
+    this._updateIterativePhase('Scoring\u2026');
+    this._showIterativeScoringNotice(true);
     this._updateIterativeIteration(iteration, bestScore);
     this._updateIterativeLog(`Iteration ${iteration}: Scoring\u2026`);
 
@@ -2111,10 +2123,14 @@ class App {
         previousSubscores: this._iterPrevSubscores || {}
       } : undefined);
     } catch (err) {
+      this._showIterativeScoringNotice(false);
       this._updateIterativeLog(`Scoring failed: ${err.message}`);
       this._showIterativeOverlay(false);
       return;
     }
+
+    // Hide scoring notice — score is in
+    this._showIterativeScoringNotice(false);
 
     if (this._iterativeCancelled) {
       this._showIterativeOverlay(false);
@@ -2155,12 +2171,15 @@ class App {
 
     // Check if we've reached the target (use bestScore which may be from a previous iteration)
     if (bestScore >= 90) {
-      this._showIterativeOverlay(false);
-      this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
+      this._updateIterativeLog(`Chunk ${this._iterativeChunkNum}: Score ${bestScore}/100 — passed! Proceeding to next chunk\u2026`);
+      // Brief pause so user can see the passing score before next chunk starts
+      await new Promise(r => setTimeout(r, 1200));
+      // Auto-continue to next chunk
+      await this._iterativeWriteLoop();
       return;
     }
 
-    // Check if max iterations reached — present the best version we have
+    // Check if max iterations reached — present the best version for review
     if (iteration >= MAX_ITERATIONS) {
       this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}`);
       this._showIterativeOverlay(false);
@@ -2168,8 +2187,8 @@ class App {
       return;
     }
 
-    // Rewrite to fix issues
-    this._updateIterativePhase('Refining paragraph\u2026');
+    // Score is below 90% — fix errors surgically
+    this._updateIterativePhase('Fixing errors\u2026');
     this._updateIterativeLog(`Iteration ${iteration}: Fixing ${this._iterPrevIssueCount} issues\u2026`);
 
     // Collect problems to fix (same logic as _rewriteProblems)
@@ -2203,7 +2222,7 @@ class App {
     });
 
     if (formattedProblems.length === 0) {
-      // No fixable issues but score is still < 90 — accept what we have
+      // No fixable issues but score is still < 90 — present for review
       this._updateIterativeLog(`No fixable issues found at score ${score}. Presenting for review.`);
       this._showIterativeOverlay(false);
       this._presentIterativeAccept(currentText, score);
@@ -2227,7 +2246,7 @@ class App {
     const project = this._currentProject;
     const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
 
-    // Rewrite
+    // Rewrite the prose surgically
     const baseContent = this._preGenerationContent || '';
     const editorEl = this.editor.element;
     editorEl.innerHTML = baseContent;
@@ -2294,6 +2313,10 @@ class App {
     // If rewrite produced text, use it; otherwise keep current
     const nextText = rewrittenText && rewrittenText.length > 20 ? rewrittenText : currentText;
     this._lastGeneratedText = nextText;
+
+    // Show scoring notice again for the rescore
+    this._updateIterativePhase('Rescoring\u2026');
+    this._updateIterativeLog(`Iteration ${iteration}: Rescoring after fixes\u2026`);
 
     // Loop: score and refine again
     await this._iterativeScoreAndRefine(nextText, iteration, bestScore);
@@ -2372,6 +2395,22 @@ class App {
       logEl.textContent += '\n' + message;
       logEl.scrollTop = logEl.scrollHeight;
     }
+  }
+
+  _showIterativeScoringNotice(show) {
+    const el = document.getElementById('iterative-scoring-notice');
+    if (el) {
+      if (show) {
+        el.classList.add('visible');
+      } else {
+        el.classList.remove('visible');
+      }
+    }
+  }
+
+  _updateIterativeChunk(num) {
+    const el = document.getElementById('iterative-chunk-num');
+    if (el) el.textContent = num;
   }
 
   _showProseReview(review, generatedText) {
