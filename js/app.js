@@ -767,7 +767,7 @@ class App {
     const chapterOutline = this._currentChapterOutline || '';
 
     await this.generator.generate(
-      { plot, existingContent, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal },
+      { plot, existingContent, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal, voice: project?.voice || '' },
       {
         onChunk: (text) => {
           streamedText += text;
@@ -1547,7 +1547,24 @@ class App {
             ${this._getSubgenreOptions(project.genre, project.subgenre)}
           </select>
         </div>
-        <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title and genre." style="width:100%;margin-top:8px;">Save Project Settings</button>
+        <div class="form-group">
+          <label data-tooltip="Select the narrative voice and point of view for AI-generated prose. This controls whether the AI writes in first person, third person limited, omniscient, deep POV, and other narrative perspectives. 'Auto' lets the AI choose based on context.">Narrative Voice / POV</label>
+          <select class="form-input" id="setting-project-voice">
+            <option value="auto" ${(!project.voice || project.voice === 'auto') ? 'selected' : ''}>Auto (AI chooses based on context)</option>
+            <option value="first-person" ${project.voice === 'first-person' ? 'selected' : ''}>First Person (I/me/my)</option>
+            <option value="third-limited" ${project.voice === 'third-limited' ? 'selected' : ''}>Third-Person Limited</option>
+            <option value="third-omniscient" ${project.voice === 'third-omniscient' ? 'selected' : ''}>Third-Person Omniscient</option>
+            <option value="third-objective" ${project.voice === 'third-objective' ? 'selected' : ''}>Third-Person Objective (camera eye)</option>
+            <option value="deep-pov" ${project.voice === 'deep-pov' ? 'selected' : ''}>Deep POV (close third-person)</option>
+            <option value="second-person" ${project.voice === 'second-person' ? 'selected' : ''}>Second Person (you/your)</option>
+            <option value="unreliable" ${project.voice === 'unreliable' ? 'selected' : ''}>Unreliable Narrator</option>
+            <option value="multiple-pov" ${project.voice === 'multiple-pov' ? 'selected' : ''}>Multiple POV (rotating perspectives)</option>
+            <option value="stream-of-consciousness" ${project.voice === 'stream-of-consciousness' ? 'selected' : ''}>Stream of Consciousness</option>
+            <option value="epistolary" ${project.voice === 'epistolary' ? 'selected' : ''}>Epistolary (letters/documents/diary)</option>
+          </select>
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls the narrative perspective for all AI-generated prose in this project.</p>
+        </div>
+        <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title, genre, and voice settings." style="width:100%;margin-top:8px;">Save Project Settings</button>
         <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">Word count goal and chapter structure are configured in the Book Structure panel (sidebar).</p>
       </div>
 
@@ -1804,12 +1821,48 @@ class App {
     if (!this.generator.hasApiKey()) return;
     if (!generatedText || generatedText.length < 100) return;
 
+    // Reset rewrite iteration counter for fresh generations
+    this._rewriteIteration = 0;
+    this._previousRewriteScore = null;
+    this._previousRewriteIssueCount = null;
+
     try {
       const review = await this.generator.scoreProse(generatedText);
       this._showProseReview(review, generatedText);
     } catch (err) {
       console.error('Prose scoring failed:', err);
-      // Non-fatal — just show continue bar without scoring
+    }
+  }
+
+  async _scoreProseAfterRewrite(generatedText, previousScore, previousIssueCount) {
+    if (!this.generator.hasApiKey()) return;
+    if (!generatedText || generatedText.length < 100) return;
+
+    try {
+      const review = await this.generator.scoreProse(generatedText, {
+        isRewrite: true,
+        previousIssueCount
+      });
+
+      // Add comparison data to the review for display
+      review._previousScore = previousScore;
+      review._rewriteIteration = this._rewriteIteration;
+      review._previousIssueCount = previousIssueCount;
+
+      // Detect convergence: score didn't improve meaningfully
+      const scoreDelta = review.score - previousScore;
+      const newIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+
+      if (scoreDelta <= 1 && this._rewriteIteration >= 2) {
+        review._convergenceWarning = true;
+      }
+      if (scoreDelta < 0 && this._rewriteIteration >= 1) {
+        review._scoreDecreased = true;
+      }
+
+      this._showProseReview(review, generatedText);
+    } catch (err) {
+      console.error('Prose scoring failed:', err);
     }
   }
 
@@ -1821,14 +1874,40 @@ class App {
                        review.score >= 78 ? 'score-good' :
                        review.score >= 65 ? 'score-fair' : 'score-poor';
 
+    // Score comparison for rewrites
+    let scoreComparisonHtml = '';
+    if (review._previousScore != null) {
+      const delta = review.score - review._previousScore;
+      const deltaSign = delta > 0 ? '+' : '';
+      const deltaColor = delta > 0 ? 'var(--success)' : delta < 0 ? 'var(--danger)' : 'var(--text-muted)';
+      scoreComparisonHtml = `<div style="font-size:0.8rem;color:${deltaColor};margin-top:4px;">
+        ${deltaSign}${delta} from previous (${review._previousScore}) &mdash; Rewrite #${review._rewriteIteration || 1}
+      </div>`;
+    }
+
+    // Convergence warning
+    let convergenceHtml = '';
+    if (review._convergenceWarning) {
+      convergenceHtml = `<div style="background:var(--warning-bg, rgba(255,193,7,0.15));border:1px solid var(--warning, #ffc107);border-radius:var(--radius-sm);padding:10px;margin:12px 0;font-size:0.85rem;">
+        <strong>Diminishing returns detected.</strong> The score has not improved meaningfully after ${review._rewriteIteration} rewrites. This prose may be near its optimization ceiling for AI-assisted fixes. Consider accepting the prose or making manual edits.
+      </div>`;
+    }
+    if (review._scoreDecreased) {
+      convergenceHtml = `<div style="background:var(--danger-bg, rgba(220,53,69,0.15));border:1px solid var(--danger, #dc3545);border-radius:var(--radius-sm);padding:10px;margin:12px 0;font-size:0.85rem;">
+        <strong>Score decreased after rewrite.</strong> The rewrite introduced new issues while fixing old ones. Further automated rewrites are unlikely to help. Consider accepting the prose and making targeted manual edits for remaining issues.
+      </div>`;
+    }
+
     let html = `
       <div class="prose-score-display">
         <div class="prose-score-number ${scoreClass}">${review.score}</div>
         <div class="prose-score-label">${this._esc(review.label || '')} / 100</div>
+        ${scoreComparisonHtml}
         <div class="meter" style="margin-top:12px;max-width:200px;margin-left:auto;margin-right:auto;">
           <div class="meter-fill ${review.score >= 70 ? 'good' : review.score >= 50 ? 'warning' : 'danger'}" style="width:${review.score}%"></div>
         </div>
-      </div>`;
+      </div>
+      ${convergenceHtml}`;
 
     // Sub-scores breakdown
     if (review.subscores) {
@@ -1960,14 +2039,11 @@ class App {
     }
     if (review.issues) {
       for (const issue of review.issues) {
-        // If severityFilter is 'high', only include high-severity issues
-        // Otherwise include high and medium as before
         if (severityFilter === 'high') {
           if (issue.severity === 'high') {
             problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
           }
         } else if (severityFilter === 'all') {
-          // Fix all issues regardless of severity
           problems.push(`${issue.problem}${issue.text ? ` ("${issue.text}")` : ''}`);
         } else {
           if (issue.severity === 'high' || issue.severity === 'medium') {
@@ -1978,6 +2054,16 @@ class App {
     }
 
     if (problems.length === 0 && !userInstructions) return;
+
+    // Track rewrite iterations for convergence detection
+    this._rewriteIteration = (this._rewriteIteration || 0) + 1;
+    const previousScore = review.score;
+    const previousSubscores = review.subscores;
+    const previousIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+
+    // Store previous score for comparison after rewrite
+    this._previousRewriteScore = previousScore;
+    this._previousRewriteIssueCount = previousIssueCount;
 
     // Close review modal
     document.getElementById('prose-review-overlay').classList.remove('visible');
@@ -2035,7 +2121,11 @@ class App {
         style: this._lastGenSettings?.style || '',
         wordTarget: this._lastGenSettings?.wordTarget || 500,
         genre: genreInfo?.label || '',
-        genreRules: genreInfo?.rules || ''
+        genreRules: genreInfo?.rules || '',
+        voice: project?.voice || '',
+        previousScore,
+        previousSubscores,
+        rewriteIteration: this._rewriteIteration
       },
       {
         onChunk: (text) => {
@@ -2071,9 +2161,9 @@ class App {
             this._updateLocalWordCounts(content);
           }
 
-          // Re-score the rewritten prose
+          // Re-score the rewritten prose with rewrite context
           if (streamedText && streamedText.length > 100) {
-            this._scoreProse(streamedText);
+            this._scoreProseAfterRewrite(streamedText, previousScore, previousIssueCount);
           }
 
           this._showContinueBar(true);
@@ -2774,14 +2864,15 @@ class App {
     const title = document.getElementById('setting-project-name')?.value;
     const genre = document.getElementById('setting-project-genre')?.value || '';
     const subgenre = document.getElementById('setting-project-subgenre')?.value || '';
+    const voice = document.getElementById('setting-project-voice')?.value || 'auto';
 
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
-        title, genre, subgenre
+        title, genre, subgenre, voice
       });
 
       // Update cached project
-      this._currentProject = { ...this._currentProject, title, genre, subgenre };
+      this._currentProject = { ...this._currentProject, title, genre, subgenre, voice };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       this._closeAllPanels();

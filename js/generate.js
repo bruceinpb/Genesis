@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal, voice }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -53,7 +53,7 @@ class ProseGenerator {
 
     this.abortController = new AbortController();
 
-    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules });
+    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice });
     const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal });
 
     try {
@@ -276,12 +276,14 @@ ${userInstructions}`;
    * Score prose quality on a 100-point scale and detect AI patterns.
    * Returns { score, label, issues[], aiPatterns[], summary }
    */
-  async scoreProse(proseText) {
+  async scoreProse(proseText, { isRewrite, previousIssueCount } = {}) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
     }
 
     const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
+
+${isRewrite ? `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues. Score it fresh and fairly — do not artificially inflate or deflate the score. Only flag issues that are genuinely present in THIS text. Do not flag borderline cases or nitpick — only flag clear, unambiguous problems that a professional editor would flag.` : ''}
 
 SCORING INSTRUCTIONS — Score each sub-category independently, then sum them:
 1. Sentence variety and rhythm (0-15): Count sentence length variation. If most sentences are similar length, score 4-6. If there's genuine variety between short punchy and long flowing, score 10+.
@@ -408,11 +410,31 @@ For "estimatedImpact": estimate how many points the score would improve if this 
     }
   }
 
-  _buildSystemPrompt({ tone, style, genre, genreRules }) {
+  _buildSystemPrompt({ tone, style, genre, genreRules, voice }) {
     let prompt = `You are a world-class fiction author writing prose for a novel. Your writing should be vivid, engaging, and publication-ready.
 
-Guidelines for your prose:
-- Write in third-person limited or first-person as appropriate to the story
+Guidelines for your prose:`;
+
+    // Voice / POV instruction
+    if (voice && voice !== 'auto') {
+      const voiceInstructions = {
+        'first-person': `\n- Write in FIRST PERSON (I/me/my). The narrator is a character in the story, sharing their direct experience. Maintain consistent first-person throughout.`,
+        'third-limited': `\n- Write in THIRD-PERSON LIMITED. Follow one character's perspective at a time. The reader only knows what the POV character thinks, feels, sees, and knows.`,
+        'third-omniscient': `\n- Write in THIRD-PERSON OMNISCIENT. The narrator has access to all characters' thoughts and feelings. The narrator can comment on events with broader knowledge than any single character.`,
+        'third-objective': `\n- Write in THIRD-PERSON OBJECTIVE (camera eye). Report only what can be seen and heard externally — no character thoughts, no internal feelings. Let action and dialogue carry all meaning.`,
+        'second-person': `\n- Write in SECOND PERSON (you/your). Place the reader directly into the story as the protagonist. Maintain consistent second-person throughout.`,
+        'deep-pov': `\n- Write in DEEP POV (close third-person). Eliminate all narrative distance — no filter words (felt, noticed, saw, seemed), no "he thought" tags. The reader IS the character. Every sensation and thought is presented as direct experience, not narrated observation.`,
+        'unreliable': `\n- Write with an UNRELIABLE NARRATOR. The narrator's account should contain subtle contradictions, self-serving interpretations, or gaps that hint the full truth differs from what's being told. Let the reader question the narrator's version of events.`,
+        'multiple-pov': `\n- Write in MULTIPLE POV (third-person limited, rotating). Each section follows a different character's perspective. Maintain distinct voice and vocabulary for each POV character. Never reveal information the current POV character wouldn't know.`,
+        'stream-of-consciousness': `\n- Write in STREAM OF CONSCIOUSNESS. Capture the unfiltered flow of a character's thoughts — associative, non-linear, mixing memory with present sensation. Use run-on sentences, fragments, and abrupt transitions to mirror actual thinking.`,
+        'epistolary': `\n- Write in EPISTOLARY form. Tell the story through documents — letters, diary entries, emails, reports, text messages, or other written artifacts. Each document should have a distinct voice reflecting its author and purpose.`
+      };
+      prompt += voiceInstructions[voice] || `\n- Write in the specified narrative voice: ${voice}`;
+    } else {
+      prompt += `\n- Write in third-person limited or first-person as appropriate to the story`;
+    }
+
+    prompt += `
 - Show, don't tell — use sensory details, action, and dialogue instead of exposition
 - Vary sentence length for rhythm — mix short punchy sentences with longer flowing ones
 - Use strong, specific verbs instead of weak verbs with adverbs
@@ -545,7 +567,7 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
    * Rewrite prose to fix identified problems and/or apply user instructions.
    * Streams the response, replacing (not appending to) the original prose.
    */
-  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, genre, genreRules }, { onChunk, onDone, onError }) {
+  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, genre, genreRules, voice, previousScore, previousSubscores, rewriteIteration }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -553,15 +575,29 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
 
     this.abortController = new AbortController();
 
-    let systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules });
+    let systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice });
     systemPrompt += `\n\n=== REWRITE MODE ===
-You are REWRITING existing prose to fix specific issues. Rules:
-- Maintain the same story events, characters, plot points, and narrative arc
+You are performing a SURGICAL REWRITE of existing prose to fix specific issues. Rules:
+- Maintain the same story events, characters, plot points, and narrative arc EXACTLY
 - Preserve the narrative voice, tense, and point of view
-- Fix ONLY the identified problems — do not introduce new issues
-- If problems are minor, make surgical fixes to the affected passages
-- If problems are pervasive, do a complete rewrite while preserving the story
+- Fix ONLY the identified problems — make minimal, targeted changes
+- PRESERVE everything that is already working well — do not rephrase passages that have no issues
+- Keep the same sentence structures, paragraph breaks, and pacing for non-problematic sections
+- When fixing an issue, change only the specific words/phrases/sentences involved
+- Do NOT restructure paragraphs or reorder content unless the issue specifically requires it
+- Do NOT introduce new metaphors, similes, or literary devices that weren't in the original
+- Do NOT add new emotional beats, internal monologue, or sensory details beyond what's needed to fix an issue
 - Output ONLY the rewritten prose — no commentary, no labels, no meta-text
+
+=== CRITICAL: AVOID INTRODUCING NEW ISSUES ===
+When fixing issues, you MUST NOT introduce any of these common replacement problems:
+- Do NOT swap one PET phrase for another PET phrase (e.g., "throat tightened" → "chest constricted")
+- Do NOT replace a cliché with a different cliché
+- Do NOT add em-dashes while fixing other issues
+- Do NOT introduce tricolons (lists of three) while fixing other issues
+- Do NOT make the prose more flowery or purple while fixing weak words
+- Do NOT add filter words (felt, noticed, seemed, watched) while fixing other issues
+- If you cannot fix an issue without introducing a new one, leave the original text unchanged
 
 === PET PHRASE ELIMINATION ===
 When fixing PET phrases (Physical Emotional Telling), do NOT just swap one PET phrase for another.
@@ -569,6 +605,16 @@ Instead, replace each with character-specific action, environmental interaction,
 - BAD fix: "His throat tightened" → "His chest constricted" (still a PET phrase!)
 - GOOD fix: "His throat tightened" → "He grabbed the back of his neck and stared at the floor tile."
 - The goal is to SHOW emotion through unique, specific behavior — not name the body sensation`;
+
+    if (rewriteIteration && rewriteIteration > 1) {
+      systemPrompt += `\n\n=== ITERATION ${rewriteIteration} WARNING ===
+This prose has already been rewritten ${rewriteIteration - 1} time(s). Previous rewrites introduced new issues while fixing old ones.
+BE EXTREMELY CONSERVATIVE this time:
+- Make the SMALLEST possible changes to fix only the listed issues
+- If a sentence has no listed issue, do NOT change it at all — copy it exactly as-is
+- Prefer deleting problematic phrases over replacing them with new constructions
+- When in doubt, leave the original wording intact`;
+    }
 
     let userPrompt = '';
     if (chapterTitle) {
@@ -586,14 +632,38 @@ Instead, replace each with character-specific action, environmental interaction,
       userPrompt += `\n=== CHAPTER OUTLINE (reference) ===\n${chapterOutline}\n=== END CHAPTER OUTLINE ===\n`;
     }
 
+    // Include current score context so the AI knows what's working
+    if (previousScore && previousSubscores) {
+      userPrompt += `\n=== CURRENT SCORE CONTEXT ===\n`;
+      userPrompt += `Current score: ${previousScore}/100\n`;
+      userPrompt += `Sub-scores (PRESERVE strengths, fix weaknesses):\n`;
+      const subLabels = {
+        sentenceVariety: 'Sentence Variety & Rhythm (max 15)',
+        dialogueAuthenticity: 'Dialogue Authenticity (max 15)',
+        sensoryDetail: 'Sensory Detail / Show vs Tell (max 15)',
+        emotionalResonance: 'Emotional Resonance & Depth (max 15)',
+        vocabularyPrecision: 'Vocabulary Precision (max 10)',
+        narrativeFlow: 'Narrative Flow & Pacing (max 10)',
+        originalityVoice: 'Originality & Voice (max 10)',
+        technicalExecution: 'Technical Execution (max 10)'
+      };
+      for (const [key, label] of Object.entries(subLabels)) {
+        const val = previousSubscores[key] ?? '?';
+        userPrompt += `  - ${label}: ${val}\n`;
+      }
+      userPrompt += `IMPORTANT: Do NOT degrade any sub-score that is already high. Focus fixes on the weakest areas.\n`;
+      userPrompt += `=== END SCORE CONTEXT ===\n`;
+    }
+
     userPrompt += `\n=== ORIGINAL PROSE TO REWRITE ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n`;
 
     if (problems && problems.length > 0) {
-      userPrompt += `\n=== ISSUES TO FIX ===\n`;
+      userPrompt += `\n=== ISSUES TO FIX (${problems.length} total) ===\n`;
       problems.forEach((p, i) => {
         userPrompt += `${i + 1}. ${p}\n`;
       });
       userPrompt += `=== END ISSUES ===\n`;
+      userPrompt += `Fix ONLY the ${problems.length} issues listed above. Do not change anything else.\n`;
     }
 
     if (userInstructions) {
@@ -614,7 +684,7 @@ Instead, replace each with character-specific action, environmental interaction,
     }
 
     const target = wordTarget || 500;
-    userPrompt += `\nRewrite the prose (~${target} words), fixing all identified issues while keeping the same story events and characters. Output ONLY the rewritten prose.`;
+    userPrompt += `\nRewrite the prose (~${target} words), making ONLY the minimal changes needed to fix the ${problems?.length || 0} identified issues. Keep everything else identical. Output ONLY the rewritten prose.`;
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {
