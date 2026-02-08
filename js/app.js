@@ -338,6 +338,18 @@ class App {
       this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
+      // Display chapter outline if available
+      const outlineDisplay = document.getElementById('chapter-outline-display');
+      const outlineText = document.getElementById('chapter-outline-text');
+      if (outlineDisplay && outlineText) {
+        if (this._currentChapterOutline) {
+          outlineText.textContent = this._currentChapterOutline;
+          outlineDisplay.style.display = '';
+        } else {
+          outlineDisplay.style.display = 'none';
+        }
+      }
+
       // Update active state in tree
       document.querySelectorAll('.tree-item').forEach(el => {
         el.classList.toggle('active', el.dataset.id === chapterId);
@@ -1793,6 +1805,8 @@ class App {
     const editorEl = document.getElementById('editor');
     if (overlay) overlay.style.display = '';
     if (editorEl) editorEl.style.display = 'none';
+    const outlineDisplay = document.getElementById('chapter-outline-display');
+    if (outlineDisplay) outlineDisplay.style.display = 'none';
     document.getElementById('project-title').textContent = 'Genesis 2';
   }
 
@@ -2145,6 +2159,10 @@ class App {
       if (e.target.id === 'btn-prose-review-rewrite') {
         await this._rewriteProblems();
       }
+      if (e.target.id === 'btn-prose-review-rethink') {
+        document.getElementById('prose-review-overlay')?.classList.remove('visible');
+        await this._openRethinkModal();
+      }
       if (e.target.id === 'btn-save-ai-instructions') {
         const instructions = document.getElementById('generate-ai-instructions')?.value || '';
         if (this.state.currentProjectId) {
@@ -2169,6 +2187,8 @@ class App {
       // Continue Writing word-count buttons (+500, +1000, +2000)
       const continueBtn = e.target.closest('.continue-word-btn');
       if (continueBtn) {
+        // Close prose review modal if the button was clicked from there
+        document.getElementById('prose-review-overlay')?.classList.remove('visible');
         const wordTarget = parseInt(continueBtn.dataset.words) || 500;
         await this._handleContinueWriting(wordTarget);
       }
