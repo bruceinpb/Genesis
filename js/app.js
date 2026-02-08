@@ -1440,6 +1440,9 @@ class App {
     // --- Switch User ---
     document.getElementById('btn-switch-user-sidebar')?.addEventListener('click', () => this._switchUser());
 
+    // --- Delete Project (sidebar) ---
+    document.getElementById('btn-delete-project-sidebar')?.addEventListener('click', () => this._deleteCurrentProject());
+
     // --- Sidebar toggle ---
     document.getElementById('btn-sidebar-toggle')?.addEventListener('click', () => {
       this.state.sidebarOpen = !this.state.sidebarOpen;
@@ -1935,11 +1938,15 @@ class App {
     if (!confirm('Delete this chapter? This cannot be undone.')) return;
 
     try {
-      // If deleting the currently loaded chapter, clear the editor
+      // If deleting the currently loaded chapter, clear the editor and reset word count
       if (this.state.currentChapterId === chapterId) {
         this.state.currentChapterId = null;
         this.editor.clear();
         this._showWelcome();
+        const wcEl = document.getElementById('status-words');
+        if (wcEl) wcEl.textContent = '0';
+        const fwcWords = document.getElementById('fwc-words');
+        if (fwcWords) fwcWords.textContent = '0';
       }
 
       await this.fs.deleteChapter(chapterId);
