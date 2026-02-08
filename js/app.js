@@ -571,6 +571,13 @@ class App {
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
 
     this._setGenerateStatus(false);
+
+    // Populate AI instructions from project
+    const aiInstructionsEl = document.getElementById('generate-ai-instructions');
+    if (aiInstructionsEl) {
+      aiInstructionsEl.value = this._currentProject?.aiInstructions || '';
+    }
+
     this._showPanel('generate');
 
     setTimeout(() => plotEl?.focus(), 300);
@@ -602,7 +609,30 @@ class App {
       characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
     }
 
-    this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters };
+    // Load project notes if checkbox is checked
+    let useNotes;
+    if (options.isContinuation && this._lastGenSettings) {
+      useNotes = this._lastGenSettings.useNotes;
+    } else {
+      useNotes = document.getElementById('generate-use-notes')?.checked;
+    }
+    let notes = '';
+    if (useNotes && this.state.currentProjectId) {
+      const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId);
+      if (projectNotes.length > 0) {
+        notes = projectNotes.map(n => {
+          let entry = n.title;
+          if (n.type && n.type !== 'general') entry = `[${n.type}] ${entry}`;
+          if (n.content) entry += '\n' + n.content;
+          return entry;
+        }).join('\n\n');
+      }
+    }
+
+    // Load AI instructions from project
+    const aiInstructions = this._currentProject?.aiInstructions || '';
+
+    this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes };
 
     // Get chapter title
     let chapterTitle = '';
@@ -635,7 +665,7 @@ class App {
     let streamedText = '';
 
     await this.generator.generate(
-      { plot, existingContent, chapterTitle, characters, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal },
+      { plot, existingContent, chapterTitle, characters, notes, aiInstructions, tone, style, wordTarget, concludeStory, genre, genreRules, projectGoal },
       {
         onChunk: (text) => {
           streamedText += text;
@@ -1694,6 +1724,14 @@ class App {
         this._hfToken = token;
         await this.localStorage.setSetting('hfToken', token);
         alert('Cover settings saved.');
+      }
+      if (e.target.id === 'btn-save-ai-instructions') {
+        const instructions = document.getElementById('generate-ai-instructions')?.value || '';
+        if (this.state.currentProjectId) {
+          await this.fs.updateProject(this.state.currentProjectId, { aiInstructions: instructions });
+          this._currentProject = { ...this._currentProject, aiInstructions: instructions };
+          alert('AI instructions saved.');
+        }
       }
       if (e.target.id === 'btn-generate-prose') {
         await this._runGeneration();

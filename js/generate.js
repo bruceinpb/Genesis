@@ -160,7 +160,7 @@ Guidelines for your prose:
     return prompt;
   }
 
-  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, wordTarget, concludeStory, genre, genreRules, projectGoal }) {
+  _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, wordTarget, concludeStory, genre, genreRules, projectGoal }) {
     let prompt = '';
 
     if (chapterTitle) {
@@ -171,6 +171,11 @@ Guidelines for your prose:
     }
     if (genre) {
       prompt += `Genre: ${genre}\n`;
+    }
+
+    if (aiInstructions) {
+      prompt += `\n=== AUTHOR INSTRUCTIONS (MUST FOLLOW) ===\n${aiInstructions}\n=== END AUTHOR INSTRUCTIONS ===\n`;
+      prompt += `CRITICAL: The above author instructions take priority over all other guidance. Follow them exactly.\n`;
     }
 
     prompt += `\nStory/Plot:\n${plot}\n`;
