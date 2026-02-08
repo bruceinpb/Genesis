@@ -1329,6 +1329,57 @@ select.form-input {
 }
 
 /* ============================================
+   Iterative Writing Progress
+   ============================================ */
+
+.iterative-score-display {
+  margin: 12px 0;
+}
+
+.iterative-score-number {
+  font-size: 2.4rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-primary);
+  transition: color 0.3s;
+}
+
+.iterative-score-number.score-poor { color: var(--danger); }
+.iterative-score-number.score-fair { color: var(--warning); }
+.iterative-score-number.score-good { color: var(--info, #17a2b8); }
+.iterative-score-number.score-excellent { color: var(--success); }
+
+.iterative-progress-bar {
+  position: relative;
+  height: 12px;
+  background: var(--border-color);
+  border-radius: 6px;
+  overflow: visible;
+}
+
+.iterative-progress-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--danger);
+  transition: width 0.5s ease, background 0.5s ease;
+}
+
+.iterative-progress-fill.score-fair { background: var(--warning); }
+.iterative-progress-fill.score-good { background: var(--info, #17a2b8); }
+.iterative-progress-fill.score-excellent { background: var(--success); }
+
+.iterative-progress-threshold {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 90%;
+  width: 2px;
+  background: var(--success);
+  border-radius: 1px;
+  opacity: 0.8;
+}
+
+/* ============================================
    Landing Page
    ============================================ */
 
