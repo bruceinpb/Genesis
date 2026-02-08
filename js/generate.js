@@ -276,14 +276,23 @@ ${userInstructions}`;
    * Score prose quality on a 100-point scale and detect AI patterns.
    * Returns { score, label, issues[], aiPatterns[], summary }
    */
-  async scoreProse(proseText, { isRewrite, previousIssueCount } = {}) {
+  async scoreProse(proseText, { isRewrite, previousIssueCount, previousScore, previousSubscores } = {}) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
     }
 
     const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
 
-${isRewrite ? `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues. Score it fresh and fairly — do not artificially inflate or deflate the score. Only flag issues that are genuinely present in THIS text. Do not flag borderline cases or nitpick — only flag clear, unambiguous problems that a professional editor would flag.` : ''}
+${isRewrite ? `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues.
+SCORING CONSISTENCY RULES FOR REWRITES:
+- Score based ONLY on what is genuinely present in THIS text
+- Do NOT artificially inflate or deflate the score
+- Do NOT flag borderline cases or nitpick — only flag clear, unambiguous problems that a professional editor would actually flag
+- Do NOT penalize the same dimension twice for the same type of issue
+- If a passage is competent but not exceptional, that is NOT an issue — only flag things that are clearly wrong
+- Be CONSISTENT: if the original text scored X on a dimension and the rewritten text is similar or better on that dimension, the sub-score should be >= X
+${previousSubscores ? `- Previous sub-scores for reference (scores should only change for dimensions where text actually changed):
+  ${Object.entries(previousSubscores).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}` : ''}
 
 SCORING INSTRUCTIONS — Score each sub-category independently, then sum them:
 1. Sentence variety and rhythm (0-15): Count sentence length variation. If most sentences are similar length, score 4-6. If there's genuine variety between short punchy and long flowing, score 10+.
@@ -575,116 +584,93 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
 
     this.abortController = new AbortController();
 
-    let systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice });
-    systemPrompt += `\n\n=== REWRITE MODE ===
-You are performing a SURGICAL REWRITE of existing prose to fix specific issues. Rules:
-- Maintain the same story events, characters, plot points, and narrative arc EXACTLY
-- Preserve the narrative voice, tense, and point of view
-- Fix ONLY the identified problems — make minimal, targeted changes
-- PRESERVE everything that is already working well — do not rephrase passages that have no issues
-- Keep the same sentence structures, paragraph breaks, and pacing for non-problematic sections
-- When fixing an issue, change only the specific words/phrases/sentences involved
-- Do NOT restructure paragraphs or reorder content unless the issue specifically requires it
-- Do NOT introduce new metaphors, similes, or literary devices that weren't in the original
-- Do NOT add new emotional beats, internal monologue, or sensory details beyond what's needed to fix an issue
-- Output ONLY the rewritten prose — no commentary, no labels, no meta-text
+    // DO NOT use _buildSystemPrompt here — those creative writing instructions
+    // conflict with surgical rewrite goals and cause the AI to rewrite too aggressively.
+    // Instead, use a focused rewrite-only system prompt.
+    let systemPrompt = `You are a precise prose editor. Your ONLY job is to fix specific identified issues in existing prose while preserving everything else EXACTLY as written.
 
-=== CRITICAL: AVOID INTRODUCING NEW ISSUES ===
-When fixing issues, you MUST NOT introduce any of these common replacement problems:
-- Do NOT swap one PET phrase for another PET phrase (e.g., "throat tightened" → "chest constricted")
-- Do NOT replace a cliché with a different cliché
-- Do NOT add em-dashes while fixing other issues
-- Do NOT introduce tricolons (lists of three) while fixing other issues
-- Do NOT make the prose more flowery or purple while fixing weak words
-- Do NOT add filter words (felt, noticed, seemed, watched) while fixing other issues
-- If you cannot fix an issue without introducing a new one, leave the original text unchanged
+=== ABSOLUTE RULES ===
+1. COPY UNCHANGED TEXT VERBATIM — Every sentence that is NOT listed as having an issue must appear in your output word-for-word, character-for-character, identical to the original. Do not rephrase, restructure, or "improve" text that has no listed issue.
+2. FIX ONLY LISTED ISSUES — Make the minimum change needed to address each specific issue. Change only the exact words/phrases identified as problematic.
+3. MAINTAIN PROSE LENGTH — Your output should be approximately the same length as the input. Do not pad, expand, or condense.
+4. PRESERVE VOICE AND STYLE — Keep the same narrative voice, tense, point of view, paragraph structure, and sentence rhythm.
+5. DO NOT INTRODUCE NEW PROBLEMS — This is critical. If fixing an issue would require adding a cliché, PET phrase, AI pattern, or filter word, leave the original text unchanged instead.
 
-=== PET PHRASE ELIMINATION ===
-When fixing PET phrases (Physical Emotional Telling), do NOT just swap one PET phrase for another.
-Instead, replace each with character-specific action, environmental interaction, or dialogue that reveals the emotion:
-- BAD fix: "His throat tightened" → "His chest constricted" (still a PET phrase!)
-- GOOD fix: "His throat tightened" → "He grabbed the back of his neck and stared at the floor tile."
-- The goal is to SHOW emotion through unique, specific behavior — not name the body sensation`;
+=== WHEN FIXING PET PHRASES ===
+PET phrases are clichéd body-reaction shortcuts (throat tightened, heart pounded, stomach churned, etc.).
+- NEVER replace a PET phrase with another PET phrase
+- Replace with character-specific action or environmental interaction
+- BAD: "His throat tightened" → "His chest constricted" (still a PET phrase)
+- GOOD: "His throat tightened" → "He grabbed the doorframe, knuckles white."
+- If you can't think of a good replacement, DELETE the PET phrase and let surrounding context carry the emotion
+
+=== THINGS THAT WILL CAUSE SCORE TO DROP (AVOID THESE) ===
+- Swapping one cliché for another cliché
+- Adding em-dashes, tricolons (lists of three), or purple prose
+- Adding filter words: felt, noticed, realized, saw, heard, seemed, watched, thought
+- Adding AI-pattern words: delicate, intricate, testament, tapestry, symphony, nestled
+- Starting new sentences with "As" or "While"
+- Making the prose more flowery or descriptive than the original
+- Changing dialogue or character actions in ways that alter meaning
+- Restructuring paragraphs or reordering content
+
+=== OUTPUT RULES ===
+- Output ONLY the rewritten prose — no commentary, labels, headers, or meta-text
+- Do not add scene breaks, section headers, or formatting not in the original`;
 
     if (rewriteIteration && rewriteIteration > 1) {
-      systemPrompt += `\n\n=== ITERATION ${rewriteIteration} WARNING ===
-This prose has already been rewritten ${rewriteIteration - 1} time(s). Previous rewrites introduced new issues while fixing old ones.
-BE EXTREMELY CONSERVATIVE this time:
-- Make the SMALLEST possible changes to fix only the listed issues
-- If a sentence has no listed issue, do NOT change it at all — copy it exactly as-is
-- Prefer deleting problematic phrases over replacing them with new constructions
-- When in doubt, leave the original wording intact`;
+      systemPrompt += `
+
+=== ITERATION ${rewriteIteration} CRITICAL WARNING ===
+This prose has been rewritten ${rewriteIteration - 1} time(s) already. Previous rewrites INTRODUCED NEW ISSUES while fixing old ones, causing the score to DROP.
+You MUST be EXTREMELY conservative:
+- Change ONLY the exact phrases listed as issues — nothing else
+- If a sentence has no listed issue, copy it EXACTLY, character for character
+- Prefer DELETING problematic phrases over replacing them with new constructions
+- When in doubt, KEEP the original wording — an unfixed minor issue is better than a new major issue
+- If fewer than 3 issues are listed, you should be changing fewer than 3 sentences total`;
+    }
+
+    // Add genre/voice context minimally — just enough to maintain consistency
+    if (genre) {
+      systemPrompt += `\nGenre context: ${genre}`;
+    }
+    if (voice && voice !== 'auto') {
+      const voiceNames = {
+        'first-person': 'first person', 'third-limited': 'third-person limited',
+        'third-omniscient': 'third-person omniscient', 'deep-pov': 'deep POV',
+        'multiple-pov': 'multiple POV'
+      };
+      systemPrompt += `\nNarrative voice: ${voiceNames[voice] || voice} (preserve this exactly)`;
     }
 
     let userPrompt = '';
-    if (chapterTitle) {
-      userPrompt += `Chapter: ${chapterTitle}\n`;
-    }
-    if (genre) {
-      userPrompt += `Genre: ${genre}\n`;
-    }
 
     if (aiInstructions) {
-      userPrompt += `\n=== AUTHOR INSTRUCTIONS (MUST FOLLOW) ===\n${aiInstructions}\n=== END AUTHOR INSTRUCTIONS ===\n`;
+      userPrompt += `=== AUTHOR INSTRUCTIONS ===\n${aiInstructions}\n\n`;
     }
 
-    if (chapterOutline) {
-      userPrompt += `\n=== CHAPTER OUTLINE (reference) ===\n${chapterOutline}\n=== END CHAPTER OUTLINE ===\n`;
-    }
-
-    // Include current score context so the AI knows what's working
-    if (previousScore && previousSubscores) {
-      userPrompt += `\n=== CURRENT SCORE CONTEXT ===\n`;
-      userPrompt += `Current score: ${previousScore}/100\n`;
-      userPrompt += `Sub-scores (PRESERVE strengths, fix weaknesses):\n`;
-      const subLabels = {
-        sentenceVariety: 'Sentence Variety & Rhythm (max 15)',
-        dialogueAuthenticity: 'Dialogue Authenticity (max 15)',
-        sensoryDetail: 'Sensory Detail / Show vs Tell (max 15)',
-        emotionalResonance: 'Emotional Resonance & Depth (max 15)',
-        vocabularyPrecision: 'Vocabulary Precision (max 10)',
-        narrativeFlow: 'Narrative Flow & Pacing (max 10)',
-        originalityVoice: 'Originality & Voice (max 10)',
-        technicalExecution: 'Technical Execution (max 10)'
-      };
-      for (const [key, label] of Object.entries(subLabels)) {
-        const val = previousSubscores[key] ?? '?';
-        userPrompt += `  - ${label}: ${val}\n`;
-      }
-      userPrompt += `IMPORTANT: Do NOT degrade any sub-score that is already high. Focus fixes on the weakest areas.\n`;
-      userPrompt += `=== END SCORE CONTEXT ===\n`;
-    }
-
-    userPrompt += `\n=== ORIGINAL PROSE TO REWRITE ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n`;
+    userPrompt += `=== ORIGINAL PROSE (copy unchanged parts VERBATIM) ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n`;
 
     if (problems && problems.length > 0) {
-      userPrompt += `\n=== ISSUES TO FIX (${problems.length} total) ===\n`;
+      userPrompt += `\n=== ISSUES TO FIX (${problems.length} total — fix ONLY these, change NOTHING else) ===\n`;
       problems.forEach((p, i) => {
         userPrompt += `${i + 1}. ${p}\n`;
       });
       userPrompt += `=== END ISSUES ===\n`;
-      userPrompt += `Fix ONLY the ${problems.length} issues listed above. Do not change anything else.\n`;
     }
 
     if (userInstructions) {
-      userPrompt += `\n=== AUTHOR'S REVISION INSTRUCTIONS ===\n${userInstructions}\n=== END REVISION INSTRUCTIONS ===\n`;
+      userPrompt += `\n=== ADDITIONAL REVISION INSTRUCTIONS ===\n${userInstructions}\n`;
     }
 
     if (characters && characters.length > 0) {
-      userPrompt += '\nCharacters:\n';
-      for (const char of characters) {
-        userPrompt += `- ${char.name} (${char.role})`;
-        if (char.description) userPrompt += `: ${char.description}`;
-        userPrompt += '\n';
-      }
+      userPrompt += '\nCharacters for context: ';
+      userPrompt += characters.map(c => `${c.name} (${c.role})`).join(', ');
+      userPrompt += '\n';
     }
 
-    if (notes) {
-      userPrompt += `\nAdditional context/notes:\n${notes}\n`;
-    }
-
-    const target = wordTarget || 500;
-    userPrompt += `\nRewrite the prose (~${target} words), making ONLY the minimal changes needed to fix the ${problems?.length || 0} identified issues. Keep everything else identical. Output ONLY the rewritten prose.`;
+    userPrompt += `\nRewrite the prose, fixing ONLY the ${problems?.length || 0} issues listed. Copy all other text verbatim. Output ONLY the prose.`;
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {
