@@ -232,7 +232,12 @@ class App {
   }
 
   async _createNewProject() {
-    this._showNewProjectModal();
+    this._showNewProjectHelp();
+  }
+
+  _showNewProjectHelp() {
+    const overlay = document.getElementById('new-project-help-overlay');
+    if (overlay) overlay.classList.add('visible');
   }
 
   _showNewProjectModal() {
@@ -2337,6 +2342,11 @@ class App {
       // --- Book Structure events ---
       if (e.target.id === 'btn-save-book-structure') {
         await this._saveBookStructure();
+      }
+      // --- New Project Help modal ---
+      if (e.target.id === 'btn-help-create-project') {
+        document.getElementById('new-project-help-overlay')?.classList.remove('visible');
+        this._showNewProjectModal();
       }
       if (e.target.id === 'btn-generate-outlines') {
         await this._generateOutlines();
