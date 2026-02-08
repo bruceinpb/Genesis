@@ -437,6 +437,7 @@ class App {
           <span class="icon">&#9656;</span>
           <span class="name">${this._esc(chapter.title)}</span>
           <span class="word-count">${(chapter.wordCount || 0).toLocaleString()}${statusLabel ? ' (' + statusLabel + ')' : ''}</span>
+          <button class="chapter-delete-btn" data-delete-chapter="${chapter.id}" title="Delete chapter">&times;</button>
         </div>`;
       }
 
@@ -1482,6 +1483,17 @@ class App {
 
     // --- Sidebar content clicks (event delegation) ---
     document.querySelector('.sidebar-content')?.addEventListener('click', async (e) => {
+      // Handle chapter delete button
+      const deleteBtn = e.target.closest('.chapter-delete-btn');
+      if (deleteBtn) {
+        e.stopPropagation();
+        const chapterId = deleteBtn.dataset.deleteChapter;
+        if (chapterId) {
+          await this._deleteChapter(chapterId);
+        }
+        return;
+      }
+
       const treeItem = e.target.closest('.tree-item');
       const addBtn = e.target.closest('.tree-add');
       const charCard = e.target.closest('.character-card');
@@ -1916,6 +1928,35 @@ class App {
     } catch (err) {
       console.error('Failed to delete project:', err);
       alert('Failed to delete project.');
+    }
+  }
+
+  async _deleteChapter(chapterId) {
+    if (!confirm('Delete this chapter? This cannot be undone.')) return;
+
+    try {
+      // If deleting the currently loaded chapter, clear the editor
+      if (this.state.currentChapterId === chapterId) {
+        this.state.currentChapterId = null;
+        this.editor.clear();
+        this._showWelcome();
+      }
+
+      await this.fs.deleteChapter(chapterId);
+      delete this._chapterWordCounts[chapterId];
+
+      // Renumber remaining chapters
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const orderedIds = chapters.map(ch => ch.id);
+      if (orderedIds.length > 0) {
+        await this.fs.reorderChapters(this.state.currentProjectId, orderedIds);
+      }
+
+      await this._renderChapterList();
+      this._updateStatusBarLocal();
+    } catch (err) {
+      console.error('Failed to delete chapter:', err);
+      alert('Failed to delete chapter.');
     }
   }
 
