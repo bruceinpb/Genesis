@@ -232,19 +232,70 @@ class App {
   }
 
   async _createNewProject() {
-    const title = await this._prompt('Project Title', 'My Novel');
-    if (!title) return;
-    const genre = await this._prompt('Genre (optional)', '');
-    const goalStr = await this._prompt('Word count goal', '80000');
-    const wordCountGoal = parseInt(goalStr) || 80000;
+    this._showNewProjectModal();
+  }
+
+  _showNewProjectModal() {
+    const overlay = document.getElementById('new-project-overlay');
+    if (!overlay) return;
+
+    // Reset form fields
+    const titleEl = document.getElementById('new-project-title');
+    const genreEl = document.getElementById('new-project-genre');
+    const subgenreGroupEl = document.getElementById('new-project-subgenre-group');
+    const subgenreEl = document.getElementById('new-project-subgenre');
+    const goalEl = document.getElementById('new-project-word-goal');
+    const structureEl = document.getElementById('new-project-structure');
+
+    if (titleEl) titleEl.value = '';
+    if (goalEl) goalEl.value = '80000';
+    if (subgenreGroupEl) subgenreGroupEl.style.display = 'none';
+    if (subgenreEl) subgenreEl.innerHTML = '<option value="">— None —</option>';
+
+    // Populate genre options
+    if (genreEl) {
+      genreEl.innerHTML = '<option value="">— Select Genre (optional) —</option>' +
+        (window.GENRE_DATA || []).map(g => `<option value="${g.id}">${g.label}</option>`).join('');
+    }
+
+    // Populate structure template options
+    if (structureEl) {
+      const templates = this.structure.getTemplates();
+      structureEl.innerHTML = templates.map(t =>
+        `<option value="${t.id}" ${t.id === 'userOutline' ? '' : (t.id === 'threeAct' ? 'selected' : '')}>${t.name}</option>`
+      ).join('');
+    }
+
+    overlay.classList.add('visible');
+    setTimeout(() => titleEl?.focus(), 300);
+  }
+
+  async _submitNewProject() {
+    const title = document.getElementById('new-project-title')?.value?.trim();
+    if (!title) {
+      alert('Please enter a project title.');
+      return;
+    }
+
+    const genre = document.getElementById('new-project-genre')?.value || '';
+    const subgenre = document.getElementById('new-project-subgenre')?.value || '';
+    const wordCountGoal = parseInt(document.getElementById('new-project-word-goal')?.value) || 80000;
+    const structureTemplate = document.getElementById('new-project-structure')?.value || 'threeAct';
+
+    // Close the modal
+    document.getElementById('new-project-overlay')?.classList.remove('visible');
 
     try {
       const project = await this.fs.createProject({
         owner: this.state.currentUser,
         title,
         genre,
+        subgenre,
         wordCountGoal
       });
+
+      // Save the structure template choice for this project
+      await this.localStorage.setSetting('structureTemplate_' + project.id, structureTemplate);
 
       await this.fs.createChapter({
         projectId: project.id,
@@ -891,6 +942,20 @@ class App {
 
     body.innerHTML = this._renderSettings(this._currentProject);
     this._initApiKeyPinLock();
+
+    // Render story structure into settings if project is open
+    if (this._currentProject && this.state.currentProjectId) {
+      const container = document.getElementById('settings-structure-container');
+      if (container) {
+        const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+        const templateId = await this.localStorage.getSetting('structureTemplate_' + this.state.currentProjectId, 'threeAct');
+        const targetWords = this._currentProject.wordCountGoal || 80000;
+        const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
+        const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
+        container.innerHTML = this._renderStructureInSettings(guidance, beats, this._currentProject, templateId);
+      }
+    }
+
     this._showPanel('settings');
   }
 
@@ -1188,6 +1253,55 @@ class App {
     `;
   }
 
+  _renderStructureInSettings(guidance, beats, project, templateId) {
+    const templates = this.structure.getTemplates();
+
+    return `
+      <select class="form-input" id="structure-template-select" style="margin-bottom:12px;">
+        ${templates.map(t =>
+          `<option value="${t.id}" ${t.id === templateId ? 'selected' : ''}>${t.name} (${t.beatCount} beats)</option>`
+        ).join('')}
+      </select>
+
+      <div class="stat-grid" style="margin-bottom:12px;">
+        <div class="stat-card">
+          <div class="stat-value">${guidance.progress}%</div>
+          <div class="stat-label">Complete</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${guidance.wordsRemaining.toLocaleString()}</div>
+          <div class="stat-label">Words Remaining</div>
+        </div>
+      </div>
+      <div class="meter" style="margin-bottom:12px;">
+        <div class="meter-fill info" style="width:${guidance.progress}%"></div>
+      </div>
+
+      <div class="stat-card" style="text-align:left;margin-bottom:12px;">
+        <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:4px;">Current Beat</div>
+        <div style="font-weight:600;color:var(--accent-primary);">${guidance.currentBeat.name}</div>
+        <div style="font-size:0.85rem;color:var(--text-secondary);margin-top:4px;">${guidance.currentBeat.description}</div>
+        ${guidance.nextBeat ? `
+        <div style="margin-top:8px;font-size:0.85rem;color:var(--text-muted);">
+          Next: <strong>${guidance.nextBeat.name}</strong> in ~${guidance.wordsToNextBeat.toLocaleString()} words
+        </div>` : ''}
+      </div>
+
+      <details style="margin-top:8px;">
+        <summary style="cursor:pointer;font-size:0.85rem;color:var(--accent-primary);font-weight:600;">View Full Beat Sheet</summary>
+        <div class="beat-sheet" style="margin-top:8px;">
+          ${beats.map(beat => `
+            <div class="beat-item ${beat.isReached ? 'completed' : ''}">
+              <div class="beat-title">${beat.name}</div>
+              <div class="beat-desc">${beat.description}</div>
+              <div class="beat-percent">${beat.percent}% &bull; ~${beat.targetWordPosition.toLocaleString()} words &bull; p.${beat.approximatePage}</div>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+    `;
+  }
+
   // ========================================
   //  Cover Image
   // ========================================
@@ -1428,6 +1542,14 @@ class App {
         </div>
         <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title and genre." style="width:100%;margin-top:8px;">Save Project Settings</button>
         <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">Word count goal and chapter structure are configured in the Book Structure panel (sidebar).</p>
+      </div>
+
+      <div class="analysis-section">
+        <h3>Story Structure</h3>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:10px;">
+          Select a narrative structure template to guide your story's pacing and beat progression. Choose "User / AI Created Outline" if your story doesn't follow a traditional structure (e.g., biographies, non-fiction, or custom outlines).
+        </p>
+        <div id="settings-structure-container"></div>
       </div>
 
       <div class="analysis-section">
@@ -1869,6 +1991,17 @@ class App {
       this._createNewProject();
     });
 
+    // New project modal events
+    document.getElementById('btn-new-project-accept')?.addEventListener('click', () => {
+      this._submitNewProject();
+    });
+    document.getElementById('btn-new-project-cancel')?.addEventListener('click', () => {
+      document.getElementById('new-project-overlay')?.classList.remove('visible');
+    });
+    document.getElementById('new-project-title')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._submitNewProject();
+    });
+
     // Project card clicks (event delegation on both lists)
     const handleProjectClick = (e) => {
       const card = e.target.closest('.project-card');
@@ -2037,7 +2170,6 @@ class App {
     // --- Panel buttons ---
     document.getElementById('btn-generate')?.addEventListener('click', () => this.openGeneratePanel());
     document.getElementById('btn-analysis')?.addEventListener('click', () => this.openAnalysisPanel());
-    document.getElementById('btn-structure')?.addEventListener('click', () => this.openStructurePanel());
     document.getElementById('btn-export')?.addEventListener('click', () => this.openExportPanel());
     document.getElementById('btn-settings')?.addEventListener('click', () => this.openSettingsPanel());
     document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openBookStructurePanel());
@@ -2100,7 +2232,16 @@ class App {
       }
       if (e.target.id === 'structure-template-select') {
         await this.localStorage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
-        await this.openStructurePanel();
+        // Refresh the structure section within settings
+        const container = document.getElementById('settings-structure-container');
+        if (container && this._currentProject) {
+          const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+          const templateId = e.target.value;
+          const targetWords = this._currentProject.wordCountGoal || 80000;
+          const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
+          const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
+          container.innerHTML = this._renderStructureInSettings(guidance, beats, this._currentProject, templateId);
+        }
       }
       if (e.target.id === 'setting-project-genre') {
         const genreId = e.target.value;
@@ -2112,6 +2253,21 @@ class App {
             subGroup.style.display = '';
           } else {
             subSelect.innerHTML = '<option value="">— None (use main genre rules) —</option>';
+            subGroup.style.display = 'none';
+          }
+        }
+      }
+      // New project modal genre change
+      if (e.target.id === 'new-project-genre') {
+        const genreId = e.target.value;
+        const subGroup = document.getElementById('new-project-subgenre-group');
+        const subSelect = document.getElementById('new-project-subgenre');
+        if (subGroup && subSelect) {
+          if (genreId) {
+            subSelect.innerHTML = '<option value="">— None —</option>' + this._getSubgenreOptions(genreId, '');
+            subGroup.style.display = '';
+          } else {
+            subSelect.innerHTML = '<option value="">— None —</option>';
             subGroup.style.display = 'none';
           }
         }

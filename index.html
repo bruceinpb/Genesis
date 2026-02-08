@@ -75,7 +75,7 @@
     <div class="sidebar-header">
       <h1>Genesis 2</h1>
       <div style="display:flex;gap:2px;align-items:center;">
-        <button class="toolbar-btn" id="btn-book-structure" aria-label="Book Structure" data-tooltip="Book Structure — Configure the overall structure of your book: total words, number of chapters, subtitle, and generate AI-powered chapter outlines." style="font-size:0.7rem;padding:6px 8px;min-width:auto;min-height:auto;">Structure</button>
+        <button class="toolbar-btn" id="btn-book-structure" aria-label="Book Config" data-tooltip="Book Config — Configure the overall structure of your book: total words, number of chapters, subtitle, and generate AI-powered chapter outlines." style="font-size:0.7rem;padding:6px 8px;min-width:auto;min-height:auto;">Book Config</button>
         <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
       </div>
     </div>
@@ -150,7 +150,6 @@
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-generate" data-tooltip="AI Prose Generator — Open the AI writing assistant. Describe your scene and Claude will generate prose that matches your story's voice, style, and characters." style="color:var(--accent-primary);font-weight:700;">AI</button>
       <button class="toolbar-btn" id="btn-analysis" data-tooltip="Prose Analysis — Analyze your current chapter for writing quality, pacing, dialogue balance, sentence variety, and prose style. Provides detailed feedback and suggestions from Claude AI.">&#9874;</button>
-      <button class="toolbar-btn" id="btn-structure" data-tooltip="Story Structure — Analyze your story's narrative arc, plot structure, character development, and pacing across all chapters. Identifies strengths and areas for improvement.">&#9670;</button>
       <button class="toolbar-btn" id="btn-export" data-tooltip="Export — Export your manuscript in multiple formats: Standard Manuscript (Shunn format for agent/publisher submissions), Styled HTML, Plain Text, Full JSON Backup, or download your cover image.">&#8681;</button>
       <button class="toolbar-btn" id="btn-focus-mode" data-tooltip="Focus Mode — Enter distraction-free writing mode. Hides the sidebar, toolbar, and status bar so you can concentrate entirely on your prose. Tap the menu icon to exit.">&#9673;</button>
       <button class="toolbar-btn" id="btn-settings" data-tooltip="Settings — Configure your writing environment: appearance themes, AI model selection, API keys, daily writing goals, and project-specific settings like title, genre, and word count targets.">&#9881;</button>
@@ -242,17 +241,6 @@
     <button class="panel-close" aria-label="Close">&times;</button>
   </div>
   <div class="panel-body" id="panel-analysis-body">
-    <!-- Rendered dynamically -->
-  </div>
-</div>
-
-<!-- ===== Structure Panel ===== -->
-<div class="panel" id="panel-structure">
-  <div class="panel-header">
-    <h2>Story Structure</h2>
-    <button class="panel-close" aria-label="Close">&times;</button>
-  </div>
-  <div class="panel-body" id="panel-structure-body">
     <!-- Rendered dynamically -->
   </div>
 </div>
@@ -495,6 +483,66 @@
     <div class="modal-footer">
       <button class="btn" id="btn-rethink-cancel">Cancel</button>
       <button class="btn btn-primary" id="btn-rethink-submit">Rethink</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== New Project Creation Modal ===== -->
+<div class="modal-overlay" id="new-project-overlay">
+  <div class="modal" style="width:min(520px, 90vw);max-height:90vh;">
+    <div class="modal-header">
+      <h2>Create New Project</h2>
+    </div>
+    <div class="modal-body" style="overflow-y:auto;">
+      <div class="form-group">
+        <label>Project Title</label>
+        <input type="text" class="form-input" id="new-project-title" placeholder="My Novel" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Genre</label>
+        <select class="form-input" id="new-project-genre">
+          <option value="">— Select Genre (optional) —</option>
+        </select>
+      </div>
+      <div class="form-group" id="new-project-subgenre-group" style="display:none;">
+        <label>Subgenre</label>
+        <select class="form-input" id="new-project-subgenre">
+          <option value="">— None —</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Word Count Goal</label>
+        <input type="number" class="form-input" id="new-project-word-goal" value="80000" min="1000" step="1000">
+      </div>
+      <div class="form-group">
+        <label>Story Structure</label>
+        <select class="form-input" id="new-project-structure">
+          <!-- Populated dynamically -->
+        </select>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+          Choose a narrative structure template to guide your story's pacing. Select "User / AI Created Outline" if you prefer to define your own chapter-by-chapter outline.
+        </p>
+      </div>
+
+      <div style="margin-top:16px;padding:14px;background:var(--bg-secondary);border-radius:var(--radius-md);border-left:3px solid var(--accent-primary);">
+        <p style="font-size:0.9rem;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Before You Start Writing</p>
+        <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6;">
+          After creating your project, fill out the AI section for best results:
+        </p>
+        <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:8px 0 0 16px;">
+          <li><strong>Characters</strong> — Add profiles with names, roles, and descriptions</li>
+          <li><strong>Notes</strong> — Add world-building details, plot notes, and research</li>
+          <li><strong>AI Instructions</strong> — Set persistent rules for prose generation (in the AI panel)</li>
+          <li><strong>Genre &amp; Style</strong> — Configure in Settings for genre-specific prose rules</li>
+        </ul>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;">
+          The more context you provide, the better the AI-generated prose will be.
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btn-new-project-cancel">Cancel</button>
+      <button class="btn btn-primary" id="btn-new-project-accept">Accept &amp; Continue</button>
     </div>
   </div>
 </div>
