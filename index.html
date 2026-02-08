@@ -74,10 +74,11 @@
   <aside class="sidebar">
     <div class="sidebar-header">
       <h1>Genesis 2</h1>
-      <div style="display:flex;gap:2px;align-items:center;">
-        <button class="toolbar-btn" id="btn-book-structure" aria-label="Book Config" data-tooltip="Book Config — Configure the overall structure of your book: total words, number of chapters, subtitle, and generate AI-powered chapter outlines." style="font-size:0.7rem;padding:6px 8px;min-width:auto;min-height:auto;">Book Config</button>
-        <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
-      </div>
+      <button class="toolbar-btn" id="btn-sidebar-toggle" aria-label="Close sidebar" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
+    </div>
+
+    <div class="sidebar-setup-book">
+      <button class="setup-book-pill" id="btn-book-structure" data-tooltip="Setup Book — Configure the overall structure of your book: total words, number of chapters, subtitle, and generate AI-powered chapter outlines.">Setup Book</button>
     </div>
 
     <nav class="sidebar-nav">
@@ -483,6 +484,119 @@
     <div class="modal-footer">
       <button class="btn" id="btn-rethink-cancel">Cancel</button>
       <button class="btn btn-primary" id="btn-rethink-submit">Rethink</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== New Project Help Modal ===== -->
+<div class="modal-overlay" id="new-project-help-overlay">
+  <div class="modal new-project-help-modal">
+    <div class="modal-header">
+      <h2>Welcome to Genesis 2</h2>
+    </div>
+    <div class="modal-body" style="overflow-y:auto;">
+      <p style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:20px;line-height:1.7;">
+        Genesis 2 is a complete writing studio designed to help you craft world-class prose from concept to finished manuscript. Here's how to get started with your new project:
+      </p>
+
+      <div class="help-step">
+        <div class="help-step-number">1</div>
+        <div class="help-step-content">
+          <h3>Set Up Your Book Structure</h3>
+          <p>Start by tapping the <strong>Setup Book</strong> button in the sidebar. Here you'll define your book's total word count goal and number of chapters. Genesis will calculate the approximate words per chapter to help you plan your pacing. You can also choose a narrative structure template (Three-Act, Hero's Journey, etc.) to guide your story's pacing.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">2</div>
+        <div class="help-step-content">
+          <h3>Create Your Characters</h3>
+          <p>Switch to the <strong>Characters</strong> tab to build detailed character profiles. Add names, roles, descriptions, motivations, and character arcs. These profiles are automatically fed to the AI when generating prose, ensuring your characters stay consistent throughout the story.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">3</div>
+        <div class="help-step-content">
+          <h3>Add Notes &amp; Research</h3>
+          <p>Use the <strong>Notes</strong> tab to organize your story's foundation. Create notes for:</p>
+          <ul style="margin:8px 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+            <li><strong>Story Plot</strong> — Outline major plot points, twists, and the arc of your narrative</li>
+            <li><strong>World Building</strong> — Detail settings, rules, history, and the world your characters inhabit</li>
+            <li><strong>General Notes</strong> — Keep track of themes, tone, timelines, and style preferences</li>
+            <li><strong>Research</strong> — Store reference material, historical facts, and technical details for accuracy</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">4</div>
+        <div class="help-step-content">
+          <h3>Configure Project Settings</h3>
+          <p>Tap the <strong>gear icon</strong> (&#9881;) in the toolbar to access Settings. Under Project Settings you can:</p>
+          <ul style="margin:8px 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+            <li>Set your book's <strong>title</strong> and <strong>subtitle</strong></li>
+            <li>Choose a <strong>genre</strong> and <strong>sub-genre</strong> to guide the AI's writing style</li>
+            <li>View and change your <strong>story structure</strong> template and track pacing progress</li>
+            <li>Add a persistent <strong>AI prompt</strong> that carries across all chapters — use this for rules like point of view, tense, or stylistic constraints</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">5</div>
+        <div class="help-step-content">
+          <h3>Generate Chapter Outlines</h3>
+          <p>Once your structure, characters, and notes are in place, open <strong>Setup Book</strong> and use <strong>Generate Outlines</strong>. The AI will analyze everything you've entered and create detailed outlines for each chapter, giving you a roadmap for your entire book.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">6</div>
+        <div class="help-step-content">
+          <h3>Write &amp; Generate Prose</h3>
+          <p>Select any chapter from the sidebar and start writing. Use the <strong>AI</strong> button in the toolbar to generate prose. You can also select a chapter with an outline and tap <strong>Accept Outline</strong> in the chapter toolbar to auto-generate prose from the outline. Continue writing with the +500, +1000, or +2000 word buttons that appear after each generation.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">7</div>
+        <div class="help-step-content">
+          <h3>Analyze &amp; Refine</h3>
+          <p>Use the <strong>anvil icon</strong> (&#9874;) in the toolbar for prose analysis to check quality, pacing, and style. The AI scores your prose and highlights areas for improvement. Use the <strong>Rewrite</strong> and <strong>Rethink</strong> tools to iterate and polish your manuscript to a professional standard.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">8</div>
+        <div class="help-step-content">
+          <h3>Generate a Book Cover</h3>
+          <p>Once you have prose written, the sidebar displays a cover area. Tap <strong>Create Cover</strong> to generate an AI-powered book cover image based on your story's content and genre. You can regenerate it as many times as you like until you're satisfied. A Hugging Face API token is required (free tier available) — add it in Settings.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">9</div>
+        <div class="help-step-content">
+          <h3>Export Your Manuscript</h3>
+          <p>When you're ready, tap the <strong>export icon</strong> (&#8681;) to export in multiple formats: Standard Manuscript (Shunn format for agents/publishers), Styled HTML, Plain Text, or a full JSON backup. You can also download your cover image separately.</p>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-top:20px;">
+        <h3 style="font-size:0.85rem;font-weight:600;color:var(--accent-primary);margin-bottom:8px;">Tips for Best Results</h3>
+        <ul style="margin:0 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.8;">
+          <li>The more detail you put into characters, notes, and outlines, the better the AI prose will be</li>
+          <li>Use the AI Instructions field (in the AI panel) for persistent rules the AI must follow in every generation</li>
+          <li>Use the chapter toolbar's <strong>Select All</strong> and <strong>Delete Selected</strong> to manage chapters in bulk</li>
+          <li>Set a daily writing goal in Settings to track your progress and build a consistent habit</li>
+          <li>Use Focus Mode (&#9673;) to remove all distractions when you need to concentrate</li>
+          <li>Your work is saved automatically — both locally and to the cloud</li>
+        </ul>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:center;">
+      <button class="btn btn-primary" id="btn-help-create-project" style="padding:14px 48px;font-size:1rem;">Create Project Now</button>
     </div>
   </div>
 </div>
