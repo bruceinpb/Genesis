@@ -68,6 +68,15 @@ const BEAT_SHEETS = {
       { name: 'Ten (Twist)', percent: 50, description: 'An unexpected element is introduced that shifts the perspective entirely.' },
       { name: 'Ketsu (Conclusion)', percent: 75, description: 'Reconcile the twist with the established narrative. New understanding emerges.' }
     ]
+  },
+
+  userOutline: {
+    name: 'User / AI Created Outline',
+    description: 'Use your own chapter-by-chapter outline instead of a predefined beat sheet. Ideal for non-fiction, biographies, or stories that don\'t follow traditional narrative structures.',
+    beats: [
+      { name: 'Beginning', percent: 0, description: 'The opening of your story as defined by your outline.' },
+      { name: 'Conclusion', percent: 100, description: 'The ending of your story as defined by your outline.' }
+    ]
   }
 };
 
