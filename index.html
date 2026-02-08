@@ -483,7 +483,15 @@
   <div class="modal" style="width:min(440px, 90vw);">
     <div class="modal-body" style="padding:28px 24px;text-align:center;">
       <div style="font-size:1rem;font-weight:700;color:var(--text-primary);margin-bottom:4px;">Iterative Writing</div>
-      <div id="iterative-phase-label" style="font-size:0.8rem;color:var(--accent-primary);margin-bottom:16px;">Generating paragraph&hellip;</div>
+      <div id="iterative-chunk-label" class="iterative-chunk-info">Chunk <span id="iterative-chunk-num">1</span></div>
+      <div id="iterative-phase-label" style="font-size:0.85rem;font-weight:600;color:var(--accent-primary);margin-bottom:12px;">Generating paragraph&hellip;</div>
+
+      <!-- Prominent scoring notice -->
+      <div id="iterative-scoring-notice" class="iterative-scoring-notice">
+        <div class="scoring-dot"></div>
+        <div class="scoring-label">Scoring</div>
+        <div class="scoring-dot"></div>
+      </div>
 
       <div class="iterative-score-display">
         <div id="iterative-score-value" class="iterative-score-number">--</div>
