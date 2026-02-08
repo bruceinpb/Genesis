@@ -1303,6 +1303,32 @@ select.form-input {
 }
 
 /* ============================================
+   Scoring Progress Bar
+   ============================================ */
+
+.scoring-progress-bar {
+  height: 8px;
+  background: var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.scoring-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary, var(--accent-primary)));
+  width: 30%;
+  animation: scoring-progress 1.5s ease-in-out infinite;
+}
+
+@keyframes scoring-progress {
+  0% { margin-left: 0%; width: 30%; }
+  50% { margin-left: 40%; width: 40%; }
+  100% { margin-left: 70%; width: 30%; }
+}
+
+/* ============================================
    Landing Page
    ============================================ */
 
