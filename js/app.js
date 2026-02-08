@@ -943,6 +943,17 @@ class App {
     if (generateBtn) generateBtn.disabled = active;
   }
 
+  _showScoringProgress(show) {
+    const overlay = document.getElementById('scoring-progress-overlay');
+    if (overlay) {
+      if (show) {
+        overlay.classList.add('visible');
+      } else {
+        overlay.classList.remove('visible');
+      }
+    }
+  }
+
   async openSettingsPanel() {
     const body = document.getElementById('panel-settings-body');
     if (!body) return;
@@ -1826,10 +1837,15 @@ class App {
     this._previousRewriteScore = null;
     this._previousRewriteIssueCount = null;
 
+    // Show scoring progress bar
+    this._showScoringProgress(true);
+
     try {
       const review = await this.generator.scoreProse(generatedText);
+      this._showScoringProgress(false);
       this._showProseReview(review, generatedText);
     } catch (err) {
+      this._showScoringProgress(false);
       console.error('Prose scoring failed:', err);
     }
   }
@@ -1837,6 +1853,9 @@ class App {
   async _scoreProseAfterRewrite(generatedText, previousScore, previousIssueCount) {
     if (!this.generator.hasApiKey()) return;
     if (!generatedText || generatedText.length < 100) return;
+
+    // Show scoring progress bar
+    this._showScoringProgress(true);
 
     try {
       const review = await this.generator.scoreProse(generatedText, {
@@ -1860,8 +1879,10 @@ class App {
         review._scoreDecreased = true;
       }
 
+      this._showScoringProgress(false);
       this._showProseReview(review, generatedText);
     } catch (err) {
+      this._showScoringProgress(false);
       console.error('Prose scoring failed:', err);
     }
   }

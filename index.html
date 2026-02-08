@@ -464,6 +464,19 @@
   </div>
 </div>
 
+<!-- ===== Scoring Progress Overlay ===== -->
+<div class="modal-overlay" id="scoring-progress-overlay">
+  <div class="modal" style="width:min(360px, 85vw);">
+    <div class="modal-body" style="padding:32px 24px;text-align:center;">
+      <div style="font-size:0.95rem;font-weight:600;color:var(--text-primary);margin-bottom:16px;">Scoring in progress</div>
+      <div class="scoring-progress-bar">
+        <div class="scoring-progress-fill"></div>
+      </div>
+      <p style="font-size:0.8rem;color:var(--text-muted);margin-top:12px;">Analyzing prose quality&hellip;</p>
+    </div>
+  </div>
+</div>
+
 <!-- ===== Rethink Modal ===== -->
 <div class="modal-overlay" id="rethink-overlay">
   <div class="modal">
@@ -666,17 +679,24 @@
 <div class="modal-overlay" id="accept-outline-overlay">
   <div class="modal" style="width:min(440px, 90vw);">
     <div class="modal-header">
-      <h2>Have You Entered AI Data?</h2>
+      <h2>Before You Generate</h2>
     </div>
     <div class="modal-body">
       <p style="font-size:0.9rem;color:var(--text-secondary);line-height:1.5;">
-        Before generating prose, please confirm you have filled out the necessary information in the AI section of the program:
+        Before generating prose, please confirm you have completed the following:
       </p>
-      <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:12px 0 0 16px;">
+      <p style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:14px 0 4px 0;">AI Fields</p>
+      <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:0 0 0 16px;">
         <li>Characters and their profiles</li>
         <li>Project notes and world-building details</li>
         <li>AI instructions and writing preferences</li>
         <li>Genre and style settings</li>
+      </ul>
+      <p style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:14px 0 4px 0;">Book Setup</p>
+      <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:0 0 0 16px;">
+        <li>Book title and word count goal</li>
+        <li>Story structure template</li>
+        <li>Voice and point of view</li>
       </ul>
     </div>
     <div class="modal-footer">
