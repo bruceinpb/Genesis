@@ -915,7 +915,7 @@ class App {
       // --- Prose CI/CD: Score, lint, patch with anti-regression ---
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_CICD_ITERATIONS = 8;
+        const MAX_CICD_ITERATIONS = 3;
         const MAX_SCORE_RETRIES = 2;
         let currentChunkText = streamedText;
         let chunkBestScore = 0;
@@ -927,6 +927,8 @@ class App {
         // Reset iteration display for this chunk
         this._updateIterativeScore(null);
         this._updateIterativeIteration(0, 0);
+        this._resetScoreHistory();
+        this._chunkFixLists = [];
 
         // === PROSE CI/CD STEP 0: Calculate baseline voice fingerprint ===
         const baselineFingerprint = this.analyzer.calculateVoiceFingerprint(currentChunkText);
@@ -1024,7 +1026,8 @@ class App {
             }
           }
 
-          this._updateIterativeScore(chunkBestScore);
+          this._updateIterativeScore(score, true);
+          this._recordIterationScore(chunkIteration, score);
           this._updateIterativeIteration(chunkIteration, chunkBestScore);
           this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${score}/100 (${review.label || ''}) [threshold: ${qualityThreshold}] | Lint: ${hardDefects.length} hard defects`);
 
@@ -1040,43 +1043,60 @@ class App {
             break;
           }
 
-          // Stagnation check: if 3+ iterations with no improvement, stop
-          if (consecutiveNoImprovement >= 3) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: Score plateaued at ${chunkBestScore}. Stopping refinement.`);
+          // === PROSE CI/CD STEP 3: AI Self-Reflection ===
+          this._updateIterativePhase('Reflecting on improvements\u2026');
+          this._updateIterativeLog(`Chunk ${chunkNum}: AI reflecting — "How can I improve this prose to reach ${qualityThreshold}?"\u2026`);
+
+          let fixList = null;
+          try {
+            fixList = await this.generator.reflectOnProse({
+              prose: currentChunkText,
+              score,
+              subscores: review.subscores,
+              threshold: qualityThreshold,
+              issues: review.issues,
+              aiPatterns: review.aiPatterns,
+              iterationNum: chunkIteration,
+              previousFixLists: this._chunkFixLists && this._chunkFixLists.length > 0 ? this._chunkFixLists : undefined
+            });
+          } catch (err) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Reflection failed: ${err.message}`);
             break;
           }
 
-          // === PROSE CI/CD STEP 3: Identify single dominant constraint ===
-          const focus = this.generator.identifyDominantConstraint(review, lintResult);
-          if (!focus) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: No actionable focus found. Best: ${chunkBestScore}/100`);
+          if (this._generateCancelled) break;
+
+          if (!fixList || !fixList.fixes || fixList.fixes.length === 0) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: No fixes identified. Best: ${chunkBestScore}/100`);
             break;
           }
 
-          this._updateIterativePhase(`Patching: ${focus.description.slice(0, 40)}\u2026`);
-          this._updateIterativeLog(`Chunk ${chunkNum}: Focus → ${focus.description}`);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Reflection — ${fixList.reflection || 'Analysis complete'}`);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Fix list (${fixList.fixes.length} fixes): ${fixList.fixes.map(f => f.description.slice(0, 50)).join('; ')}`);
+          if (!this._chunkFixLists) this._chunkFixLists = [];
+          this._chunkFixLists.push(fixList);
 
-          // === PROSE CI/CD STEP 4: Apply targeted patch (one defect class at a time) ===
+          // === PROSE CI/CD STEP 4: Apply fix list ===
+          this._updateIterativePhase(`Applying ${fixList.fixes.length} fixes\u2026`);
+
           const preChunkContent = currentExisting;
           let patchedText = '';
           try {
             await new Promise((resolve, reject) => {
               if (this._generateCancelled) { resolve(); return; }
-              this.generator.patchProse(
+              this.generator.applyFixList(
                 {
                   originalProse: currentChunkText,
-                  focus,
-                  intentLedger,
-                  voiceFingerprint: baselineFingerprint,
-                  lintDefects: lintResult.defects,
-                  review,
+                  fixList,
                   chapterTitle, characters, notes, chapterOutline, aiInstructions,
                   tone, style,
                   wordTarget: thisChunkTarget,
                   maxTokens: maxTokensPerChunk,
                   genre, genreRules,
                   voice: project?.voice || '',
-                  errorPatternsPrompt
+                  errorPatternsPrompt,
+                  iterationNum: chunkIteration,
+                  threshold: qualityThreshold
                 },
                 {
                   onChunk: (text) => {
@@ -1102,53 +1122,20 @@ class App {
               );
             });
           } catch (err) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: Patch failed: ${err.message}`);
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix application failed: ${err.message}`);
             break;
           }
 
           if (this._generateCancelled) break;
 
-          // === PROSE CI/CD STEP 5: Anti-regression tests ===
+          // === PROSE CI/CD STEP 5: Anti-regression check ===
           if (patchedText && patchedText.length > 20) {
-            // Test A: Lint regression check — did we introduce new hard defects?
-            const postLint = this.analyzer.lintProse(patchedText);
-            const newHardDefects = postLint.defects.filter(d => d.severity === 'hard').length;
-            const previousHardDefects = hardDefects.length;
-
-            // Test B: Voice fingerprint drift check
-            const postFingerprint = this.analyzer.calculateVoiceFingerprint(patchedText);
-            const drift = this.analyzer.compareFingerprints(baselineFingerprint, postFingerprint);
-
-            // Test C: Word count regression (>15% change is suspicious)
             const preWords = (currentChunkText.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
             const postWords = (patchedText.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
             const wordCountDrift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
 
-            let rejectPatch = false;
-            let rejectReason = '';
-
-            // Reject if new hard defects were introduced (net increase)
-            if (newHardDefects > previousHardDefects + 1) {
-              rejectPatch = true;
-              rejectReason = `Introduced ${newHardDefects - previousHardDefects} new hard defects`;
-            }
-
-            // Reject if voice drifted too much
-            if (drift.totalDrift > 5.0) {
-              rejectPatch = true;
-              rejectReason = `Voice drift too high (${drift.totalDrift.toFixed(1)}): ${drift.dimensions.map(d => d.dimension).join(', ')}`;
-            }
-
-            // Reject if word count changed dramatically
-            if (wordCountDrift > 0.20) {
-              rejectPatch = true;
-              rejectReason = `Word count changed by ${Math.round(wordCountDrift * 100)}% (${preWords} → ${postWords})`;
-            }
-
-            if (rejectPatch) {
-              // REVERT the patch
-              this._updateIterativeLog(`Chunk ${chunkNum}: PATCH REJECTED — ${rejectReason}. Reverting.`);
-              // Restore previous text in editor
+            if (wordCountDrift > 0.25) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Word count changed by ${Math.round(wordCountDrift * 100)}% (${preWords} \u2192 ${postWords}). Reverting.`);
               const startingContent = preChunkContent.trim() ? preChunkContent : '';
               const paragraphs = currentChunkText.split('\n\n');
               const revertHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
@@ -1158,9 +1145,8 @@ class App {
               }
               consecutiveNoImprovement++;
             } else {
-              // Patch accepted
               currentChunkText = patchedText;
-              this._updateIterativeLog(`Chunk ${chunkNum}: Patch accepted (drift: ${drift.totalDrift.toFixed(1)}, lint: ${newHardDefects} hard defects, words: ${postWords})`);
+              this._updateIterativeLog(`Chunk ${chunkNum}: Fixes applied (words: ${postWords})`);
             }
           }
         }
@@ -2619,6 +2605,7 @@ class App {
     this._updateIterativePhase('Generating paragraph\u2026');
     this._updateIterativeScore(null);
     this._updateIterativeIteration(0, 0);
+    this._resetScoreHistory();
     // Update threshold display
     const qualityThreshold = this._currentProject?.qualityThreshold || 90;
     const thresholdLabel = document.getElementById('iterative-threshold-label');
@@ -2759,9 +2746,12 @@ class App {
   }
 
   /**
-   * Score the current paragraph and refine it if below the quality threshold.
-   * Keeps iterating until score >= threshold or max iterations reached.
-   * When score >= threshold, automatically proceeds to the next chunk.
+   * Score the current paragraph and refine it using reflective AI analysis.
+   * Uses a 3-iteration max approach:
+   *   1. Score the prose
+   *   2. If below threshold, ask AI to reflect: "How can I improve this? What fixes are needed?"
+   *   3. Create and implement a fix list based on the reflection
+   *   4. Score again and repeat reflection (max 3 iterations)
    */
   async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
     if (this._iterativeCancelled) {
@@ -2769,347 +2759,259 @@ class App {
       return;
     }
 
-    const MAX_ITERATIONS = 8;
+    const MAX_ITERATIONS = 3;
     const MAX_SCORE_RETRIES = 2;
-    iteration++;
+    const qualityThreshold = this._currentProject?.qualityThreshold || 90;
+    const previousFixLists = [];
+    let workingText = currentText;
 
-    // Show prominent scoring notice
-    this._updateIterativePhase('Scoring\u2026');
-    this._showIterativeScoringNotice(true);
-    this._updateIterativeIteration(iteration, bestScore);
-    this._updateIterativeLog(`Iteration ${iteration}: Scoring\u2026`);
-
-    // Score the prose with retry logic for failed scoring (score=0)
-    let review = null;
-    let scoreRetries = 0;
-    while (scoreRetries <= MAX_SCORE_RETRIES) {
-      try {
-        review = await this.generator.scoreProse(currentText, iteration > 1 ? {
-          isRewrite: true,
-          previousIssueCount: this._iterPrevIssueCount || 0,
-          previousScore: this._iterPrevScore || 0,
-          previousSubscores: this._iterPrevSubscores || {}
-        } : undefined);
-      } catch (err) {
-        this._updateIterativeLog(`Scoring error: ${err.message}`);
-        review = null;
+    for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
+      if (this._iterativeCancelled) {
+        this._showIterativeOverlay(false);
+        return;
       }
 
-      if (review && review.score > 0) break;
+      // === STEP 1: Score the prose ===
+      this._updateIterativePhase('Scoring\u2026');
+      this._showIterativeScoringNotice(true);
+      this._updateIterativeIteration(iter, bestScore);
+      this._updateIterativeLog(`Iteration ${iter}: Scoring\u2026`);
 
-      scoreRetries++;
-      if (scoreRetries <= MAX_SCORE_RETRIES) {
-        this._updateIterativeLog(`Scoring returned 0, retrying (${scoreRetries}/${MAX_SCORE_RETRIES})\u2026`);
-        await new Promise(r => setTimeout(r, 1500));
+      let review = null;
+      let scoreRetries = 0;
+      while (scoreRetries <= MAX_SCORE_RETRIES) {
+        try {
+          review = await this.generator.scoreProse(workingText, iter > 1 ? {
+            isRewrite: true,
+            previousIssueCount: this._iterPrevIssueCount || 0,
+            previousScore: this._iterPrevScore || 0,
+            previousSubscores: this._iterPrevSubscores || {}
+          } : undefined);
+        } catch (err) {
+          this._updateIterativeLog(`Scoring error: ${err.message}`);
+          review = null;
+        }
+        if (review && review.score > 0) break;
+        scoreRetries++;
+        if (scoreRetries <= MAX_SCORE_RETRIES) {
+          this._updateIterativeLog(`Scoring returned 0, retrying (${scoreRetries}/${MAX_SCORE_RETRIES})\u2026`);
+          await new Promise(r => setTimeout(r, 1500));
+        }
       }
-    }
 
-    // Hide scoring notice — score is in
-    this._showIterativeScoringNotice(false);
+      this._showIterativeScoringNotice(false);
 
-    if (this._iterativeCancelled) {
-      this._showIterativeOverlay(false);
-      return;
-    }
+      if (this._iterativeCancelled) {
+        this._showIterativeOverlay(false);
+        return;
+      }
 
-    // If scoring still failed after retries, present for review
-    if (!review || review.score === 0) {
-      this._updateIterativeLog(`Scoring failed after ${MAX_SCORE_RETRIES + 1} attempts. Presenting for review.`);
-      this._showIterativeOverlay(false);
-      this._presentIterativeAccept(currentText, bestScore);
-      return;
-    }
+      if (!review || review.score === 0) {
+        this._updateIterativeLog(`Scoring failed after ${MAX_SCORE_RETRIES + 1} attempts. Presenting for review.`);
+        this._showIterativeOverlay(false);
+        this._presentIterativeAccept(workingText, bestScore);
+        return;
+      }
 
-    const score = review.score;
+      const score = review.score;
 
-    // Record errors to the cross-project error pattern database during iteration
-    const issueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
-    if (this.errorDb && issueCount > 0) {
-      const sessionKey = this._iterativeSessionKey || null;
-      this.errorDb.recordFromReview(review, {
-        projectId: this.state.currentProjectId,
-        chapterId: this.state.currentChapterId,
-        genre: this._currentProject?.genre || '',
-        sessionKey  // prevents duplicate frequency bumps within the same iteration session
-      }).catch(() => {});
+      // Record errors to cross-project error pattern database
+      const issueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+      if (this.errorDb && issueCount > 0) {
+        const sessionKey = this._iterativeSessionKey || null;
+        this.errorDb.recordFromReview(review, {
+          projectId: this.state.currentProjectId,
+          chapterId: this.state.currentChapterId,
+          genre: this._currentProject?.genre || '',
+          sessionKey
+        }).catch(() => {});
+        this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 1 }).then(prompt => {
+          this._cachedErrorPatternsPrompt = prompt;
+        }).catch(() => {});
+      }
 
-      // Refresh error patterns prompt after every scoring so rewrites learn from newly-found errors immediately
-      this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 1 }).then(prompt => {
-        this._cachedErrorPatternsPrompt = prompt;
-      }).catch(() => {});
-    }
-
-    // Track best-scoring text — revert to it if score drops
-    if (score > bestScore) {
-      bestScore = score;
-      this._iterativeBestText = currentText;
-      this._iterativeBestReview = review;
-      this._iterativeNoImprovement = 0;
-    } else {
-      this._iterativeNoImprovement = (this._iterativeNoImprovement || 0) + 1;
-
-      if (score < bestScore && this._iterativeBestText && iteration > 1) {
-        // Score dropped — revert to best version and force escalation immediately
-        this._updateIterativeLog(`Iteration ${iteration}: Score dropped (${score} < best ${bestScore}). Reverting to best version and escalating.`);
-        currentText = this._iterativeBestText;
-        // Use best review's issues since we're reverting to that text,
-        // but force escalation so the rewrite takes a bolder, different approach
+      // Track best version
+      if (score > bestScore) {
+        bestScore = score;
+        this._iterativeBestText = workingText;
+        this._iterativeBestReview = review;
+      } else if (score < bestScore && this._iterativeBestText && iter > 1) {
+        this._updateIterativeLog(`Iteration ${iter}: Score dropped (${score} < best ${bestScore}). Reverting to best version.`);
+        workingText = this._iterativeBestText;
         if (this._iterativeBestReview) review = this._iterativeBestReview;
-
-        // Force escalation since the previous fix approach made things worse
-        this._iterativeNoImprovement = Math.max(this._iterativeNoImprovement, 2);
-
         // Restore best text in editor
         const baseContent = this._preGenerationContent || '';
         const editorEl = this.editor.element;
-        const paragraphs = currentText.split('\n\n');
+        const paragraphs = workingText.split('\n\n');
         const restoredHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
         editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + restoredHtml;
         if (this.state.currentChapterId) {
           this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
         }
-        this._lastGeneratedText = currentText;
+        this._lastGeneratedText = workingText;
       }
-    }
 
-    this._updateIterativeScore(bestScore);
-    this._updateIterativeIteration(iteration, bestScore);
-    this._updateIterativeLog(`Iteration ${iteration}: Score = ${score}/100${score < bestScore ? ` (best: ${bestScore})` : ''} [threshold: ${this._currentProject?.qualityThreshold || 90}]`);
+      // Display score
+      this._updateIterativeScore(score, true);
+      this._recordIterationScore(iter, score);
+      this._updateIterativeIteration(iter, bestScore);
+      this._updateIterativeLog(`Iteration ${iter}: Score = ${score}/100${score < bestScore ? ` (best: ${bestScore})` : ''} [threshold: ${qualityThreshold}]`);
 
-    // Store for next iteration context
-    this._iterPrevScore = score;
-    this._iterPrevIssueCount = issueCount;
-    this._iterPrevSubscores = review.subscores;
+      this._iterPrevScore = score;
+      this._iterPrevIssueCount = issueCount;
+      this._iterPrevSubscores = review.subscores;
 
-    // Check if we've reached the target (use bestScore which may be from a previous iteration)
-    const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-    if (bestScore >= qualityThreshold) {
-      this._updateIterativeLog(`Chunk ${this._iterativeChunkNum}: Score ${bestScore}/100 -- passed threshold (${qualityThreshold}%)! Proceeding to next chunk\u2026`);
-      // Brief pause so user can see the passing score before next chunk starts
-      await new Promise(r => setTimeout(r, 1200));
-      // Auto-continue to next chunk
-      await this._iterativeWriteLoop();
-      return;
-    }
-
-    // Check if max iterations reached — present the best version for review
-    if (iteration >= MAX_ITERATIONS) {
-      this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}/${qualityThreshold}`);
-      this._showIterativeOverlay(false);
-      this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
-      return;
-    }
-
-    // If score hasn't improved for 2+ iterations, escalate approach
-    const isStagnant = (this._iterativeNoImprovement || 0) >= 2;
-
-    // Score is below threshold — deeply analyze errors
-    this._updateIterativePhase(isStagnant ? 'Escalating approach\u2026' : 'Analyzing errors\u2026');
-    this._updateIterativeLog(`Iteration ${iteration}: ${isStagnant ? 'Escalating \u2014 previous fixes ineffective. ' : ''}Analyzing ${this._iterPrevIssueCount} issues\u2026`);
-
-    // Collect problems to fix
-    const problems = [];
-    if (review.aiPatterns) {
-      for (const p of review.aiPatterns) {
-        problems.push({
-          text: p.examples?.[0] || '',
-          description: `AI Pattern: ${p.pattern}`,
-          impact: p.estimatedImpact || 3,
-          severity: 'high'
-        });
-      }
-    }
-    if (review.issues) {
-      for (const issue of review.issues) {
-        if (issue.severity === 'low') continue;
-        problems.push({
-          text: issue.text || '',
-          description: issue.problem || '',
-          impact: issue.estimatedImpact || 1,
-          severity: issue.severity
-        });
-      }
-    }
-
-    // If no specific issues found but below threshold, analyze weak subscores
-    if (problems.length === 0 && score < qualityThreshold && review.subscores) {
-      this._iterativeConsecutiveNoIssues = (this._iterativeConsecutiveNoIssues || 0) + 1;
-      this._updateIterativeLog(`Iteration ${iteration}: No specific issues. Analyzing weak subscores\u2026`);
-      const subscoreEntries = Object.entries(review.subscores).sort((a, b) => a[1] - b[1]);
-      const weakest = subscoreEntries.slice(0, 3);
-
-      const dimLabels = {
-        sentenceVariety: 'Sentence Variety & Rhythm',
-        dialogueAuthenticity: 'Dialogue Authenticity',
-        sensoryDetail: 'Sensory Detail / Show vs Tell',
-        emotionalResonance: 'Emotional Resonance & Depth',
-        vocabularyPrecision: 'Vocabulary Precision',
-        narrativeFlow: 'Narrative Flow & Pacing',
-        originalityVoice: 'Originality & Voice',
-        technicalExecution: 'Technical Execution'
-      };
-
-      const dimFixesNormal = {
-        sentenceVariety: 'Find 3+ consecutive sentences with similar word counts. Break long ones into short punchy fragments. Combine short ones into flowing compound sentences.',
-        dialogueAuthenticity: 'Make each character sound different. Vary dialogue tags: use "said" 60%, action beats 30%, no tag 10%.',
-        sensoryDetail: 'Replace abstract descriptions with concrete sensory details. Name specific colors, textures, smells, sounds.',
-        emotionalResonance: 'Replace any stated emotions with character actions that IMPLY the emotion. Find the unexpected gesture.',
-        vocabularyPrecision: 'Replace generic verbs with specific ones (walked\u2192shuffled). Delete: very, really, quite, just, rather.',
-        narrativeFlow: 'Vary paragraph lengths. Cut transition words (Meanwhile, After a moment). Just jump between beats.',
-        originalityVoice: 'Replace any templated-sounding phrase with something unexpected. If a metaphor is clich\u00e9, delete it.',
-        technicalExecution: 'Fix grammatical issues. Ensure paragraph breaks are purposeful. Check tense consistency.'
-      };
-      const dimFixesEscalated = {
-        sentenceVariety: 'REWRITE at least 3 sentences with radically different lengths. Follow a 4-word sentence with a 25-word one. Use a fragment. Make rhythm unmistakable.',
-        dialogueAuthenticity: 'Add or rework dialogue with DISTINCTLY different speech patterns per character. Include an interruption or trailing thought.',
-        sensoryDetail: 'Add 2 NEW hyper-specific sensory details: exact sounds, textures, smells. Replace every remaining abstraction with something concrete.',
-        emotionalResonance: 'Replace ALL remaining stated emotions with unexpected character-specific actions. Be bold and surprising.',
-        vocabularyPrecision: 'Replace EVERY remaining generic verb with the most precise word possible. Cut all filler words ruthlessly.',
-        narrativeFlow: 'Restructure paragraph lengths dramatically. Add a one-sentence paragraph. Cut ALL remaining transition words.',
-        originalityVoice: 'Replace the most template-sounding phrases with something a reader has never seen. The voice must be distinctive.',
-        technicalExecution: 'Cut any sentence that doesn\'t advance character, mood, or plot. Verify tense and POV are flawless.'
-      };
-      const dimFixes = isStagnant ? dimFixesEscalated : dimFixesNormal;
-
-      for (const [dim, val] of weakest) {
-        const maxForDim = ['sentenceVariety', 'dialogueAuthenticity', 'sensoryDetail', 'emotionalResonance'].includes(dim) ? 15 : 10;
-        const gap = maxForDim - val;
-        if (gap >= 2) {
-          problems.push({
-            text: '',
-            description: `Weak: ${dimLabels[dim] || dim} (${val}/${maxForDim}). ${dimFixes[dim] || 'Improve this aspect throughout.'}`,
-            impact: gap,
-            severity: 'high'
-          });
-        }
-      }
-      if (problems.length === 0 && this._iterativeConsecutiveNoIssues >= 3) {
-        this._updateIterativeLog(`Score plateaued at ${bestScore}. Presenting for review.`);
-        this._iterativeConsecutiveNoIssues = 0;
-        this._showIterativeOverlay(false);
-        this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
+      // Check if we've reached the target
+      if (bestScore >= qualityThreshold) {
+        this._updateIterativeLog(`Chunk ${this._iterativeChunkNum}: Score ${bestScore}/100 -- passed threshold (${qualityThreshold}%)! Proceeding to next chunk\u2026`);
+        await new Promise(r => setTimeout(r, 1200));
+        await this._iterativeWriteLoop();
         return;
       }
-    } else {
-      this._iterativeConsecutiveNoIssues = 0;
-    }
 
-    problems.sort((a, b) => b.impact - a.impact);
-    // When stagnant/escalating, rotate issue priority so the AI focuses on different problems first
-    if (isStagnant && problems.length > 2) {
-      const rotateBy = Math.min(3, Math.floor(problems.length / 2));
-      const top = problems.splice(0, rotateBy);
-      problems.push(...top);
-    }
-    const cappedProblems = problems.slice(0, 10);
-    const formattedProblems = cappedProblems.map(p => {
-      if (p.text) return `FIND: "${p.text}" \u2192 PROBLEM: ${p.description} [${p.severity}, ~${p.impact} pts]`;
-      return `${p.description} [${p.severity}, ~${p.impact} pts]`;
-    });
+      // If this is the last iteration, present for review
+      if (iter >= MAX_ITERATIONS) {
+        this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}/${qualityThreshold}`);
+        this._showIterativeOverlay(false);
+        this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+        return;
+      }
 
-    if (formattedProblems.length === 0) {
-      // No fixable issues but score is still below threshold — present for review
-      this._updateIterativeLog(`No actionable issues found at score ${score}. Best: ${bestScore}. Presenting for review.`);
-      this._showIterativeOverlay(false);
-      this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
-      return;
-    }
+      // === STEP 2: AI Self-Reflection — "How can I improve this prose?" ===
+      this._updateIterativePhase('Reflecting on improvements\u2026');
+      this._updateIterativeLog(`Iteration ${iter}: AI reflecting — "How can I improve this prose to reach ${qualityThreshold}?"\u2026`);
 
-    // Gather context for rewrite
-    let characters = [];
-    if (this._iterativeSettings.useCharacters && this.state.currentProjectId) {
-      characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
-    }
-
-    let chapterTitle = '';
-    if (this.state.currentChapterId) {
+      let fixList = null;
       try {
-        const chapter = await this.fs.getChapter(this.state.currentChapterId);
-        if (chapter) chapterTitle = chapter.title;
-      } catch (_) {}
-    }
+        fixList = await this.generator.reflectOnProse({
+          prose: workingText,
+          score,
+          subscores: review.subscores,
+          threshold: qualityThreshold,
+          issues: review.issues,
+          aiPatterns: review.aiPatterns,
+          iterationNum: iter,
+          previousFixLists: previousFixLists.length > 0 ? previousFixLists : undefined
+        });
+      } catch (err) {
+        this._updateIterativeLog(`Reflection failed: ${err.message}. Presenting for review.`);
+        this._showIterativeOverlay(false);
+        this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+        return;
+      }
 
-    const project = this._currentProject;
-    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+      if (this._iterativeCancelled) {
+        this._showIterativeOverlay(false);
+        return;
+      }
 
-    // Rewrite the prose surgically
-    const baseContent = this._preGenerationContent || '';
-    const editorEl = this.editor.element;
-    editorEl.innerHTML = baseContent;
+      if (!fixList || !fixList.fixes || fixList.fixes.length === 0) {
+        this._updateIterativeLog(`Iteration ${iter}: No fixes identified. Presenting for review.`);
+        this._showIterativeOverlay(false);
+        this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+        return;
+      }
 
-    let rewrittenText = '';
-    try {
-      await new Promise((resolve, reject) => {
-        if (this._iterativeCancelled) { resolve(); return; }
+      // Log the reflection and fix list
+      this._updateIterativeLog(`Iteration ${iter}: Reflection — ${fixList.reflection || 'Analysis complete'}`);
+      this._updateIterativeLog(`Iteration ${iter}: Fix list (${fixList.fixes.length} fixes): ${fixList.fixes.map(f => f.description.slice(0, 60)).join('; ')}`);
+      previousFixLists.push(fixList);
 
-        this.generator.rewriteProse(
-          {
-            originalProse: currentText,
-            problems: formattedProblems,
-            userInstructions: isStagnant
-              ? `ESCALATED REWRITE (attempt ${(this._iterativeNoImprovement || 0) + 1}): Previous surgical fixes have NOT improved the score past ${bestScore}/100 (target: ${qualityThreshold}). Take a BOLDER creative approach \u2014 restructure sentences, add vivid new sensory details, vary rhythm dramatically, or rework weak passages substantially. Do NOT repeat the same tweaks that failed before. Break through the ${bestScore}-point plateau. Keep approximately the same length (~80-120 words, one paragraph only).`
-              : `CRITICAL: The rewritten paragraph must be approximately the same length as the original (~80-120 words, one paragraph only). Do NOT expand or add extra paragraphs. Target quality threshold: ${qualityThreshold}/100. Current score: ${score}/100.`,
-            chapterTitle,
-            characters,
-            notes: '',
-            chapterOutline: this._currentChapterOutline || '',
-            aiInstructions: project?.aiInstructions || '',
-            tone: this._iterativeSettings.tone || '',
-            style: this._iterativeSettings.style || '',
-            wordTarget: 100,
-            maxTokens: 250,
-            genre: genreInfo?.label || '',
-            genreRules: genreInfo?.rules || '',
-            voice: project?.voice || '',
-            previousScore: score,
-            previousSubscores: review.subscores,
-            rewriteIteration: iteration,
-            errorPatternsPrompt: this._cachedErrorPatternsPrompt || ''
-          },
-          {
-            onChunk: (text) => {
-              rewrittenText += text;
-              rewrittenText = this._stripEmDashes(rewrittenText);
-              const startingContent = baseContent.trim() ? baseContent : '';
-              const paragraphs = rewrittenText.split('\n\n');
-              const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
-              editorEl.innerHTML = startingContent + newHtml;
-              const container = editorEl.closest('.editor-area');
-              if (container) container.scrollTop = container.scrollHeight;
+      // === STEP 3: Apply the fix list ===
+      this._updateIterativePhase(`Applying ${fixList.fixes.length} fixes\u2026`);
+      this._updateIterativeLog(`Iteration ${iter}: Implementing fix list\u2026`);
+
+      let characters = [];
+      if (this._iterativeSettings.useCharacters && this.state.currentProjectId) {
+        characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
+      }
+      let chapterTitle = '';
+      if (this.state.currentChapterId) {
+        try {
+          const chapter = await this.fs.getChapter(this.state.currentChapterId);
+          if (chapter) chapterTitle = chapter.title;
+        } catch (_) {}
+      }
+
+      const project = this._currentProject;
+      const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+      const baseContent = this._preGenerationContent || '';
+      const editorEl = this.editor.element;
+      editorEl.innerHTML = baseContent;
+
+      let rewrittenText = '';
+      try {
+        await new Promise((resolve, reject) => {
+          if (this._iterativeCancelled) { resolve(); return; }
+
+          this.generator.applyFixList(
+            {
+              originalProse: workingText,
+              fixList,
+              chapterTitle,
+              characters,
+              notes: '',
+              chapterOutline: this._currentChapterOutline || '',
+              aiInstructions: project?.aiInstructions || '',
+              tone: this._iterativeSettings.tone || '',
+              style: this._iterativeSettings.style || '',
+              wordTarget: 100,
+              maxTokens: 250,
+              genre: genreInfo?.label || '',
+              genreRules: genreInfo?.rules || '',
+              voice: project?.voice || '',
+              errorPatternsPrompt: this._cachedErrorPatternsPrompt || '',
+              iterationNum: iter,
+              threshold: qualityThreshold
             },
-            onDone: () => {
-              const content = this.editor.getContent();
-              if (this.state.currentChapterId) {
-                this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
-                this._updateLocalWordCounts(content);
-              }
-              resolve();
-            },
-            onError: (err) => reject(err)
-          }
-        );
-      });
-    } catch (err) {
-      this._updateIterativeLog(`Rewrite failed: ${err.message}`);
-      this._showIterativeOverlay(false);
-      return;
+            {
+              onChunk: (text) => {
+                rewrittenText += text;
+                rewrittenText = this._stripEmDashes(rewrittenText);
+                const startingContent = baseContent.trim() ? baseContent : '';
+                const paragraphs = rewrittenText.split('\n\n');
+                const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+                editorEl.innerHTML = startingContent + newHtml;
+                const container = editorEl.closest('.editor-area');
+                if (container) container.scrollTop = container.scrollHeight;
+              },
+              onDone: () => {
+                const content = this.editor.getContent();
+                if (this.state.currentChapterId) {
+                  this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+                  this._updateLocalWordCounts(content);
+                }
+                resolve();
+              },
+              onError: (err) => reject(err)
+            }
+          );
+        });
+      } catch (err) {
+        this._updateIterativeLog(`Fix application failed: ${err.message}`);
+        this._showIterativeOverlay(false);
+        this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+        return;
+      }
+
+      if (this._iterativeCancelled) {
+        this._showIterativeOverlay(false);
+        return;
+      }
+
+      // Use rewritten text for next iteration
+      if (rewrittenText && rewrittenText.length > 20) {
+        workingText = rewrittenText;
+        this._lastGeneratedText = workingText;
+        this._updateIterativeLog(`Iteration ${iter}: Fixes applied. Proceeding to next scoring\u2026`);
+      } else {
+        this._updateIterativeLog(`Iteration ${iter}: Rewrite produced no usable text. Keeping current version.`);
+      }
     }
 
-    if (this._iterativeCancelled) {
-      this._showIterativeOverlay(false);
-      return;
-    }
-
-    // If rewrite produced text, use it; otherwise keep current
-    const nextText = rewrittenText && rewrittenText.length > 20 ? rewrittenText : currentText;
-    this._lastGeneratedText = nextText;
-
-    // Show scoring notice again for the rescore
-    this._updateIterativePhase('Rescoring\u2026');
-    this._updateIterativeLog(`Iteration ${iteration}: Rescoring after fixes\u2026`);
-
-    // Loop: score and refine again
-    await this._iterativeScoreAndRefine(nextText, iteration, bestScore);
+    // Fallback: present best version
+    this._showIterativeOverlay(false);
+    this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
   }
 
   /**
@@ -3152,15 +3054,17 @@ class App {
     if (el) el.textContent = text;
   }
 
-  _updateIterativeScore(score) {
+  _updateIterativeScore(score, isCurrent) {
     const numEl = document.getElementById('iterative-score-value');
     const pctEl = document.getElementById('iterative-score-pct');
     const fillEl = document.getElementById('iterative-progress-fill');
+    const labelEl = document.getElementById('iterative-score-label');
 
     if (score === null || score === undefined) {
       if (numEl) { numEl.textContent = '--'; numEl.className = 'iterative-score-number'; }
       if (pctEl) pctEl.textContent = '0%';
       if (fillEl) { fillEl.style.width = '0%'; fillEl.className = 'iterative-progress-fill'; }
+      if (labelEl) labelEl.textContent = 'Score / 100';
       return;
     }
 
@@ -3170,6 +3074,7 @@ class App {
     if (numEl) { numEl.textContent = score; numEl.className = 'iterative-score-number ' + scoreClass; }
     if (pctEl) pctEl.textContent = score + '%';
     if (fillEl) { fillEl.style.width = score + '%'; fillEl.className = 'iterative-progress-fill ' + scoreClass; }
+    if (labelEl) labelEl.textContent = isCurrent ? 'Current Score / 100' : 'Score / 100';
   }
 
   _updateIterativeIteration(iteration, bestScore) {
@@ -3177,6 +3082,36 @@ class App {
     const bestEl = document.getElementById('iterative-best-score');
     if (numEl) numEl.textContent = iteration;
     if (bestEl) bestEl.textContent = bestScore > 0 ? bestScore : '--';
+  }
+
+  /**
+   * Record a score for a specific iteration and display the score history.
+   */
+  _recordIterationScore(iteration, score) {
+    if (!this._iterationScoreHistory) this._iterationScoreHistory = [];
+    this._iterationScoreHistory.push({ iteration, score });
+    this._renderScoreHistory();
+  }
+
+  _resetScoreHistory() {
+    this._iterationScoreHistory = [];
+    const histEl = document.getElementById('iterative-score-history');
+    if (histEl) {
+      histEl.style.display = 'none';
+      histEl.innerHTML = '';
+    }
+  }
+
+  _renderScoreHistory() {
+    const histEl = document.getElementById('iterative-score-history');
+    if (!histEl || !this._iterationScoreHistory || this._iterationScoreHistory.length === 0) return;
+    histEl.style.display = 'block';
+    const entries = this._iterationScoreHistory.map(h => {
+      const cls = h.score >= 88 ? 'color:var(--success)' : h.score >= 78 ? 'color:var(--accent-primary)' :
+                  h.score >= 65 ? 'color:var(--warning)' : 'color:var(--danger)';
+      return `<span style="${cls};font-weight:600;">Iter ${h.iteration}: ${h.score}</span>`;
+    });
+    histEl.innerHTML = entries.join(' &bull; ');
   }
 
   _updateIterativeLog(message) {
@@ -3971,9 +3906,6 @@ class App {
       }
       if (e.target.id === 'btn-cover-edit-save') {
         await this._saveCoverEdits();
-      }
-      if (e.target.id === 'btn-import-knowledge') {
-        this._openImportKnowledgePanel();
       }
       if (e.target.id === 'btn-knowledge-paste') {
         this._showKnowledgePasteArea();
@@ -4859,7 +4791,14 @@ class App {
     await new Promise(r => setTimeout(r, 300));
 
     try {
-      const dataUrl = canvas.toDataURL('image/png');
+      // Use JPEG with progressive quality reduction to stay under Firestore's 1MB limit
+      const MAX_BYTES = 900000; // 900KB to stay safely under 1MB
+      let quality = 0.92;
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
+      while (dataUrl.length > MAX_BYTES && quality > 0.3) {
+        quality -= 0.1;
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+      }
 
       // Save cover typography settings
       const updates = {
