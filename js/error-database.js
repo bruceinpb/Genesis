@@ -238,6 +238,13 @@ class ErrorDatabase {
     }
 
     prompt += `\n=== END ERROR PATTERN DATABASE ===`;
+
+    // Add compact sentence-level checklist for quick reference during writing
+    const checklist = await this.buildSentenceChecklist({ maxItems: 15 });
+    if (checklist) {
+      prompt += checklist;
+    }
+
     return prompt;
   }
 
@@ -285,6 +292,95 @@ class ErrorDatabase {
       await this.storage.delete('errorPatterns', p.id);
     }
     this._cache = null;
+  }
+
+  /**
+   * Analyze and classify all active error patterns.
+   * Groups errors by category and severity, identifies the most impactful patterns,
+   * and returns a structured analysis useful for targeted prose improvement.
+   *
+   * @returns {object} Classified error analysis
+   */
+  async analyzeErrors() {
+    const patterns = await this.getPatterns({ minFrequency: 1, limit: 200 });
+
+    const analysis = {
+      byCategory: {},
+      bySeverity: { high: [], medium: [], low: [] },
+      topOffenders: [],
+      totalPatterns: patterns.length,
+      totalOccurrences: 0
+    };
+
+    for (const p of patterns) {
+      const cat = p.category || 'other';
+      if (!analysis.byCategory[cat]) {
+        analysis.byCategory[cat] = { patterns: [], totalFrequency: 0, avgImpact: 0 };
+      }
+      analysis.byCategory[cat].patterns.push(p);
+      analysis.byCategory[cat].totalFrequency += p.frequency;
+
+      const sev = p.severity || 'medium';
+      if (analysis.bySeverity[sev]) {
+        analysis.bySeverity[sev].push(p);
+      }
+
+      analysis.totalOccurrences += p.frequency;
+    }
+
+    // Calculate average impact per category
+    for (const cat of Object.values(analysis.byCategory)) {
+      cat.avgImpact = cat.patterns.length > 0
+        ? Math.round(cat.patterns.reduce((s, p) => s + p.estimatedImpact, 0) / cat.patterns.length * 10) / 10
+        : 0;
+    }
+
+    // Top offenders: highest frequency * impact
+    analysis.topOffenders = patterns
+      .sort((a, b) => (b.frequency * b.estimatedImpact) - (a.frequency * a.estimatedImpact))
+      .slice(0, 10);
+
+    return analysis;
+  }
+
+  /**
+   * Build a concise sentence-level checklist for real-time error checking during prose creation.
+   * Returns a compact string that can be injected into the generation prompt.
+   *
+   * @param {object} options - { maxItems: number }
+   * @returns {string} Compact checklist for sentence-level checking
+   */
+  async buildSentenceChecklist(options = {}) {
+    const { maxItems = 30 } = options;
+    const patterns = await this.getPatterns({ minFrequency: 1, limit: maxItems });
+    if (patterns.length === 0) return '';
+
+    const categoryLabels = {
+      'pet-phrase': 'PET',
+      'telling': 'TELL',
+      'cliche': 'CLICHE',
+      'weak-words': 'WEAK',
+      'passive': 'PASSIVE',
+      'structure': 'STRUCT',
+      'pacing': 'PACE',
+      'ai-pattern': 'AI',
+      'other': 'OTHER'
+    };
+
+    let checklist = '\n=== SENTENCE-LEVEL ERROR CHECKLIST (check EVERY sentence against this) ===\n';
+    checklist += 'Before writing each sentence, verify it does NOT contain:\n';
+
+    for (const p of patterns) {
+      const tag = categoryLabels[p.category] || 'OTHER';
+      if (p.text) {
+        checklist += `[${tag}] "${p.text}" (${p.problem})\n`;
+      } else {
+        checklist += `[${tag}] ${p.problem}\n`;
+      }
+    }
+
+    checklist += '=== END CHECKLIST ===\n';
+    return checklist;
   }
 
   /**
