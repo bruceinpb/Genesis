@@ -5,7 +5,7 @@
  */
 
 const DB_NAME = 'genesis2';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORES = {
   projects: 'projects',
@@ -14,7 +14,8 @@ const STORES = {
   characters: 'characters',
   notes: 'notes',
   settings: 'settings',
-  snapshots: 'snapshots'
+  snapshots: 'snapshots',
+  errorPatterns: 'errorPatterns'
 };
 
 class Storage {
@@ -72,6 +73,14 @@ class Storage {
           const snaps = db.createObjectStore(STORES.snapshots, { keyPath: 'id' });
           snaps.createIndex('sceneId', 'sceneId');
           snaps.createIndex('createdAt', 'createdAt');
+        }
+
+        // Error Patterns (cross-project error database for negative prompts)
+        if (!db.objectStoreNames.contains(STORES.errorPatterns)) {
+          const errors = db.createObjectStore(STORES.errorPatterns, { keyPath: 'id' });
+          errors.createIndex('category', 'category');
+          errors.createIndex('frequency', 'frequency');
+          errors.createIndex('lastSeen', 'lastSeen');
         }
       };
 

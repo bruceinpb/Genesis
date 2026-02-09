@@ -14,6 +14,7 @@ import { StructureManager } from './structure.js';
 import { ExportManager } from './export.js';
 import { Editor } from './editor.js';
 import { ProseGenerator } from './generate.js';
+import { ErrorDatabase } from './error-database.js';
 
 class App {
   constructor() {
@@ -25,6 +26,7 @@ class App {
     this.exporter = null;
     this.editor = null;
     this.generator = null;
+    this.errorDb = null;
 
     this.state = {
       currentUser: null,
@@ -46,6 +48,7 @@ class App {
     this._currentChapterOutline = '';
     this._lastProseReview = null;
     this._lastGeneratedText = '';
+    this._cachedErrorPatternsPrompt = '';
   }
 
   async init() {
@@ -57,6 +60,12 @@ class App {
     this.exporter = new ExportManager(this.fs);
     this.generator = new ProseGenerator(this.localStorage);
     await this.generator.init();
+    this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
+
+    // Pre-load error patterns prompt for immediate availability
+    this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 })
+      .then(prompt => { this._cachedErrorPatternsPrompt = prompt; })
+      .catch(() => {});
 
     // Load settings
     this.state.theme = await this.localStorage.getSetting('theme', 'dark');
@@ -766,6 +775,15 @@ class App {
     // Load chapter outline if available
     const chapterOutline = this._currentChapterOutline || '';
 
+    // Load error patterns from the cross-project database as negative prompts
+    let errorPatternsPrompt = '';
+    if (this.errorDb) {
+      try {
+        errorPatternsPrompt = await this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 });
+        this._cachedErrorPatternsPrompt = errorPatternsPrompt;
+      } catch (_) {}
+    }
+
     // --- Chunked generation with scoring between chunks ---
     // Break the total word target into scored chunks.
     // After each chunk, halt and score the prose, then continue.
@@ -824,7 +842,8 @@ class App {
               genre,
               genreRules,
               projectGoal,
-              voice: project?.voice || ''
+              voice: project?.voice || '',
+              errorPatternsPrompt
             },
             {
               onChunk: (text) => {
@@ -950,6 +969,16 @@ class App {
           const score = review.score;
           prevIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
           prevSubscores = review.subscores || {};
+
+          // Record errors to the cross-project error pattern database
+          if (this.errorDb && prevIssueCount > 0) {
+            this.errorDb.recordFromReview(review, {
+              projectId: this.state.currentProjectId,
+              chapterId: this.state.currentChapterId,
+              chapterTitle,
+              genre
+            }).catch(() => {}); // Non-blocking
+          }
 
           if (score > chunkBestScore) {
             chunkBestScore = score;
@@ -1117,7 +1146,8 @@ class App {
                   voice: project?.voice || '',
                   previousScore: score,
                   previousSubscores: review.subscores,
-                  rewriteIteration: chunkIteration
+                  rewriteIteration: chunkIteration,
+                  errorPatternsPrompt
                 },
                 {
                   onChunk: (text) => {
@@ -1256,6 +1286,16 @@ class App {
           // Brief pause for user to see the final score
           await new Promise(r => setTimeout(r, 1500));
           this._showIterativeOverlay(false);
+
+          // Record final review errors into the cross-project error database
+          if (this.errorDb && ((finalReview.issues?.length || 0) + (finalReview.aiPatterns?.length || 0)) > 0) {
+            this.errorDb.recordFromReview(finalReview, {
+              projectId: this.state.currentProjectId,
+              chapterId: this.state.currentChapterId,
+              chapterTitle,
+              genre
+            }).catch(() => {});
+          }
 
           // Show the full prose review with threshold context
           finalReview._qualityThreshold = finalThreshold;
@@ -1404,6 +1444,159 @@ class App {
     }
 
     this._showPanel('settings');
+  }
+
+  async openErrorDatabasePanel() {
+    const body = document.getElementById('panel-error-database-body');
+    if (!body) return;
+
+    body.innerHTML = '<div class="analysis-section"><p>Loading error patterns...</p></div>';
+    this._showPanel('error-database');
+
+    await this._renderErrorDatabasePanel();
+  }
+
+  async _renderErrorDatabasePanel() {
+    const body = document.getElementById('panel-error-database-body');
+    if (!body || !this.errorDb) return;
+
+    const stats = await this.errorDb.getStats();
+    const allPatterns = await this.errorDb.getPatterns({ minFrequency: 1, limit: 200 });
+
+    const categoryLabels = {
+      'pet-phrase': 'PET Phrases',
+      'telling': 'Telling vs Showing',
+      'cliche': 'Cliches',
+      'weak-words': 'Weak/Filler Words',
+      'passive': 'Passive Voice',
+      'structure': 'Structural Issues',
+      'pacing': 'Pacing Problems',
+      'ai-pattern': 'AI Writing Patterns',
+      'other': 'Other Issues'
+    };
+
+    const severityColors = {
+      'high': 'var(--danger, #e94560)',
+      'medium': 'var(--warning, #f0a500)',
+      'low': 'var(--text-secondary, #999)'
+    };
+
+    let html = '';
+
+    // Stats summary
+    html += `<div class="analysis-section">`;
+    html += `<h3>Database Overview</h3>`;
+    html += `<p>The error pattern database tracks common prose problems found during AI scoring. These patterns are automatically used as "negative prompts" during prose generation to prevent repeating the same mistakes.</p>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:12px 0;">`;
+    html += `<div style="text-align:center;padding:12px;background:var(--bg-secondary,#1a1a2e);border-radius:8px;"><div style="font-size:24px;font-weight:700;color:var(--accent-primary,#4fc3f7);">${stats.totalPatterns}</div><div style="font-size:11px;color:var(--text-secondary,#999);">Unique Patterns</div></div>`;
+    html += `<div style="text-align:center;padding:12px;background:var(--bg-secondary,#1a1a2e);border-radius:8px;"><div style="font-size:24px;font-weight:700;color:var(--accent-primary,#4fc3f7);">${stats.totalOccurrences}</div><div style="font-size:11px;color:var(--text-secondary,#999);">Total Occurrences</div></div>`;
+    html += `<div style="text-align:center;padding:12px;background:var(--bg-secondary,#1a1a2e);border-radius:8px;"><div style="font-size:24px;font-weight:700;color:var(--accent-primary,#4fc3f7);">${stats.projectCount}</div><div style="font-size:11px;color:var(--text-secondary,#999);">Projects</div></div>`;
+    html += `<div style="text-align:center;padding:12px;background:var(--bg-secondary,#1a1a2e);border-radius:8px;"><div style="font-size:24px;font-weight:700;color:var(--accent-primary,#4fc3f7);">${Object.keys(stats.categories).length}</div><div style="font-size:11px;color:var(--text-secondary,#999);">Categories</div></div>`;
+    html += `</div>`;
+
+    if (stats.totalPatterns === 0) {
+      html += `<p style="color:var(--text-secondary,#999);margin-top:12px;">No error patterns recorded yet. Patterns are automatically captured during prose scoring. Generate and score some prose to start building your error database.</p>`;
+    }
+    html += `</div>`;
+
+    // Category breakdown
+    if (stats.totalPatterns > 0 && Object.keys(stats.categories).length > 0) {
+      html += `<div class="analysis-section">`;
+      html += `<h3>Categories</h3>`;
+      for (const [cat, count] of Object.entries(stats.categories).sort((a, b) => b[1] - a[1])) {
+        const label = categoryLabels[cat] || cat;
+        const pct = Math.round((count / stats.totalPatterns) * 100);
+        html += `<div style="display:flex;align-items:center;gap:8px;margin:6px 0;">`;
+        html += `<span style="flex:1;font-size:13px;">${label}</span>`;
+        html += `<span style="font-size:12px;color:var(--text-secondary,#999);">${count} patterns (${pct}%)</span>`;
+        html += `<div style="width:100px;height:6px;background:var(--bg-secondary,#1a1a2e);border-radius:3px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:var(--accent-primary,#4fc3f7);border-radius:3px;"></div></div>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Pattern list grouped by category
+    if (allPatterns.length > 0) {
+      const grouped = {};
+      for (const p of allPatterns) {
+        const cat = p.category || 'other';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(p);
+      }
+
+      html += `<div class="analysis-section">`;
+      html += `<h3>All Patterns</h3>`;
+      html += `<p style="font-size:12px;color:var(--text-secondary,#999);margin-bottom:8px;">Patterns seen 2+ times are included in negative prompts during generation. Click the dismiss button to exclude a pattern.</p>`;
+
+      for (const [cat, items] of Object.entries(grouped).sort((a, b) => b[1].length - a[1].length)) {
+        const label = categoryLabels[cat] || cat;
+        html += `<div style="margin:16px 0 8px 0;font-weight:600;font-size:14px;color:var(--text-primary,#eee);">${label} (${items.length})</div>`;
+
+        for (const item of items) {
+          const sevColor = severityColors[item.severity] || severityColors.low;
+          const freqBadge = item.frequency >= 2
+            ? `<span style="background:var(--accent-primary,#4fc3f7);color:#000;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;">${item.frequency}x</span>`
+            : `<span style="color:var(--text-secondary,#999);font-size:10px;">${item.frequency}x</span>`;
+          const activeLabel = item.frequency >= 2
+            ? `<span style="color:var(--accent-primary,#4fc3f7);font-size:10px;margin-left:4px;">ACTIVE</span>`
+            : '';
+
+          html += `<div style="display:flex;align-items:flex-start;gap:8px;padding:8px;margin:4px 0;background:var(--bg-secondary,#1a1a2e);border-radius:6px;border-left:3px solid ${sevColor};" data-pattern-id="${item.id}">`;
+          html += `<div style="flex:1;min-width:0;">`;
+          if (item.text) {
+            html += `<div style="font-size:12px;color:var(--text-secondary,#999);font-style:italic;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">"${item.text}"</div>`;
+          }
+          html += `<div style="font-size:13px;color:var(--text-primary,#eee);">${item.problem}</div>`;
+          html += `<div style="font-size:11px;color:var(--text-secondary,#999);margin-top:2px;">${freqBadge}${activeLabel} &middot; Impact: ~${item.estimatedImpact} pts &middot; ${item.severity}</div>`;
+          html += `</div>`;
+          html += `<button class="btn btn-sm error-db-dismiss-btn" data-pattern-id="${item.id}" style="flex-shrink:0;font-size:11px;padding:4px 8px;" title="Dismiss this pattern">&times;</button>`;
+          html += `</div>`;
+        }
+      }
+      html += `</div>`;
+    }
+
+    // Actions
+    html += `<div class="analysis-section" style="display:flex;gap:8px;flex-wrap:wrap;">`;
+    if (stats.totalPatterns > 0) {
+      html += `<button class="btn btn-sm" id="btn-clear-error-db" style="border-color:var(--danger,#e94560);color:var(--danger,#e94560);">Clear All Patterns</button>`;
+    }
+    if (stats.dismissedPatterns > 0) {
+      html += `<button class="btn btn-sm" id="btn-restore-dismissed">Restore ${stats.dismissedPatterns} Dismissed</button>`;
+    }
+    html += `</div>`;
+
+    body.innerHTML = html;
+
+    // Bind dismiss buttons
+    body.querySelectorAll('.error-db-dismiss-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.target.dataset.patternId;
+        if (id && this.errorDb) {
+          await this.errorDb.dismissPattern(id);
+          await this._renderErrorDatabasePanel();
+        }
+      });
+    });
+
+    // Bind clear all button
+    document.getElementById('btn-clear-error-db')?.addEventListener('click', async () => {
+      if (confirm('Clear all error patterns? This cannot be undone.')) {
+        await this.errorDb.clearAll();
+        await this._renderErrorDatabasePanel();
+      }
+    });
+
+    // Bind restore dismissed button
+    document.getElementById('btn-restore-dismissed')?.addEventListener('click', async () => {
+      const allWithDismissed = await this.errorDb.storage.getAll('errorPatterns');
+      for (const p of allWithDismissed) {
+        if (p.dismissed) {
+          await this.errorDb.restorePattern(p.id);
+        }
+      }
+      await this._renderErrorDatabasePanel();
+    });
   }
 
   _initApiKeyPinLock() {
@@ -2277,6 +2470,16 @@ class App {
     try {
       const review = await this.generator.scoreProse(generatedText);
       this._showScoringProgress(false);
+
+      // Record errors to the cross-project error pattern database
+      if (this.errorDb && review && ((review.issues?.length || 0) + (review.aiPatterns?.length || 0)) > 0) {
+        this.errorDb.recordFromReview(review, {
+          projectId: this.state.currentProjectId,
+          chapterId: this.state.currentChapterId,
+          genre: this._currentProject?.genre || ''
+        }).catch(() => {});
+      }
+
       this._showProseReview(review, generatedText);
     } catch (err) {
       this._showScoringProgress(false);
@@ -2343,6 +2546,16 @@ class App {
       }
 
       this._showScoringProgress(false);
+
+      // Record errors to the cross-project error pattern database
+      if (this.errorDb && review && ((review.issues?.length || 0) + (review.aiPatterns?.length || 0)) > 0) {
+        this.errorDb.recordFromReview(review, {
+          projectId: this.state.currentProjectId,
+          chapterId: this.state.currentChapterId,
+          genre: this._currentProject?.genre || ''
+        }).catch(() => {});
+      }
+
       this._showProseReview(review, generatedText);
     } catch (err) {
       this._showScoringProgress(false);
@@ -2819,7 +3032,8 @@ class App {
             voice: project?.voice || '',
             previousScore: score,
             previousSubscores: review.subscores,
-            rewriteIteration: iteration
+            rewriteIteration: iteration,
+            errorPatternsPrompt: this._cachedErrorPatternsPrompt || ''
           },
           {
             onChunk: (text) => {
@@ -3260,7 +3474,8 @@ class App {
         voice: project?.voice || '',
         previousScore,
         previousSubscores,
-        rewriteIteration: this._rewriteIteration
+        rewriteIteration: this._rewriteIteration,
+        errorPatternsPrompt: this._cachedErrorPatternsPrompt || ''
       },
       {
         onChunk: (text) => {
@@ -3595,6 +3810,7 @@ class App {
     document.getElementById('btn-analysis')?.addEventListener('click', () => this.openAnalysisPanel());
     document.getElementById('btn-export')?.addEventListener('click', () => this.openExportPanel());
     document.getElementById('btn-settings')?.addEventListener('click', () => this.openSettingsPanel());
+    document.getElementById('btn-error-database')?.addEventListener('click', () => this.openErrorDatabasePanel());
     document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openBookStructurePanel());
 
     // --- Panel overlay close ---

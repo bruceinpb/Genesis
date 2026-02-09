@@ -139,6 +139,33 @@ class FirestoreStorage {
     await batch.commit();
   }
 
+  // --- Error Patterns (cross-project error database) ---
+
+  async saveErrorPattern(userName, pattern) {
+    const id = pattern.id || ('ep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+    const ref = doc(db, 'users', userName, 'errorPatterns', id);
+    await setDoc(ref, { ...pattern, id, updatedAt: new Date() }, { merge: true });
+    return { ...pattern, id };
+  }
+
+  async getErrorPatterns(userName) {
+    const snap = await getDocs(collection(db, 'users', userName, 'errorPatterns'));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  async deleteErrorPattern(userName, patternId) {
+    await deleteDoc(doc(db, 'users', userName, 'errorPatterns', patternId));
+  }
+
+  async clearErrorPatterns(userName) {
+    const patterns = await this.getErrorPatterns(userName);
+    const batch = writeBatch(db);
+    for (const p of patterns) {
+      batch.delete(doc(db, 'users', userName, 'errorPatterns', p.id));
+    }
+    await batch.commit();
+  }
+
   // --- Helpers ---
 
   async getProjectWordCount(projectId) {

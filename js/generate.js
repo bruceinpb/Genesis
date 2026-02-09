@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, concludeStory, genre, genreRules, projectGoal, voice }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, concludeStory, genre, genreRules, projectGoal, voice, errorPatternsPrompt }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -53,7 +53,7 @@ class ProseGenerator {
 
     this.abortController = new AbortController();
 
-    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice });
+    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt });
     const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal });
 
     try {
@@ -424,7 +424,7 @@ For "estimatedImpact": estimate how many points the score would improve if this 
     }
   }
 
-  _buildSystemPrompt({ tone, style, genre, genreRules, voice }) {
+  _buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt }) {
     let prompt = `You are a world-class fiction author whose prose has been compared to Cormac McCarthy, Toni Morrison, and Denis Johnson. You write with precision, authority, and an unmistakable human voice. Every sentence earns its place.
 
 === YOUR CRAFT PRINCIPLES ===
@@ -493,6 +493,11 @@ PROSE EXCELLENCE — what makes your writing score 90+:
       prompt += `\n- Do NOT adopt a different genre's conventions partway through`;
       prompt += `\n- If continuing existing text, match the established voice and style exactly`;
       prompt += `\n- Consistency is more important than creativity — never drift from the selected genre style`;
+    }
+
+    // Inject error pattern database as negative prompts (learned from previous scoring)
+    if (errorPatternsPrompt) {
+      prompt += errorPatternsPrompt;
     }
 
     if (tone) {
@@ -603,7 +608,7 @@ PROSE EXCELLENCE — what makes your writing score 90+:
    * Rewrite prose to fix identified problems and/or apply user instructions.
    * Streams the response, replacing (not appending to) the original prose.
    */
-  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, genre, genreRules, voice, previousScore, previousSubscores, rewriteIteration }, { onChunk, onDone, onError }) {
+  async rewriteProse({ originalProse, problems, userInstructions, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, genre, genreRules, voice, previousScore, previousSubscores, rewriteIteration, errorPatternsPrompt }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -699,6 +704,11 @@ This prose has been rewritten ${rewriteIteration - 1} time(s). Focus on quality 
         'multiple-pov': 'multiple POV'
       };
       systemPrompt += `\nNarrative voice: ${voiceNames[voice] || voice} (preserve this exactly)`;
+    }
+
+    // Inject error pattern database as negative prompts (learned from previous scoring)
+    if (errorPatternsPrompt) {
+      systemPrompt += errorPatternsPrompt;
     }
 
     let userPrompt = '';
