@@ -898,6 +898,8 @@ class App {
         let prevIssueCount = 0;
         let prevSubscores = {};
         let consecutiveNoIssues = 0;
+        let chunkBestReview = null;
+        let consecutiveNoImprovement = 0;
 
         // Reset iteration display for this chunk
         this._updateIterativeScore(null);
@@ -952,6 +954,17 @@ class App {
           if (score > chunkBestScore) {
             chunkBestScore = score;
             chunkBestText = currentChunkText;
+            chunkBestReview = review;
+            consecutiveNoImprovement = 0;
+          } else {
+            consecutiveNoImprovement++;
+            // Score didn't improve — revert to best text for next rewrite attempt
+            if (score < chunkBestScore && chunkIteration > 1) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Score dropped (${score} < best ${chunkBestScore}). Reverting to best version.`);
+              currentChunkText = chunkBestText;
+              // Use the best review's issues since we're now working with that text
+              if (chunkBestReview) review = chunkBestReview;
+            }
           }
 
           this._updateIterativeScore(chunkBestScore);
@@ -971,8 +984,11 @@ class App {
             break;
           }
 
+          // If score hasn't improved for 2+ iterations, escalate approach
+          const isStagnant = consecutiveNoImprovement >= 2;
+
           // Score below threshold -- deeply analyze errors and collect problems
-          this._updateIterativePhase('Analyzing errors\u2026');
+          this._updateIterativePhase(isStagnant ? 'Escalating approach\u2026' : 'Analyzing errors\u2026');
           const problems = [];
           if (review.aiPatterns) {
             for (const p of review.aiPatterns) {
@@ -1015,17 +1031,28 @@ class App {
               technicalExecution: 'Technical Execution'
             };
 
-            // Actionable fix instructions for each dimension
-            const dimFixes = {
+            // Actionable fix instructions for each dimension — escalated versions used after stagnation
+            const dimFixesNormal = {
               sentenceVariety: 'Find 3+ consecutive sentences with similar word counts. Break long ones into short punchy fragments. Combine short ones into flowing compound sentences. Aim for a mix of 3-8 word sentences and 15-30 word sentences.',
               dialogueAuthenticity: 'Make each character sound different. Give one character clipped speech, another hedging words. Vary dialogue tags: use "said" 60%, action beats 30%, no tag 10%. Add an interruption or trailing thought.',
               sensoryDetail: 'Replace 3 abstract descriptions with concrete sensory details. Name specific colors, textures, smells, sounds. Change "the room was cold" to "frost crept along the window frame".',
               emotionalResonance: 'Replace any stated emotions with character actions that IMPLY the emotion. "She was sad" becomes "She rearranged the silverware three times." Find the unexpected gesture.',
-              vocabularyPrecision: 'Replace 5 generic verbs with specific ones (walked→shuffled, looked→squinted, said→muttered). Delete every instance of: very, really, quite, just, rather, somewhat.',
+              vocabularyPrecision: 'Replace 5 generic verbs with specific ones (walked\u2192shuffled, looked\u2192squinted, said\u2192muttered). Delete every instance of: very, really, quite, just, rather, somewhat.',
               narrativeFlow: 'Vary paragraph lengths. Add one single-sentence paragraph for emphasis. Cut any transition words (Meanwhile, After a moment, In that instant). Just jump between beats.',
-              originalityVoice: 'Find any phrase that sounds templated or familiar and replace it with something unexpected. If a metaphor is cliché, delete it. Find one place to add a genuinely novel observation.',
+              originalityVoice: 'Find any phrase that sounds templated or familiar and replace it with something unexpected. If a metaphor is clich\u00e9, delete it. Find one place to add a genuinely novel observation.',
               technicalExecution: 'Fix any grammatical issues. Ensure paragraph breaks are purposeful. Check tense consistency throughout.'
             };
+            const dimFixesEscalated = {
+              sentenceVariety: 'REWRITE at least 4 sentences with radically different lengths. Create dramatic contrast: follow a 4-word sentence with a 30-word one. Use a one-word fragment. Make the rhythm unmistakable and bold.',
+              dialogueAuthenticity: 'Add or substantially rework dialogue so characters have DISTINCTLY different speech patterns. One speaks in fragments, another in winding sentences. Include an interruption or trailing thought.',
+              sensoryDetail: 'Add 3 NEW hyper-specific sensory details: a particular sound, a texture, a smell. Name exact brands, colors, materials. Replace every remaining abstraction with something a camera could capture.',
+              emotionalResonance: 'Replace ALL remaining stated emotions with unexpected character-specific actions. Find 2 places to add behavioral details that reveal inner state without naming it. Be bold and surprising.',
+              vocabularyPrecision: 'Replace EVERY remaining generic verb and adjective with the most precise word possible. Every verb should paint a picture on its own. Cut all remaining filler words ruthlessly.',
+              narrativeFlow: 'Restructure paragraph lengths dramatically. Add a one-sentence paragraph for emphasis. Follow a dense paragraph with a punchy short one. Cut ALL remaining transition words.',
+              originalityVoice: 'Find the 3 most template-sounding phrases and replace each with something a reader has never seen. The voice must be so distinctive it could only be this author. Be genuinely creative.',
+              technicalExecution: 'Cut any sentence that doesn\'t advance character, mood, or plot. Verify tense and POV are flawless. Every paragraph break should be purposeful.'
+            };
+            const dimFixes = isStagnant ? dimFixesEscalated : dimFixesNormal;
 
             for (const [dim, val] of weakest) {
               const maxForDim = ['sentenceVariety', 'dialogueAuthenticity', 'sensoryDetail', 'emotionalResonance'].includes(dim) ? 15 : 10;
@@ -1073,7 +1100,9 @@ class App {
                 {
                   originalProse: currentChunkText,
                   problems: formattedProblems,
-                  userInstructions: `Fix the listed issues to improve the score from ${score} toward ${qualityThreshold}/100. For each fix, the replacement must be genuinely better prose — more vivid, more specific, more human. Keep approximately the same length (~${thisChunkTarget} words). Do NOT expand or add extra content.`,
+                  userInstructions: isStagnant
+                    ? `ESCALATED REWRITE (attempt ${consecutiveNoImprovement + 1}): Previous surgical fixes have NOT improved the score past ${chunkBestScore}/100 (target: ${qualityThreshold}). Take a BOLDER creative approach this time \u2014 you may restructure sentences, add vivid new sensory details, vary rhythm dramatically, or rework weak passages more substantially. Do NOT repeat the same minor tweaks that failed before. The priority is breaking through the ${chunkBestScore}-point plateau. Keep approximately the same length (~${thisChunkTarget} words).`
+                    : `Fix the listed issues to improve the score from ${score} toward ${qualityThreshold}/100. For each fix, the replacement must be genuinely better prose \u2014 more vivid, more specific, more human. Keep approximately the same length (~${thisChunkTarget} words). Do NOT expand or add extra content.`,
                   chapterTitle,
                   characters,
                   notes,
@@ -2368,6 +2397,12 @@ class App {
     // Advance chunk counter
     this._iterativeChunkNum = (this._iterativeChunkNum || 0) + 1;
 
+    // Reset stagnation tracking for new chunk
+    this._iterativeNoImprovement = 0;
+    this._iterativeBestReview = null;
+    this._iterativeBestText = null;
+    this._iterativeConsecutiveNoIssues = 0;
+
     // Show iterative writing overlay with fresh state for new chunk
     this._showIterativeOverlay(true);
     this._showIterativeScoringNotice(false);
@@ -2574,21 +2609,29 @@ class App {
     if (score > bestScore) {
       bestScore = score;
       this._iterativeBestText = currentText;
-    } else if (score < bestScore && this._iterativeBestText && iteration > 1) {
-      // Score dropped — revert to best version
-      this._updateIterativeLog(`Iteration ${iteration}: Score dropped (${score} < best ${bestScore}). Reverting to best version.`);
-      currentText = this._iterativeBestText;
+      this._iterativeBestReview = review;
+      this._iterativeNoImprovement = 0;
+    } else {
+      this._iterativeNoImprovement = (this._iterativeNoImprovement || 0) + 1;
 
-      // Restore best text in editor
-      const baseContent = this._preGenerationContent || '';
-      const editorEl = this.editor.element;
-      const paragraphs = currentText.split('\n\n');
-      const restoredHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
-      editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + restoredHtml;
-      if (this.state.currentChapterId) {
-        this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+      if (score < bestScore && this._iterativeBestText && iteration > 1) {
+        // Score dropped — revert to best version
+        this._updateIterativeLog(`Iteration ${iteration}: Score dropped (${score} < best ${bestScore}). Reverting to best version.`);
+        currentText = this._iterativeBestText;
+        // Use best review's issues since we're now working with the best text
+        if (this._iterativeBestReview) review = this._iterativeBestReview;
+
+        // Restore best text in editor
+        const baseContent = this._preGenerationContent || '';
+        const editorEl = this.editor.element;
+        const paragraphs = currentText.split('\n\n');
+        const restoredHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+        editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + restoredHtml;
+        if (this.state.currentChapterId) {
+          this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+        }
+        this._lastGeneratedText = currentText;
       }
-      this._lastGeneratedText = currentText;
     }
 
     this._updateIterativeScore(bestScore);
@@ -2619,9 +2662,12 @@ class App {
       return;
     }
 
+    // If score hasn't improved for 2+ iterations, escalate approach
+    const isStagnant = (this._iterativeNoImprovement || 0) >= 2;
+
     // Score is below threshold — deeply analyze errors
-    this._updateIterativePhase('Analyzing errors\u2026');
-    this._updateIterativeLog(`Iteration ${iteration}: Analyzing ${this._iterPrevIssueCount} issues\u2026`);
+    this._updateIterativePhase(isStagnant ? 'Escalating approach\u2026' : 'Analyzing errors\u2026');
+    this._updateIterativeLog(`Iteration ${iteration}: ${isStagnant ? 'Escalating \u2014 previous fixes ineffective. ' : ''}Analyzing ${this._iterPrevIssueCount} issues\u2026`);
 
     // Collect problems to fix
     const problems = [];
@@ -2665,16 +2711,27 @@ class App {
         technicalExecution: 'Technical Execution'
       };
 
-      const dimFixes = {
+      const dimFixesNormal = {
         sentenceVariety: 'Find 3+ consecutive sentences with similar word counts. Break long ones into short punchy fragments. Combine short ones into flowing compound sentences.',
         dialogueAuthenticity: 'Make each character sound different. Vary dialogue tags: use "said" 60%, action beats 30%, no tag 10%.',
         sensoryDetail: 'Replace abstract descriptions with concrete sensory details. Name specific colors, textures, smells, sounds.',
         emotionalResonance: 'Replace any stated emotions with character actions that IMPLY the emotion. Find the unexpected gesture.',
-        vocabularyPrecision: 'Replace generic verbs with specific ones (walked→shuffled). Delete: very, really, quite, just, rather.',
+        vocabularyPrecision: 'Replace generic verbs with specific ones (walked\u2192shuffled). Delete: very, really, quite, just, rather.',
         narrativeFlow: 'Vary paragraph lengths. Cut transition words (Meanwhile, After a moment). Just jump between beats.',
-        originalityVoice: 'Replace any templated-sounding phrase with something unexpected. If a metaphor is cliché, delete it.',
+        originalityVoice: 'Replace any templated-sounding phrase with something unexpected. If a metaphor is clich\u00e9, delete it.',
         technicalExecution: 'Fix grammatical issues. Ensure paragraph breaks are purposeful. Check tense consistency.'
       };
+      const dimFixesEscalated = {
+        sentenceVariety: 'REWRITE at least 3 sentences with radically different lengths. Follow a 4-word sentence with a 25-word one. Use a fragment. Make rhythm unmistakable.',
+        dialogueAuthenticity: 'Add or rework dialogue with DISTINCTLY different speech patterns per character. Include an interruption or trailing thought.',
+        sensoryDetail: 'Add 2 NEW hyper-specific sensory details: exact sounds, textures, smells. Replace every remaining abstraction with something concrete.',
+        emotionalResonance: 'Replace ALL remaining stated emotions with unexpected character-specific actions. Be bold and surprising.',
+        vocabularyPrecision: 'Replace EVERY remaining generic verb with the most precise word possible. Cut all filler words ruthlessly.',
+        narrativeFlow: 'Restructure paragraph lengths dramatically. Add a one-sentence paragraph. Cut ALL remaining transition words.',
+        originalityVoice: 'Replace the most template-sounding phrases with something a reader has never seen. The voice must be distinctive.',
+        technicalExecution: 'Cut any sentence that doesn\'t advance character, mood, or plot. Verify tense and POV are flawless.'
+      };
+      const dimFixes = isStagnant ? dimFixesEscalated : dimFixesNormal;
 
       for (const [dim, val] of weakest) {
         const maxForDim = ['sentenceVariety', 'dialogueAuthenticity', 'sensoryDetail', 'emotionalResonance'].includes(dim) ? 15 : 10;
@@ -2745,7 +2802,9 @@ class App {
           {
             originalProse: currentText,
             problems: formattedProblems,
-            userInstructions: `CRITICAL: The rewritten paragraph must be approximately the same length as the original (~80-120 words, one paragraph only). Do NOT expand or add extra paragraphs. Target quality threshold: ${qualityThreshold}/100. Current score: ${score}/100.`,
+            userInstructions: isStagnant
+              ? `ESCALATED REWRITE (attempt ${(this._iterativeNoImprovement || 0) + 1}): Previous surgical fixes have NOT improved the score past ${bestScore}/100 (target: ${qualityThreshold}). Take a BOLDER creative approach \u2014 restructure sentences, add vivid new sensory details, vary rhythm dramatically, or rework weak passages substantially. Do NOT repeat the same tweaks that failed before. Break through the ${bestScore}-point plateau. Keep approximately the same length (~80-120 words, one paragraph only).`
+              : `CRITICAL: The rewritten paragraph must be approximately the same length as the original (~80-120 words, one paragraph only). Do NOT expand or add extra paragraphs. Target quality threshold: ${qualityThreshold}/100. Current score: ${score}/100.`,
             chapterTitle,
             characters,
             notes: '',

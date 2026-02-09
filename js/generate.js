@@ -284,19 +284,19 @@ ${userInstructions}`;
     const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
 
 ${isRewrite ? `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues.
-SCORING CONSISTENCY RULES FOR REWRITES:
-- Score based ONLY on what is genuinely present in THIS text
+SCORING RULES FOR REWRITES:
+- Score based ONLY on what is genuinely present in THIS text — evaluate it fresh on its own merits
 - Do NOT artificially inflate or deflate the score
 - Do NOT flag borderline cases or nitpick — only flag clear, unambiguous problems that a professional editor would actually flag
 - Do NOT penalize the same dimension twice for the same type of issue
 - If a passage is competent but not exceptional, that is NOT an issue — only flag things that are clearly wrong
-- Be CONSISTENT: if the original text scored X on a dimension and the rewritten text is similar or better on that dimension, the sub-score should be >= X
-${previousSubscores ? `- Previous sub-scores for reference (scores should only change for dimensions where text actually changed):
+- IMPORTANT: If the prose has genuinely improved in any dimension, the sub-score for that dimension MUST increase to reflect the improvement. Do not anchor to previous scores — judge the text on its current quality
+${previousSubscores ? `- Previous sub-scores for context (these may increase OR stay the same — judge each dimension honestly based on what you see):
   ${Object.entries(previousSubscores).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}` : ''}
 
 SCORING INSTRUCTIONS — Score each sub-category independently, then sum them:
 1. Sentence variety and rhythm (0-15): Count sentence length variation. If most sentences are similar length, score 4-6. If there's genuine variety between short punchy and long flowing, score 10+.
-2. Dialogue authenticity (0-15): Does each character sound distinct? Are dialogue tags varied and natural? No dialogue = score 0 for this category.
+2. Dialogue authenticity (0-15): Does each character sound distinct? Are dialogue tags varied and natural? If dialogue is present, judge its quality. If NO dialogue is present in the passage, score this based on the distinctiveness and authenticity of the narrative voice instead (a strong narrative voice with distinct character perspectives can score 8-12 even without direct dialogue).
 3. Sensory detail / showing vs telling (0-15): Count instances of SHOWING (concrete action, sensory detail) vs TELLING (stating emotions directly). Heavy telling = 3-5. Mostly showing = 10+.
 4. Emotional resonance and character depth (0-15): Are emotions conveyed through behavior, not named? Is there interiority beyond surface reactions?
 5. Vocabulary precision (0-10): Are words specific and earned? Or generic and interchangeable?
@@ -666,7 +666,20 @@ PET PHRASES: NEVER replace with another PET phrase. Replace with character-speci
 - GOOD: "His throat tightened" → "He grabbed the doorframe, knuckles white."
 - If no good replacement exists, DELETE the phrase entirely`;
 
-    if (rewriteIteration && rewriteIteration > 2) {
+    if (rewriteIteration && rewriteIteration > 4) {
+      // After 4+ iterations, the surgical approach has plateaued — allow bolder changes
+      systemPrompt += `
+
+=== ITERATION ${rewriteIteration} — ESCALATED MODE ===
+This prose has been rewritten ${rewriteIteration - 1} time(s) without reaching the quality threshold. Previous surgical fixes were insufficient.
+SWITCH TO BOLD MODE:
+- You may now rewrite MORE than just the flagged sentences if it serves the overall quality
+- Restructure sentences for dramatic rhythm variation (mix 3-word punches with 25-word flowing sentences)
+- Replace bland or safe word choices with vivid, precise, unexpected ones
+- If a passage needs more sensory detail or emotional depth, ADD it (while keeping overall length similar)
+- If a previous rewrite introduced new issues, fix those too
+- The goal is prose that scores 90+. Be creative and bold, not cautious`;
+    } else if (rewriteIteration && rewriteIteration > 2) {
       systemPrompt += `
 
 === ITERATION ${rewriteIteration} NOTE ===
