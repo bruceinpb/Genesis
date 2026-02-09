@@ -5,7 +5,7 @@
  */
 
 const DB_NAME = 'genesis2';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const STORES = {
   projects: 'projects',
@@ -15,7 +15,8 @@ const STORES = {
   notes: 'notes',
   settings: 'settings',
   snapshots: 'snapshots',
-  errorPatterns: 'errorPatterns'
+  errorPatterns: 'errorPatterns',
+  knowledgeBase: 'knowledgeBase'
 };
 
 class Storage {
@@ -81,6 +82,13 @@ class Storage {
           errors.createIndex('category', 'category');
           errors.createIndex('frequency', 'frequency');
           errors.createIndex('lastSeen', 'lastSeen');
+        }
+
+        // Knowledge Base (per-project imported reference materials)
+        if (!db.objectStoreNames.contains(STORES.knowledgeBase)) {
+          const kb = db.createObjectStore(STORES.knowledgeBase, { keyPath: 'id' });
+          kb.createIndex('projectId', 'projectId');
+          kb.createIndex('type', 'type');
         }
       };
 

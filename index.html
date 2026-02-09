@@ -97,6 +97,7 @@
         <div id="cover-loading" class="cover-loading" style="display:none;">Generating...</div>
       </div>
       <button class="btn btn-sm" id="btn-regenerate-cover" data-tooltip="Generate a new AI cover image, replacing the current one. Each regeneration creates a unique image based on your story's content and genre." style="display:none; width:100%; margin-top:6px;">Regenerate Cover</button>
+      <button class="btn btn-sm" id="btn-edit-cover" data-tooltip="Edit the cover image: change title text, subtitle, font style, text placement, and typography settings. Customize your cover to match your vision." style="display:none; width:100%; margin-top:6px;">Edit Cover</button>
     </div>
 
     <div class="sidebar-content">
@@ -176,6 +177,9 @@
         <button class="btn btn-primary" id="btn-new-project">Create New Project</button>
         <div style="margin-top:16px;">
           <button class="btn btn-sm" id="btn-import-project">Import Existing Project</button>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn btn-sm" id="btn-import-knowledge" data-tooltip="Import external knowledge and research materials into the current project. Import AI-generated research reports, Wikipedia articles, or other reference documents that will be consulted during prose creation.">Import Knowledge</button>
         </div>
       </div>
     </div>
@@ -815,6 +819,124 @@
     <div class="modal-footer">
       <button class="btn" id="btn-prose-rethink-cancel">Cancel</button>
       <button class="btn btn-primary" id="btn-prose-rethink-submit">Rewrite</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Import Knowledge Panel ===== -->
+<div class="panel" id="panel-import-knowledge">
+  <div class="panel-header">
+    <h2>Import Knowledge</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-import-knowledge-body">
+    <p style="color:var(--text-secondary); margin-bottom:16px;">
+      Import external research and reference materials into this project. These knowledge bases will be consulted during prose creation as reference materials.
+    </p>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label for="knowledge-title">Knowledge Title</label>
+      <input type="text" id="knowledge-title" class="form-input" placeholder="e.g., Henry Ford Research Report">
+    </div>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label for="knowledge-type">Type</label>
+      <select id="knowledge-type" class="form-input">
+        <option value="research">AI Research Report</option>
+        <option value="reference">Reference Article</option>
+        <option value="wikipedia">Wikipedia Content</option>
+        <option value="notes">General Notes</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label>Import Method</label>
+      <div style="display:flex; gap:8px; margin-top:6px;">
+        <button class="btn btn-sm" id="btn-knowledge-paste" style="flex:1;">Paste Text</button>
+        <button class="btn btn-sm" id="btn-knowledge-file" style="flex:1;">Upload File</button>
+      </div>
+      <input type="file" id="knowledge-file-input" accept=".txt,.md,.html,.json,.doc,.rtf" style="display:none;">
+    </div>
+    <div class="form-group" id="knowledge-paste-area" style="margin-bottom:12px; display:none;">
+      <label for="knowledge-content">Content</label>
+      <textarea id="knowledge-content" class="form-input" rows="12" placeholder="Paste your research content here..."></textarea>
+    </div>
+    <div id="knowledge-file-info" style="display:none; margin-bottom:12px; padding:8px; background:var(--bg-secondary); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:13px;">
+    </div>
+    <button class="btn btn-primary" id="btn-knowledge-save" style="width:100%; margin-bottom:16px;">Save Knowledge to Project</button>
+    <hr style="border-color:var(--border-color); margin:16px 0;">
+    <h3 style="margin-bottom:12px;">Project Knowledge Base</h3>
+    <div id="knowledge-list" style="max-height:300px; overflow-y:auto;">
+      <p style="color:var(--text-muted); font-size:13px;">No knowledge imported yet.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Edit Cover Panel ===== -->
+<div class="panel" id="panel-edit-cover">
+  <div class="panel-header">
+    <h2>Edit Cover</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-edit-cover-body">
+    <div class="edit-cover-preview">
+      <canvas id="cover-edit-canvas" width="600" height="900" style="max-width:100%; border:1px solid var(--border-color); border-radius:var(--radius-sm);"></canvas>
+    </div>
+    <div class="edit-cover-controls" style="margin-top:16px;">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-title">Title Text</label>
+        <input type="text" id="cover-edit-title" class="form-input" placeholder="Book title">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-subtitle">Subtitle Text</label>
+        <input type="text" id="cover-edit-subtitle" class="form-input" placeholder="Subtitle (optional)">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-author">Author Name</label>
+        <input type="text" id="cover-edit-author" class="form-input" placeholder="Author name (optional)">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-font">Font Family</label>
+        <select id="cover-edit-font" class="form-input">
+          <option value="Georgia">Georgia (Serif)</option>
+          <option value="Garamond">Garamond</option>
+          <option value="Palatino">Palatino</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Helvetica">Helvetica (Sans)</option>
+          <option value="Arial">Arial</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Trebuchet MS">Trebuchet MS</option>
+          <option value="Courier New">Courier New (Mono)</option>
+          <option value="Impact">Impact</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-fontsize">Title Font Size</label>
+        <input type="range" id="cover-edit-fontsize" min="24" max="80" value="48" style="width:100%;">
+        <span id="cover-edit-fontsize-label" style="font-size:12px; color:var(--text-muted);">48px</span>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-color">Text Color</label>
+        <input type="color" id="cover-edit-color" value="#ffffff" style="width:100%; height:36px; border:none; cursor:pointer;">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-position">Text Placement</label>
+        <select id="cover-edit-position" class="form-input">
+          <option value="top">Top</option>
+          <option value="center">Center</option>
+          <option value="bottom" selected>Bottom</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label for="cover-edit-shadow">Text Shadow</label>
+        <select id="cover-edit-shadow" class="form-input">
+          <option value="none">None</option>
+          <option value="light" selected>Light</option>
+          <option value="heavy">Heavy</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:16px;">
+        <button class="btn btn-primary" id="btn-cover-edit-apply" style="flex:1;">Apply Changes</button>
+        <button class="btn btn-sm" id="btn-cover-edit-save" style="flex:1;">Save Cover</button>
+      </div>
     </div>
   </div>
 </div>
