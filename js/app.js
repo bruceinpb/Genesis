@@ -2764,6 +2764,7 @@ class App {
     const qualityThreshold = this._currentProject?.qualityThreshold || 90;
     const previousFixLists = [];
     let workingText = currentText;
+    let degradationAnalysis = null;
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
       if (this._iterativeCancelled) {
@@ -2835,8 +2836,33 @@ class App {
         bestScore = score;
         this._iterativeBestText = workingText;
         this._iterativeBestReview = review;
+        degradationAnalysis = null; // Score improved, clear any previous analysis
       } else if (score < bestScore && this._iterativeBestText && iter > 1) {
-        this._updateIterativeLog(`Iteration ${iter}: Score dropped (${score} < best ${bestScore}). Reverting to best version.`);
+        // === COMPARATIVE ANALYSIS: Understand WHY score dropped ===
+        this._updateIterativePhase('Analyzing score decline\u2026');
+        this._updateIterativeLog(`Iteration ${iter}: Score dropped (${score} < best ${bestScore}). Analyzing why fixes degraded quality\u2026`);
+
+        try {
+          degradationAnalysis = await this.generator.compareProseVersions({
+            bestProse: this._iterativeBestText,
+            bestScore,
+            bestSubscores: this._iterativeBestReview?.subscores || {},
+            rewrittenProse: workingText,
+            rewrittenScore: score,
+            rewrittenSubscores: review.subscores || {},
+            appliedFixes: previousFixLists.length > 0 ? previousFixLists[previousFixLists.length - 1] : null
+          });
+          this._updateIterativeLog(`Decline analysis: ${degradationAnalysis.rootCause || 'Analysis complete'}`);
+          if (degradationAnalysis.analysis) {
+            this._updateIterativeLog(`Detail: ${degradationAnalysis.analysis}`);
+          }
+        } catch (err) {
+          this._updateIterativeLog(`Comparison analysis failed: ${err.message}. Will use standard reflection.`);
+          degradationAnalysis = null;
+        }
+
+        // Revert to best version
+        this._updateIterativeLog(`Reverting to best version (score ${bestScore}).`);
         workingText = this._iterativeBestText;
         if (this._iterativeBestReview) review = this._iterativeBestReview;
         // Restore best text in editor
@@ -2885,13 +2911,14 @@ class App {
       try {
         fixList = await this.generator.reflectOnProse({
           prose: workingText,
-          score,
+          score: bestScore || score,
           subscores: review.subscores,
           threshold: qualityThreshold,
           issues: review.issues,
           aiPatterns: review.aiPatterns,
           iterationNum: iter,
-          previousFixLists: previousFixLists.length > 0 ? previousFixLists : undefined
+          previousFixLists: previousFixLists.length > 0 ? previousFixLists : undefined,
+          degradationAnalysis: degradationAnalysis || undefined
         });
       } catch (err) {
         this._updateIterativeLog(`Reflection failed: ${err.message}. Presenting for review.`);
@@ -2915,6 +2942,101 @@ class App {
       // Log the reflection and fix list
       this._updateIterativeLog(`Iteration ${iter}: Reflection — ${fixList.reflection || 'Analysis complete'}`);
       this._updateIterativeLog(`Iteration ${iter}: Fix list (${fixList.fixes.length} fixes): ${fixList.fixes.map(f => f.description.slice(0, 60)).join('; ')}`);
+
+      // === STEP 2.5: Pre-validate fixes when we have degradation analysis (score previously dropped) ===
+      if (degradationAnalysis) {
+        this._updateIterativePhase('Pre-validating fixes\u2026');
+        this._updateIterativeLog(`Iteration ${iter}: Pre-validating proposed fixes before applying\u2026`);
+
+        let validation = null;
+        try {
+          validation = await this.generator.preValidateFixes({
+            prose: workingText,
+            fixList,
+            currentScore: bestScore || score,
+            subscores: review.subscores,
+            threshold: qualityThreshold
+          });
+          this._updateIterativeLog(`Pre-validation: predicted score ${validation.predictedScore}, confidence: ${validation.confidence}`);
+        } catch (err) {
+          this._updateIterativeLog(`Pre-validation failed: ${err.message}. Proceeding with fixes.`);
+          validation = null;
+        }
+
+        if (this._iterativeCancelled) {
+          this._showIterativeOverlay(false);
+          return;
+        }
+
+        // If pre-validation predicts no improvement, refine fixes
+        if (validation && validation.predictedScore <= (bestScore || score)) {
+          this._updateIterativeLog(`Pre-validation predicts score will not improve (${validation.predictedScore} vs current ${bestScore || score}). Refining fix strategy\u2026`);
+          this._updateIterativePhase('Refining fix strategy\u2026');
+
+          try {
+            fixList = await this.generator.reflectOnProse({
+              prose: workingText,
+              score: bestScore || score,
+              subscores: review.subscores,
+              threshold: qualityThreshold,
+              issues: review.issues,
+              aiPatterns: review.aiPatterns,
+              iterationNum: iter,
+              previousFixLists: previousFixLists.length > 0 ? previousFixLists : undefined,
+              degradationAnalysis,
+              validationFeedback: validation
+            });
+
+            if (!fixList || !fixList.fixes || fixList.fixes.length === 0) {
+              this._updateIterativeLog(`Refinement produced no fixes. Presenting best version for review.`);
+              this._showIterativeOverlay(false);
+              this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+              return;
+            }
+
+            this._updateIterativeLog(`Refined fix list: ${fixList.fixes.length} fixes`);
+
+            // Re-validate the refined fixes
+            this._updateIterativePhase('Re-validating refined fixes\u2026');
+            try {
+              const validation2 = await this.generator.preValidateFixes({
+                prose: workingText,
+                fixList,
+                currentScore: bestScore || score,
+                subscores: review.subscores,
+                threshold: qualityThreshold
+              });
+              this._updateIterativeLog(`Re-validation: predicted score ${validation2.predictedScore}, confidence: ${validation2.confidence}`);
+
+              if (validation2.predictedScore <= (bestScore || score)) {
+                this._updateIterativeLog(`Re-validation still predicts no improvement (${validation2.predictedScore}). Presenting best version for review.`);
+                this._showIterativeOverlay(false);
+                this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+                return;
+              }
+              this._updateIterativeLog(`Refined fixes look promising (predicted: ${validation2.predictedScore}). Proceeding with application.`);
+            } catch (err) {
+              this._updateIterativeLog(`Re-validation failed: ${err.message}. Proceeding with refined fixes.`);
+            }
+          } catch (err) {
+            this._updateIterativeLog(`Fix refinement failed: ${err.message}. Presenting best version for review.`);
+            this._showIterativeOverlay(false);
+            this._presentIterativeAccept(this._iterativeBestText || workingText, bestScore);
+            return;
+          }
+        } else if (validation) {
+          this._updateIterativeLog(`Pre-validation predicts improvement (${validation.predictedScore}). Proceeding with fixes.`);
+        }
+
+        // Clear degradation analysis after it has been used
+        degradationAnalysis = null;
+      }
+
+      if (this._iterativeCancelled) {
+        this._showIterativeOverlay(false);
+        return;
+      }
+
       previousFixLists.push(fixList);
 
       // === STEP 3: Apply the fix list ===
