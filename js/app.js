@@ -694,7 +694,7 @@ class App {
         alert('Please enter a story plot or description.');
         return;
       }
-      wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 500;
+      wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 1000;
       tone = document.getElementById('generate-tone')?.value?.trim() || '';
       style = document.getElementById('generate-style')?.value?.trim() || '';
       useCharacters = document.getElementById('generate-use-characters')?.checked;
@@ -767,13 +767,14 @@ class App {
     const chapterOutline = this._currentChapterOutline || '';
 
     // --- Chunked generation with scoring between chunks ---
-    // Break the total word target into ~300-word chunks.
+    // Break the total word target into scored chunks.
     // After each chunk, halt and score the prose, then continue.
-    const CHUNK_SIZE = 300;
-    const maxTokensPerChunk = 800; // ~300 words
+    const CHUNK_SIZE = 1000;
+    const maxTokensPerChunk = 4096; // ~1000 words
     let wordsGenerated = 0;
     let chunkNum = 0;
     let allStreamedText = '';
+    let chunkScores = []; // Track per-chunk best scores for weighted average
 
     // Show iterative overlay for the scoring phases
     const qualityThresholdDisplay = this._currentProject?.qualityThreshold || 90;
@@ -1002,30 +1003,44 @@ class App {
             this._updateIterativeLog(`Chunk ${chunkNum}: No specific issues found. Analyzing weak subscores\u2026`);
             const subscoreEntries = Object.entries(review.subscores).sort((a, b) => a[1] - b[1]);
             const weakest = subscoreEntries.slice(0, 3);
+
+            const dimLabels = {
+              sentenceVariety: 'Sentence Variety & Rhythm',
+              dialogueAuthenticity: 'Dialogue Authenticity',
+              sensoryDetail: 'Sensory Detail / Show vs Tell',
+              emotionalResonance: 'Emotional Resonance & Depth',
+              vocabularyPrecision: 'Vocabulary Precision',
+              narrativeFlow: 'Narrative Flow & Pacing',
+              originalityVoice: 'Originality & Voice',
+              technicalExecution: 'Technical Execution'
+            };
+
+            // Actionable fix instructions for each dimension
+            const dimFixes = {
+              sentenceVariety: 'Find 3+ consecutive sentences with similar word counts. Break long ones into short punchy fragments. Combine short ones into flowing compound sentences. Aim for a mix of 3-8 word sentences and 15-30 word sentences.',
+              dialogueAuthenticity: 'Make each character sound different. Give one character clipped speech, another hedging words. Vary dialogue tags: use "said" 60%, action beats 30%, no tag 10%. Add an interruption or trailing thought.',
+              sensoryDetail: 'Replace 3 abstract descriptions with concrete sensory details. Name specific colors, textures, smells, sounds. Change "the room was cold" to "frost crept along the window frame".',
+              emotionalResonance: 'Replace any stated emotions with character actions that IMPLY the emotion. "She was sad" becomes "She rearranged the silverware three times." Find the unexpected gesture.',
+              vocabularyPrecision: 'Replace 5 generic verbs with specific ones (walked→shuffled, looked→squinted, said→muttered). Delete every instance of: very, really, quite, just, rather, somewhat.',
+              narrativeFlow: 'Vary paragraph lengths. Add one single-sentence paragraph for emphasis. Cut any transition words (Meanwhile, After a moment, In that instant). Just jump between beats.',
+              originalityVoice: 'Find any phrase that sounds templated or familiar and replace it with something unexpected. If a metaphor is cliché, delete it. Find one place to add a genuinely novel observation.',
+              technicalExecution: 'Fix any grammatical issues. Ensure paragraph breaks are purposeful. Check tense consistency throughout.'
+            };
+
             for (const [dim, val] of weakest) {
               const maxForDim = ['sentenceVariety', 'dialogueAuthenticity', 'sensoryDetail', 'emotionalResonance'].includes(dim) ? 15 : 10;
               const gap = maxForDim - val;
-              if (gap >= 3) {
-                const dimLabels = {
-                  sentenceVariety: 'Sentence Variety & Rhythm',
-                  dialogueAuthenticity: 'Dialogue Authenticity',
-                  sensoryDetail: 'Sensory Detail / Show vs Tell',
-                  emotionalResonance: 'Emotional Resonance & Depth',
-                  vocabularyPrecision: 'Vocabulary Precision',
-                  narrativeFlow: 'Narrative Flow & Pacing',
-                  originalityVoice: 'Originality & Voice',
-                  technicalExecution: 'Technical Execution'
-                };
+              if (gap >= 2) {
                 problems.push({
                   text: '',
-                  description: `Weak dimension: ${dimLabels[dim] || dim} (${val}/${maxForDim}). Improve this aspect throughout the passage.`,
+                  description: `Weak: ${dimLabels[dim] || dim} (${val}/${maxForDim}). ${dimFixes[dim] || 'Improve this aspect throughout.'}`,
                   impact: gap,
                   severity: 'high'
                 });
               }
             }
-            // If we've had 2+ rounds with no specific issues, do a comprehensive rewrite request
-            if (problems.length === 0 && consecutiveNoIssues >= 2) {
+            // If we've had 3+ rounds with no specific issues, break
+            if (problems.length === 0 && consecutiveNoIssues >= 3) {
               this._updateIterativeLog(`Chunk ${chunkNum}: Score plateaued at ${chunkBestScore}. Cannot improve further with targeted fixes.`);
               break;
             }
@@ -1058,7 +1073,7 @@ class App {
                 {
                   originalProse: currentChunkText,
                   problems: formattedProblems,
-                  userInstructions: `Rewrite to fix the listed issues. Target quality threshold: ${qualityThreshold}/100. Current score: ${score}/100. Keep approximately the same length (~${thisChunkTarget} words). Do NOT expand or add extra content.`,
+                  userInstructions: `Fix the listed issues to improve the score from ${score} toward ${qualityThreshold}/100. For each fix, the replacement must be genuinely better prose — more vivid, more specific, more human. Keep approximately the same length (~${thisChunkTarget} words). Do NOT expand or add extra content.`,
                   chapterTitle,
                   characters,
                   notes,
@@ -1124,6 +1139,7 @@ class App {
         }
 
         this._updateIterativeLog(`Chunk ${chunkNum}: Complete. Best score: ${chunkBestScore}/100 (threshold: ${qualityThreshold})`);
+        chunkScores.push({ score: chunkBestScore, words: chunkWords });
       }
 
       // Check if we should stop (close to target or generation cancelled)
@@ -1169,8 +1185,18 @@ class App {
     // Final scoring of all generated prose against the threshold
     if (allStreamedText && allStreamedText.length > 100) {
       const finalThreshold = this._currentProject?.qualityThreshold || 90;
+
+      // Calculate weighted average of chunk scores for consistency check
+      let weightedAvg = 0;
+      if (chunkScores.length > 0) {
+        const totalChunkWords = chunkScores.reduce((s, c) => s + c.words, 0);
+        weightedAvg = totalChunkWords > 0
+          ? Math.round(chunkScores.reduce((s, c) => s + c.score * c.words, 0) / totalChunkWords)
+          : Math.round(chunkScores.reduce((s, c) => s + c.score, 0) / chunkScores.length);
+      }
+
       this._updateIterativePhase('Scoring complete work\u2026');
-      this._updateIterativeLog(`All ${chunkNum} chunks complete. Scoring full text against threshold (${finalThreshold}%)\u2026`);
+      this._updateIterativeLog(`All ${chunkNum} chunks complete (avg: ${weightedAvg}). Scoring full text against threshold (${finalThreshold}%)\u2026`);
       this._showIterativeScoringNotice(true);
 
       try {
@@ -1178,7 +1204,17 @@ class App {
         this._showIterativeScoringNotice(false);
 
         if (finalReview && finalReview.score > 0) {
-          const finalScore = finalReview.score;
+          let finalScore = finalReview.score;
+
+          // If full-text score is significantly lower than the weighted chunk average,
+          // use the chunk average as a floor (within 5 points) to prevent scoring inconsistency
+          if (weightedAvg > 0 && finalScore < weightedAvg - 5) {
+            const adjustedScore = weightedAvg - 3;
+            this._updateIterativeLog(`Full-text score (${finalScore}) was inconsistent with chunk average (${weightedAvg}). Adjusted to ${adjustedScore}.`);
+            finalScore = adjustedScore;
+            finalReview.score = adjustedScore;
+          }
+
           this._updateIterativeScore(finalScore);
           this._updateIterativeLog(`Final score: ${finalScore}/100 (threshold: ${finalThreshold})`);
 
@@ -2617,29 +2653,42 @@ class App {
       this._updateIterativeLog(`Iteration ${iteration}: No specific issues. Analyzing weak subscores\u2026`);
       const subscoreEntries = Object.entries(review.subscores).sort((a, b) => a[1] - b[1]);
       const weakest = subscoreEntries.slice(0, 3);
+
+      const dimLabels = {
+        sentenceVariety: 'Sentence Variety & Rhythm',
+        dialogueAuthenticity: 'Dialogue Authenticity',
+        sensoryDetail: 'Sensory Detail / Show vs Tell',
+        emotionalResonance: 'Emotional Resonance & Depth',
+        vocabularyPrecision: 'Vocabulary Precision',
+        narrativeFlow: 'Narrative Flow & Pacing',
+        originalityVoice: 'Originality & Voice',
+        technicalExecution: 'Technical Execution'
+      };
+
+      const dimFixes = {
+        sentenceVariety: 'Find 3+ consecutive sentences with similar word counts. Break long ones into short punchy fragments. Combine short ones into flowing compound sentences.',
+        dialogueAuthenticity: 'Make each character sound different. Vary dialogue tags: use "said" 60%, action beats 30%, no tag 10%.',
+        sensoryDetail: 'Replace abstract descriptions with concrete sensory details. Name specific colors, textures, smells, sounds.',
+        emotionalResonance: 'Replace any stated emotions with character actions that IMPLY the emotion. Find the unexpected gesture.',
+        vocabularyPrecision: 'Replace generic verbs with specific ones (walked→shuffled). Delete: very, really, quite, just, rather.',
+        narrativeFlow: 'Vary paragraph lengths. Cut transition words (Meanwhile, After a moment). Just jump between beats.',
+        originalityVoice: 'Replace any templated-sounding phrase with something unexpected. If a metaphor is cliché, delete it.',
+        technicalExecution: 'Fix grammatical issues. Ensure paragraph breaks are purposeful. Check tense consistency.'
+      };
+
       for (const [dim, val] of weakest) {
         const maxForDim = ['sentenceVariety', 'dialogueAuthenticity', 'sensoryDetail', 'emotionalResonance'].includes(dim) ? 15 : 10;
         const gap = maxForDim - val;
-        if (gap >= 3) {
-          const dimLabels = {
-            sentenceVariety: 'Sentence Variety & Rhythm',
-            dialogueAuthenticity: 'Dialogue Authenticity',
-            sensoryDetail: 'Sensory Detail / Show vs Tell',
-            emotionalResonance: 'Emotional Resonance & Depth',
-            vocabularyPrecision: 'Vocabulary Precision',
-            narrativeFlow: 'Narrative Flow & Pacing',
-            originalityVoice: 'Originality & Voice',
-            technicalExecution: 'Technical Execution'
-          };
+        if (gap >= 2) {
           problems.push({
             text: '',
-            description: `Weak dimension: ${dimLabels[dim] || dim} (${val}/${maxForDim}). Improve this aspect throughout the passage.`,
+            description: `Weak: ${dimLabels[dim] || dim} (${val}/${maxForDim}). ${dimFixes[dim] || 'Improve this aspect throughout.'}`,
             impact: gap,
             severity: 'high'
           });
         }
       }
-      if (problems.length === 0 && this._iterativeConsecutiveNoIssues >= 2) {
+      if (problems.length === 0 && this._iterativeConsecutiveNoIssues >= 3) {
         this._updateIterativeLog(`Score plateaued at ${bestScore}. Presenting for review.`);
         this._iterativeConsecutiveNoIssues = 0;
         this._showIterativeOverlay(false);
@@ -3146,7 +3195,7 @@ class App {
         aiInstructions: project?.aiInstructions || '',
         tone: this._lastGenSettings?.tone || '',
         style: this._lastGenSettings?.style || '',
-        wordTarget: this._lastGenSettings?.wordTarget || 500,
+        wordTarget: this._lastGenSettings?.wordTarget || 1000,
         genre: genreInfo?.label || '',
         genreRules: genreInfo?.rules || '',
         voice: project?.voice || '',
@@ -3759,12 +3808,12 @@ class App {
         this._closeAllPanels();
         setTimeout(() => this.openSettingsPanel(), 100);
       }
-      // Continue Writing word-count buttons (+500, +1000, +2000)
+      // Continue Writing word-count buttons (+1000, +2000, +3000)
       const continueBtn = e.target.closest('.continue-word-btn');
       if (continueBtn) {
         // Close prose review modal if the button was clicked from there
         document.getElementById('prose-review-overlay')?.classList.remove('visible');
-        const wordTarget = parseInt(continueBtn.dataset.words) || 500;
+        const wordTarget = parseInt(continueBtn.dataset.words) || 1000;
         await this._handleContinueWriting(wordTarget);
       }
       if (e.target.id === 'btn-continue-to-target' || e.target.closest('#btn-continue-to-target')) {
