@@ -847,7 +847,7 @@ CRITICAL: Previous rewrites have failed to improve the score because they introd
    * are needed to get closer to the threshold?"
    * Returns a structured fix list that can be applied in the next rewrite.
    */
-  async reflectOnProse({ prose, score, subscores, threshold, issues, aiPatterns, iterationNum, previousFixLists }) {
+  async reflectOnProse({ prose, score, subscores, threshold, issues, aiPatterns, iterationNum, previousFixLists, degradationAnalysis, validationFeedback }) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
     }
@@ -877,6 +877,35 @@ You MUST take a DIFFERENT and BOLDER approach this time. Do not repeat the same 
 - Adding vivid new sensory details rather than tweaking existing ones
 - Dramatically varying sentence rhythm
 - Reworking weak passages more substantially`;
+    }
+
+    if (degradationAnalysis) {
+      systemPrompt += `\n\nCRITICAL — PREVIOUS FIX ATTEMPT CAUSED SCORE TO DROP:
+The last set of fixes made the prose WORSE. Here is the analysis of what went wrong:
+
+Root cause: ${degradationAnalysis.rootCause || 'Unknown'}
+Analysis: ${degradationAnalysis.analysis || 'Not available'}
+${degradationAnalysis.harmfulChanges?.length > 0 ? `\nFixes that HURT the prose:\n${degradationAnalysis.harmfulChanges.map(h => `- ${h.fix}: ${h.problem}\n  Recommendation: ${h.recommendation}`).join('\n')}` : ''}
+${degradationAnalysis.preserveQualities?.length > 0 ? `\nQualities that MUST be preserved:\n${degradationAnalysis.preserveQualities.map(q => `- ${q}`).join('\n')}` : ''}
+${degradationAnalysis.betterApproach ? `\nRecommended approach: ${degradationAnalysis.betterApproach}` : ''}
+
+YOU MUST:
+- Avoid repeating the mistakes identified above
+- Follow the recommended better approach
+- Be MORE surgical and conservative — only fix what is clearly broken
+- Preserve the specific strengths and qualities listed above
+- Each fix must have a clear, evidence-based reason why it will IMPROVE (not just change) the prose`;
+    }
+
+    if (validationFeedback) {
+      systemPrompt += `\n\nPRE-VALIDATION REJECTED PREVIOUS FIX LIST:
+A previous fix list was pre-validated and predicted to ${validationFeedback.overallAssessment || 'not improve the score'}.
+Predicted score: ${validationFeedback.predictedScore || 'unknown'} (needs to exceed current score)
+${validationFeedback.riskyFixes?.length > 0 ? `Risky fixes to AVOID or rethink: ${validationFeedback.riskyFixes.map(i => `Fix #${i + 1}`).join(', ')}` : ''}
+${validationFeedback.suggestedModifications ? `Suggested modifications: ${validationFeedback.suggestedModifications}` : ''}
+${validationFeedback.fixAssessments ? `\nPer-fix assessment:\n${validationFeedback.fixAssessments.filter(a => !a.willHelp).map(a => `- Fix #${a.fixIndex}: ${a.risks} → ${a.recommendation}`).join('\n')}` : ''}
+
+Create a REFINED fix list that addresses these concerns. Focus on fixes that the pre-validation predicts will actually help.`;
     }
 
     let userPrompt = `=== PROSE TO ANALYZE ===
@@ -1092,6 +1121,272 @@ Create a fix list based on this analysis. Output valid JSON only:
       } else {
         onError(err);
       }
+    }
+  }
+
+  /**
+   * Compare two prose versions to understand WHY a rewrite scored lower than the original.
+   * Performs detailed analysis of which fixes helped vs. hurt and why.
+   * Returns structured guidance for creating better fixes.
+   */
+  async compareProseVersions({ bestProse, bestScore, bestSubscores, rewrittenProse, rewrittenScore, rewrittenSubscores, appliedFixes }) {
+    if (!this.apiKey) {
+      throw new Error('No API key set.');
+    }
+
+    const systemPrompt = `You are an expert literary editor analyzing why a prose rewrite scored LOWER than the original. Two versions exist: the original (higher-scoring) and the rewrite (lower-scoring). The rewrite attempted to improve the prose by applying specific fixes, but instead degraded it.
+
+Your task: Perform a detailed comparative analysis to understand EXACTLY why the fixes caused a score decrease. This analysis will guide the next round of improvements.
+
+ANALYSIS REQUIREMENTS:
+- Be specific about which changes helped vs. hurt
+- Identify if fixes introduced new problems (e.g., broke rhythm, added generic language, lost distinctive voice, over-smoothed raw power)
+- Explain the root cause — why did "improvements" make things worse?
+- Note any qualities in the original that were inadvertently destroyed
+- Provide actionable guidance for what a better fix approach would look like
+
+COMMON PITFALLS TO CHECK:
+- Did fixes sand down distinctive rough edges that gave the prose character?
+- Did vocabulary changes make the prose more generic rather than more precise?
+- Did sentence restructuring break a deliberate rhythm pattern?
+- Did adding detail dilute a powerful sparse style?
+- Did "fixing" dialogue make it sound less authentic/more writerly?`;
+
+    const fixSummary = appliedFixes?.fixes?.map((f, i) =>
+      `Fix ${i + 1}: ${f.description} (approach: ${f.approach}, target: "${(f.target || 'GENERAL').slice(0, 80)}")`
+    ).join('\n') || 'No fix details available';
+
+    const subscoreComparison = bestSubscores && rewrittenSubscores ?
+      Object.keys(bestSubscores).map(k => {
+        const diff = (rewrittenSubscores[k] || 0) - (bestSubscores[k] || 0);
+        return `  ${k}: ${bestSubscores[k]} → ${rewrittenSubscores[k]} (${diff >= 0 ? '+' : ''}${diff})`;
+      }).join('\n') : 'Not available';
+
+    const userPrompt = `=== ORIGINAL VERSION (Score: ${bestScore}) ===
+${bestProse}
+=== END ORIGINAL ===
+
+=== REWRITTEN VERSION (Score: ${rewrittenScore}) ===
+${rewrittenProse}
+=== END REWRITTEN ===
+
+=== FIXES THAT WERE APPLIED ===
+${fixSummary}
+=== END FIXES ===
+
+=== SUB-SCORE CHANGES ===
+${subscoreComparison}
+=== END SUB-SCORES ===
+
+Score dropped from ${bestScore} to ${rewrittenScore} (${bestScore - rewrittenScore} point decrease).
+
+Analyze:
+1. Which specific fixes HELPED (improved their target area)?
+2. Which specific fixes HURT (degraded quality, broke rhythm, lost voice, introduced problems)?
+3. What is the ROOT CAUSE of the overall score decline?
+4. Which qualities of the ORIGINAL version were lost and must be preserved?
+5. What would a BETTER approach look like for the next attempt?
+
+Output valid JSON only:
+{
+  "analysis": "2-3 sentence summary of why the score dropped",
+  "rootCause": "The primary reason fixes degraded the prose",
+  "helpfulChanges": ["list of changes that worked well"],
+  "harmfulChanges": [
+    {
+      "fix": "which fix caused harm",
+      "problem": "what went wrong",
+      "recommendation": "what should be done instead"
+    }
+  ],
+  "preserveQualities": ["specific qualities from the original that MUST be preserved in any future fix"],
+  "subscoreAnalysis": {
+    "improved": ["dimensions that improved and why"],
+    "declined": ["dimensions that declined and why"]
+  },
+  "betterApproach": "Specific guidance for the next fix attempt that avoids these pitfalls"
+}`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 2048,
+        temperature: 0,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const rawText = result.content?.[0]?.text || '';
+
+    let jsonStr = rawText;
+    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    const braceStart = jsonStr.indexOf('{');
+    const braceEnd = jsonStr.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+    }
+
+    try {
+      return JSON.parse(jsonStr);
+    } catch (err) {
+      throw new Error('Failed to parse comparison response: ' + err.message);
+    }
+  }
+
+  /**
+   * Pre-validate proposed fixes by having AI predict the scoring outcome
+   * BEFORE actually applying the fixes. This prevents wasting an iteration
+   * on fixes that are predicted to decrease the score.
+   * Returns predicted score, confidence level, and per-fix assessments.
+   */
+  async preValidateFixes({ prose, fixList, currentScore, subscores, threshold }) {
+    if (!this.apiKey) {
+      throw new Error('No API key set.');
+    }
+
+    const systemPrompt = `You are a senior literary editor performing a pre-implementation scoring review. Your job is to MENTALLY APPLY each proposed fix to the prose, then SCORE the result as if the fixes were already implemented.
+
+This is a critical gate: if your predicted score is not an improvement, the fixes will NOT be applied. Be honest and rigorous.
+
+EVALUATION PROCESS:
+1. Read the original prose carefully
+2. For each fix, mentally envision how the prose would read after the change
+3. Consider ripple effects — how does each fix affect rhythm, voice, flow, and coherence?
+4. Score the mentally-rewritten version using the same 8-dimension rubric:
+   - Sentence Variety & Rhythm (0-15)
+   - Dialogue Authenticity (0-15)
+   - Sensory Detail / Show vs Tell (0-15)
+   - Emotional Resonance & Depth (0-15)
+   - Vocabulary Precision (0-10)
+   - Narrative Flow & Pacing (0-10)
+   - Originality & Voice (0-10)
+   - Technical Execution (0-10)
+5. Sum the predicted subscores for the total predicted score
+6. Assess each fix individually — will it help or hurt?
+
+CRITICAL RULES:
+- Be conservative in predictions — if a fix seems risky, predict cautiously
+- Flag fixes that might damage dimensions they don't target
+- Consider whether fixes work well TOGETHER or create conflicts
+- A fix that "improves" one dimension while degrading two others is a net negative`;
+
+    const fixDetails = fixList.fixes?.map((f, i) =>
+      `Fix ${i + 1}: TARGET="${(f.target || 'GENERAL').slice(0, 100)}" | ${f.description} | APPROACH: ${f.approach} | GUIDANCE: ${f.replacement_guidance} | EST. IMPACT: ${f.estimated_impact}pts`
+    ).join('\n') || '';
+
+    const userPrompt = `=== CURRENT PROSE (Score: ${currentScore}/${threshold}) ===
+${prose}
+=== END PROSE ===
+
+=== CURRENT SUB-SCORES ===
+${subscores ? Object.entries(subscores).map(([k, v]) => `  ${k}: ${v}`).join('\n') : 'Not available'}
+
+=== PROPOSED FIXES ===
+${fixDetails}
+Overall strategy: ${fixList.summary || fixList.reflection || 'Not specified'}
+AI's expected score after fixes: ${fixList.expected_score_after || 'Not specified'}
+=== END FIXES ===
+
+Mentally apply ALL fixes to the prose. Then score the result as if the fixes were implemented.
+
+For each fix, assess:
+1. Will it genuinely improve its target dimension?
+2. Could it damage OTHER dimensions (collateral damage)?
+3. Is the estimated impact realistic?
+
+Then predict subscores and total score for the mentally-rewritten version.
+
+Output valid JSON only:
+{
+  "predictedScore": number,
+  "predictedSubscores": {
+    "sentenceVariety": number,
+    "dialogueAuthenticity": number,
+    "sensoryDetail": number,
+    "emotionalResonance": number,
+    "vocabularyPrecision": number,
+    "narrativeFlow": number,
+    "originalityVoice": number,
+    "technicalExecution": number
+  },
+  "confidence": "high|medium|low",
+  "overallAssessment": "1-2 sentence prediction of outcome",
+  "fixAssessments": [
+    {
+      "fixIndex": number,
+      "willHelp": boolean,
+      "predictedImpact": number,
+      "risks": "description of risks or 'none'",
+      "recommendation": "proceed|modify|skip"
+    }
+  ],
+  "riskyFixes": [number],
+  "suggestedModifications": "If fixes need changes, describe what should be different to achieve a better outcome"
+}`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 2048,
+        temperature: 0,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const rawText = result.content?.[0]?.text || '';
+
+    let jsonStr = rawText;
+    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    const braceStart = jsonStr.indexOf('{');
+    const braceEnd = jsonStr.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      // Validate predicted score = sum of predicted subscores
+      if (parsed.predictedSubscores) {
+        const sum = Object.values(parsed.predictedSubscores).reduce((a, b) => a + (Number(b) || 0), 0);
+        parsed.predictedScore = Math.round(sum);
+      }
+      return parsed;
+    } catch (err) {
+      throw new Error('Failed to parse pre-validation response: ' + err.message);
     }
   }
 
