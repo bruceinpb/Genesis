@@ -462,7 +462,7 @@ CRITICAL: Your prose must read as authentically human-written. Strictly avoid th
 - Do NOT write purple prose or overly flowery descriptions
 - Do NOT tell emotions ("She felt sad") — SHOW them through action and dialogue
 - Do NOT use formulaic paragraph structures (observation → feeling → action → reflection)
-- Do NOT overuse em-dashes — use varied punctuation
+- NEVER use em dashes (---, \u2014, \u2013) under any circumstances. Use commas, semicolons, colons, periods, or parentheses instead. Em dashes are a hallmark of AI-generated text and do not format well in published works
 - Do NOT use generic transitional phrases like "Meanwhile", "In that moment", "Little did she know"
 - Vary dialogue tags — not every line needs "said" or an action beat
 - Be specific, not generic — real details over vague descriptions
@@ -552,6 +552,22 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
 
     const target = wordTarget || 500;
 
+    // Formatting instructions for scene breaks and chapter structure
+    if (!existingContent || existingContent.replace(/<[^>]+>/g, '').trim().length === 0) {
+      // Starting a new chapter from scratch - add chapter heading instruction
+      if (chapterTitle) {
+        prompt += `\n=== CHAPTER FORMATTING ===`;
+        prompt += `\nIMPORTANT: Begin the chapter with the chapter title as a standalone line of text. Do NOT include "Chapter X:" prefix unless it is part of the actual chapter title. This heading line should be on its own line before the prose begins.`;
+      }
+    }
+
+    // Scene break instructions
+    prompt += `\n\n=== SCENE BREAK FORMATTING ===`;
+    prompt += `\nWhen there is a shift in time, location, or point of view (a new beat or scene), insert a scene break using three asterisks on their own line: * * *`;
+    prompt += `\nScene breaks should appear between distinct beats or scenes within the chapter.`;
+    prompt += `\nAt the very end of the chapter, include a final scene break (three asterisks on their own line) to clearly mark the chapter boundary.`;
+    prompt += `\nNEVER use em dashes in any text. Use commas, semicolons, colons, periods, or parentheses instead.`;
+
     if (concludeStory) {
       prompt += `\nIMPORTANT: This is the FINAL section of the story. You have approximately ${target} words to bring the story to a satisfying, complete conclusion.`;
       prompt += `\n- Resolve the main conflict and any critical plot threads`;
@@ -606,7 +622,7 @@ PET phrases are clichéd body-reaction shortcuts (throat tightened, heart pounde
 
 === THINGS THAT WILL CAUSE SCORE TO DROP (AVOID THESE) ===
 - Swapping one cliché for another cliché
-- Adding em-dashes, tricolons (lists of three), or purple prose
+- Adding em dashes (\u2014, \u2013, ---) which are BANNED, tricolons (lists of three), or purple prose
 - Adding filter words: felt, noticed, realized, saw, heard, seemed, watched, thought
 - Adding AI-pattern words: delicate, intricate, testament, tapestry, symphony, nestled
 - Starting new sentences with "As" or "While"
