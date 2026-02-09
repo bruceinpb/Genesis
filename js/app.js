@@ -972,9 +972,7 @@ class App {
             try {
               review = await this.generator.scoreProse(currentChunkText, chunkIteration > 1 ? {
                 isRewrite: true,
-                previousScore: chunkBestScore,
-                previousIssueCount: (chunkBestReview?.issues?.length || 0) + (chunkBestReview?.aiPatterns?.length || 0),
-                previousSubscores: chunkBestReview?.subscores || {}
+                previousIssueCount: (chunkBestReview?.issues?.length || 0) + (chunkBestReview?.aiPatterns?.length || 0)
               } : undefined);
             } catch (err) {
               this._updateIterativeLog(`Chunk ${chunkNum}: Scoring error: ${err.message}`);
@@ -1043,10 +1041,12 @@ class App {
             }
           }
 
-          this._updateIterativeScore(score, true);
-          this._recordIterationScore(chunkIteration, score);
+          // After revert, review.score reflects the best version's score
+          const displayScore = review.score;
+          this._updateIterativeScore(displayScore, true);
+          this._recordIterationScore(chunkIteration, displayScore);
           this._updateIterativeIteration(chunkIteration, chunkBestScore);
-          this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${score}/100 (${review.label || ''}) [threshold: ${qualityThreshold}] | Lint: ${hardDefects.length} hard defects`);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${displayScore}/100 (${review.label || ''}) [threshold: ${qualityThreshold}] | Lint: ${hardDefects.length} hard defects`);
 
           // Check pass condition
           if (chunkBestScore >= qualityThreshold && hardDefects.length === 0) {
@@ -1068,7 +1068,7 @@ class App {
           try {
             fixList = await this.generator.reflectOnProse({
               prose: currentChunkText,
-              score,
+              score: chunkBestScore || score,
               subscores: review.subscores,
               threshold: qualityThreshold,
               issues: review.issues,
@@ -2833,9 +2833,7 @@ class App {
         try {
           review = await this.generator.scoreProse(workingText, iter > 1 ? {
             isRewrite: true,
-            previousIssueCount: this._iterPrevIssueCount || 0,
-            previousScore: this._iterPrevScore || 0,
-            previousSubscores: this._iterPrevSubscores || {}
+            previousIssueCount: this._iterPrevIssueCount || 0
           } : undefined);
         } catch (err) {
           this._updateIterativeLog(`Scoring error: ${err.message}`);
@@ -2935,14 +2933,16 @@ class App {
         consecutiveNoImprovement++;
       }
 
-      // Update UI minimally (just score and iteration, no intermediate presentation)
-      this._updateIterativeScore(score, true);
-      this._recordIterationScore(iter, score);
+      // Update UI — after revert, review.score reflects the working version's actual score
+      const displayScore = review.score;
+      this._updateIterativeScore(displayScore, true);
+      this._recordIterationScore(iter, displayScore);
       this._updateIterativeIteration(iter, bestScore);
-      this._updateIterativeLog(`Iteration ${iter}: Score = ${score}/100${score < bestScore ? ` (best: ${bestScore})` : ''} [threshold: ${qualityThreshold}]`);
+      this._updateIterativeLog(`Iteration ${iter}: Score = ${displayScore}/100${displayScore < bestScore ? ` (best: ${bestScore})` : ''} [threshold: ${qualityThreshold}]`);
 
-      this._iterPrevScore = score;
-      this._iterPrevIssueCount = issueCount;
+      // After revert, review may point to best version — use review.score for consistency
+      this._iterPrevScore = review.score;
+      this._iterPrevIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
       this._iterPrevSubscores = review.subscores;
 
       // === THRESHOLD CHECK: If met, proceed to next chunk ===
