@@ -2058,6 +2058,9 @@ class App {
         }
       }
 
+      // Save base image (without text) for the cover editor
+      let coverImageBase = coverImage || null;
+
       // Overlay title (and subtitle if set) on AI-generated cover
       if (coverImage) {
         coverImage = await this.generator.overlayTitle(coverImage, project.title, project.subtitle || '');
@@ -2067,12 +2070,15 @@ class App {
       if (!coverImage) {
         console.warn('AI image sources failed, using canvas fallback');
         const design = this.generator.getDefaultCoverDesign(project.genre);
+        // Render fallback without text for base image
+        coverImageBase = this.generator.renderCover(design, '', '');
         coverImage = this.generator.renderCover(design, project.title, project.owner);
       }
 
-      // Save to Firestore
-      await this.fs.updateProject(project.id, { coverImage, coverPrompt });
+      // Save to Firestore (include base image for cover editor)
+      await this.fs.updateProject(project.id, { coverImage, coverImageBase, coverPrompt });
       this._currentProject.coverImage = coverImage;
+      this._currentProject.coverImageBase = coverImageBase;
       this._currentProject.coverPrompt = coverPrompt;
 
       // Update display
@@ -4805,6 +4811,9 @@ class App {
     const position = document.getElementById('cover-edit-position')?.value || 'bottom';
     const shadow = document.getElementById('cover-edit-shadow')?.value || 'light';
 
+    // Use base image (without text) if available, otherwise fall back to coverImage
+    const imageSrc = project.coverImageBase || project.coverImage;
+
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
@@ -4865,7 +4874,7 @@ class App {
         ctx.fillText(authorText, centerX, authorY, canvas.width - 40);
       }
     };
-    img.src = project.coverImage;
+    img.src = imageSrc;
   }
 
   _applyCoverEdits() {
