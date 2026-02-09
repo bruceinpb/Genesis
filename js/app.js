@@ -4713,8 +4713,17 @@ class App {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      canvas.width = img.width || 600;
-      canvas.height = img.height || 900;
+      // Cap canvas dimensions to keep JPEG output under Firestore's 1MB field limit
+      const MAX_DIM = 800;
+      let w = img.width || 600;
+      let h = img.height || 900;
+      if (w > MAX_DIM || h > MAX_DIM) {
+        const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      canvas.width = w;
+      canvas.height = h;
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
       // Apply text shadow
@@ -4791,13 +4800,32 @@ class App {
     await new Promise(r => setTimeout(r, 300));
 
     try {
-      // Use JPEG with progressive quality reduction to stay under Firestore's 1MB limit
-      const MAX_BYTES = 900000; // 900KB to stay safely under 1MB
-      let quality = 0.92;
-      let dataUrl = canvas.toDataURL('image/jpeg', quality);
-      while (dataUrl.length > MAX_BYTES && quality > 0.3) {
-        quality -= 0.1;
-        dataUrl = canvas.toDataURL('image/jpeg', quality);
+      // Firestore has a 1,048,487 byte limit per field value.
+      // We must keep the data URL string under this limit.
+      const MAX_BYTES = 1000000;
+
+      // Step 1: Try progressive JPEG quality reduction
+      let quality = 0.85;
+      let sourceCanvas = canvas;
+      let dataUrl = sourceCanvas.toDataURL('image/jpeg', quality);
+
+      while (dataUrl.length > MAX_BYTES && quality > 0.1) {
+        quality -= 0.05;
+        dataUrl = sourceCanvas.toDataURL('image/jpeg', quality);
+      }
+
+      // Step 2: If still too large, downscale image dimensions
+      if (dataUrl.length > MAX_BYTES) {
+        let scale = 0.8;
+        while (dataUrl.length > MAX_BYTES && scale >= 0.3) {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = Math.round(canvas.width * scale);
+          tempCanvas.height = Math.round(canvas.height * scale);
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
+          dataUrl = tempCanvas.toDataURL('image/jpeg', 0.6);
+          scale -= 0.1;
+        }
       }
 
       // Save cover typography settings
