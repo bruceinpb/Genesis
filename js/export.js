@@ -85,10 +85,16 @@ class ExportManager {
     text-align: center;
     margin-bottom: 48pt;
   }
-  .chapter-start h2 {
+  .chapter-start h1 {
     font-family: 'Courier New', Courier, monospace;
-    font-size: 12pt;
+    font-size: 14pt;
     text-transform: uppercase;
+    font-weight: bold;
+  }
+  .scene-break {
+    text-align: center;
+    margin: 24pt 0;
+    font-size: 12pt;
   }
   p {
     text-indent: 0.5in;
@@ -113,12 +119,17 @@ class ExportManager {
 
     for (const chapter of chapters) {
       html += `\n<div class="chapter-start">
-  <h2>${this._escapeHtml(chapter.title)}</h2>
+  <h1>${this._escapeHtml(chapter.title)}</h1>
 </div>\n\n`;
 
       const paragraphs = this._contentToParagraphs(chapter.content);
       paragraphs.forEach(p => {
-        html += `<p>${this._escapeHtml(p)}</p>\n`;
+        const trimmed = p.trim();
+        if (trimmed === '* * *' || trimmed === '***' || trimmed === '---') {
+          html += `<div class="scene-break">* * *</div>\n`;
+        } else {
+          html += `<p>${this._escapeHtml(p)}</p>\n`;
+        }
       });
     }
 
@@ -161,12 +172,18 @@ class ExportManager {
     margin: 2em 0 0.5em;
     color: #1a1a1a;
   }
-  h2 {
-    font-size: 1.5em;
+  h1.chapter-title {
+    font-size: 1.8em;
     text-align: center;
     margin: 3em 0 1.5em;
     color: #1a1a1a;
     page-break-before: always;
+  }
+  .scene-break {
+    text-align: center;
+    margin: 2em 0;
+    color: #999;
+    font-size: 1.2em;
   }
   p { text-indent: 1.5em; margin: 0 0 0.2em; }
   p:first-of-type, h2 + p { text-indent: 0; }
@@ -185,7 +202,7 @@ class ExportManager {
 `;
 
     for (const chapter of chapters) {
-      html += `\n<h2>${this._escapeHtml(chapter.title)}</h2>\n\n`;
+      html += `\n<h1 class="chapter-title">${this._escapeHtml(chapter.title)}</h1>\n\n`;
       html += this._sanitizeContent(chapter.content) + '\n';
     }
 

@@ -776,12 +776,18 @@ class App {
     let allStreamedText = '';
 
     // Show iterative overlay for the scoring phases
+    const qualityThresholdDisplay = this._currentProject?.qualityThreshold || 90;
     this._showIterativeOverlay(true);
     this._showIterativeScoringNotice(false);
     this._updateIterativeScore(null);
     this._updateIterativeIteration(0, 0);
+    // Update threshold display
+    const thresholdLabelEl = document.getElementById('iterative-threshold-label');
+    if (thresholdLabelEl) thresholdLabelEl.textContent = `Target: ${qualityThresholdDisplay}%`;
+    const thresholdMarkerEl = document.getElementById('iterative-progress-threshold');
+    if (thresholdMarkerEl) thresholdMarkerEl.style.left = qualityThresholdDisplay + '%';
     const logEl = document.getElementById('iterative-status-log');
-    if (logEl) logEl.textContent = `Generating ~${wordTarget} words in scored chunks\u2026`;
+    if (logEl) logEl.textContent = `Generating ~${wordTarget} words in scored chunks (threshold: ${qualityThresholdDisplay}%)\u2026`;
 
     while (wordsGenerated < wordTarget && !this._generateCancelled) {
       chunkNum++;
@@ -822,6 +828,7 @@ class App {
             {
               onChunk: (text) => {
                 streamedText += text;
+                streamedText = this._stripEmDashes(streamedText);
                 const startingContent = currentExisting.trim() ? currentExisting : '';
                 const paragraphs = streamedText.split('\n\n');
                 const newHtml = paragraphs
@@ -840,6 +847,8 @@ class App {
                 this._trackDailyWords(chapterWords);
               },
               onDone: () => {
+                // Format headings and scene breaks
+                editorEl.innerHTML = this._formatGeneratedHtml(editorEl.innerHTML, chapterTitle);
                 const content = this.editor.getContent();
                 if (this.state.currentChapterId) {
                   this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
@@ -876,26 +885,171 @@ class App {
       // If chunk was too small or empty, stop to avoid infinite loop
       if (chunkWords < 10) break;
 
-      // --- Score this chunk ---
+      // --- Score this chunk and refine if below threshold ---
       if (streamedText.length > 50) {
-        this._updateIterativePhase('Scoring\u2026');
-        this._showIterativeScoringNotice(true);
-        this._updateIterativeLog(`Chunk ${chunkNum}: Scoring\u2026`);
+        const qualityThreshold = this._currentProject?.qualityThreshold || 90;
+        const MAX_CHUNK_REWRITES = 6;
+        let currentChunkText = streamedText;
+        let chunkBestScore = 0;
+        let chunkBestText = streamedText;
+        let chunkIteration = 0;
 
-        try {
-          const review = await this.generator.scoreProse(streamedText);
+        while (chunkIteration < MAX_CHUNK_REWRITES && !this._generateCancelled) {
+          chunkIteration++;
+          this._updateIterativePhase('Scoring\u2026');
+          this._showIterativeScoringNotice(true);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Scoring (attempt ${chunkIteration})\u2026`);
+
+          let review;
+          try {
+            review = await this.generator.scoreProse(currentChunkText, chunkIteration > 1 ? {
+              isRewrite: true,
+              previousScore: chunkBestScore,
+              previousIssueCount: 0,
+              previousSubscores: {}
+            } : undefined);
+          } catch (err) {
+            this._showIterativeScoringNotice(false);
+            this._updateIterativeLog(`Chunk ${chunkNum}: Scoring failed: ${err.message}`);
+            break;
+          }
+
           this._showIterativeScoringNotice(false);
+          if (this._generateCancelled) break;
 
           const score = review.score || 0;
-          this._updateIterativeScore(score);
-          this._updateIterativeIteration(chunkNum, score);
+          if (score > chunkBestScore) {
+            chunkBestScore = score;
+            chunkBestText = currentChunkText;
+          }
+
+          this._updateIterativeScore(chunkBestScore);
+          this._updateIterativeIteration(chunkIteration, chunkBestScore);
           this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${score}/100 (${review.label || ''})`);
 
-          // Brief pause so user can see the score
-          await new Promise(r => setTimeout(r, 1500));
-        } catch (err) {
-          this._showIterativeScoringNotice(false);
-          this._updateIterativeLog(`Chunk ${chunkNum}: Scoring failed: ${err.message}`);
+          // If score meets threshold, pass and move on
+          if (chunkBestScore >= qualityThreshold) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Passed threshold (${qualityThreshold}%). Continuing\u2026`);
+            await new Promise(r => setTimeout(r, 1000));
+            break;
+          }
+
+          // If max rewrites reached, use best version
+          if (chunkIteration >= MAX_CHUNK_REWRITES) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Max rewrites (${MAX_CHUNK_REWRITES}) reached. Best: ${chunkBestScore}/100`);
+            break;
+          }
+
+          // Score below threshold -- collect problems and rewrite
+          this._updateIterativePhase('Fixing issues\u2026');
+          const problems = [];
+          if (review.aiPatterns) {
+            for (const p of review.aiPatterns) {
+              problems.push({
+                text: p.examples?.[0] || '',
+                description: `AI Pattern: ${p.pattern}`,
+                impact: p.estimatedImpact || 3,
+                severity: 'high'
+              });
+            }
+          }
+          if (review.issues) {
+            for (const issue of review.issues) {
+              if (issue.severity === 'low') continue;
+              problems.push({
+                text: issue.text || '',
+                description: issue.problem || '',
+                impact: issue.estimatedImpact || 1,
+                severity: issue.severity
+              });
+            }
+          }
+          problems.sort((a, b) => b.impact - a.impact);
+          const cappedProblems = problems.slice(0, 10);
+          const formattedProblems = cappedProblems.map(p => {
+            if (p.text) return `FIND: "${p.text}" \u2192 PROBLEM: ${p.description} [${p.severity}, ~${p.impact} pts]`;
+            return `${p.description} [${p.severity}, ~${p.impact} pts]`;
+          });
+
+          if (formattedProblems.length === 0) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: No fixable issues at score ${score}. Moving on.`);
+            break;
+          }
+
+          this._updateIterativeLog(`Chunk ${chunkNum}: Fixing ${formattedProblems.length} issues\u2026`);
+
+          // Rewrite the chunk
+          const preChunkContent = currentExisting;
+          let rewrittenText = '';
+          try {
+            await new Promise((resolve, reject) => {
+              if (this._generateCancelled) { resolve(); return; }
+              this.generator.rewriteProse(
+                {
+                  originalProse: currentChunkText,
+                  problems: formattedProblems,
+                  userInstructions: `Rewrite to fix the listed issues. Keep approximately the same length (~${thisChunkTarget} words). Do NOT expand or add extra content.`,
+                  chapterTitle,
+                  characters,
+                  notes,
+                  chapterOutline,
+                  aiInstructions,
+                  tone,
+                  style,
+                  wordTarget: thisChunkTarget,
+                  maxTokens: maxTokensPerChunk,
+                  genre,
+                  genreRules,
+                  voice: project?.voice || '',
+                  previousScore: score,
+                  previousSubscores: review.subscores,
+                  rewriteIteration: chunkIteration
+                },
+                {
+                  onChunk: (text) => {
+                    rewrittenText += text;
+                    rewrittenText = this._stripEmDashes(rewrittenText);
+                    const startingContent = preChunkContent.trim() ? preChunkContent : '';
+                    const paragraphs = rewrittenText.split('\n\n');
+                    const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+                    editorEl.innerHTML = startingContent + newHtml;
+                    const container = editorEl.closest('.editor-area');
+                    if (container) container.scrollTop = container.scrollHeight;
+                  },
+                  onDone: () => {
+                    const content = this.editor.getContent();
+                    if (this.state.currentChapterId) {
+                      this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+                      this._updateLocalWordCounts(content);
+                    }
+                    resolve();
+                  },
+                  onError: (err) => reject(err)
+                }
+              );
+            });
+          } catch (err) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Rewrite failed: ${err.message}`);
+            break;
+          }
+
+          if (this._generateCancelled) break;
+
+          // Use rewritten text if valid, otherwise keep current
+          if (rewrittenText && rewrittenText.length > 20) {
+            currentChunkText = rewrittenText;
+          }
+        }
+
+        // If best text differs from what's in editor, restore best version
+        if (chunkBestText !== currentChunkText && chunkBestScore > 0) {
+          const startingContent = currentExisting.trim() ? currentExisting : '';
+          const paragraphs = chunkBestText.split('\n\n');
+          const restoredHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+          editorEl.innerHTML = startingContent + restoredHtml;
+          if (this.state.currentChapterId) {
+            this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+          }
         }
       }
 
@@ -1718,6 +1872,9 @@ class App {
     if (subtitleEl) subtitleEl.value = project.subtitle || '';
     if (totalWordsEl) totalWordsEl.value = project.wordCountGoal || 80000;
 
+    const thresholdEl = document.getElementById('bs-quality-threshold');
+    if (thresholdEl) thresholdEl.value = project.qualityThreshold || 90;
+
     // Calculate num chapters from existing or default
     const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
     const numCh = project.numChapters || chapters.length || 20;
@@ -1742,13 +1899,14 @@ class App {
     const subtitle = document.getElementById('bs-subtitle')?.value?.trim() || '';
     const wordCountGoal = parseInt(document.getElementById('bs-total-words')?.value) || 80000;
     const numChapters = parseInt(document.getElementById('bs-num-chapters')?.value) || 20;
+    const qualityThreshold = Math.max(50, Math.min(100, parseInt(document.getElementById('bs-quality-threshold')?.value) || 90));
 
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
-        title, subtitle, wordCountGoal, numChapters
+        title, subtitle, wordCountGoal, numChapters, qualityThreshold
       });
 
-      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters };
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       alert('Book structure saved.');
@@ -2070,6 +2228,12 @@ class App {
     this._updateIterativePhase('Generating paragraph\u2026');
     this._updateIterativeScore(null);
     this._updateIterativeIteration(0, 0);
+    // Update threshold display
+    const qualityThreshold = this._currentProject?.qualityThreshold || 90;
+    const thresholdLabel = document.getElementById('iterative-threshold-label');
+    if (thresholdLabel) thresholdLabel.textContent = `Target: ${qualityThreshold}%`;
+    const thresholdMarker = document.getElementById('iterative-progress-threshold');
+    if (thresholdMarker) thresholdMarker.style.left = qualityThreshold + '%';
     // Clear log for new chunk
     const logEl = document.getElementById('iterative-status-log');
     if (logEl) logEl.textContent = `Chunk ${this._iterativeChunkNum}: Generating ~100 words\u2026`;
@@ -2140,6 +2304,7 @@ class App {
           {
             onChunk: (text) => {
               streamedText += text;
+              streamedText = this._stripEmDashes(streamedText);
               const startingContent = existingContent.trim() ? existingContent : '';
               const paragraphs = streamedText.split('\n\n');
               const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
@@ -2153,6 +2318,8 @@ class App {
               if (fwcWords) fwcWords.textContent = wc.length.toLocaleString();
             },
             onDone: () => {
+              // Format headings and scene breaks
+              editorEl.innerHTML = this._formatGeneratedHtml(editorEl.innerHTML, chapterTitle);
               // Save generated content
               const content = this.editor.getContent();
               if (this.state.currentChapterId) {
@@ -2193,9 +2360,9 @@ class App {
   }
 
   /**
-   * Score the current paragraph and refine it if below 90%.
-   * Keeps iterating until score >= 90 or max iterations reached.
-   * When score >= 90%, automatically proceeds to the next chunk.
+   * Score the current paragraph and refine it if below the quality threshold.
+   * Keeps iterating until score >= threshold or max iterations reached.
+   * When score >= threshold, automatically proceeds to the next chunk.
    */
   async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
     if (this._iterativeCancelled) {
@@ -2269,8 +2436,9 @@ class App {
     this._iterPrevSubscores = review.subscores;
 
     // Check if we've reached the target (use bestScore which may be from a previous iteration)
-    if (bestScore >= 90) {
-      this._updateIterativeLog(`Chunk ${this._iterativeChunkNum}: Score ${bestScore}/100 — passed! Proceeding to next chunk\u2026`);
+    const qualityThreshold = this._currentProject?.qualityThreshold || 90;
+    if (bestScore >= qualityThreshold) {
+      this._updateIterativeLog(`Chunk ${this._iterativeChunkNum}: Score ${bestScore}/100 -- passed threshold (${qualityThreshold}%)! Proceeding to next chunk\u2026`);
       // Brief pause so user can see the passing score before next chunk starts
       await new Promise(r => setTimeout(r, 1200));
       // Auto-continue to next chunk
@@ -2280,13 +2448,13 @@ class App {
 
     // Check if max iterations reached — present the best version for review
     if (iteration >= MAX_ITERATIONS) {
-      this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}`);
+      this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best score: ${bestScore}/${qualityThreshold}`);
       this._showIterativeOverlay(false);
       this._presentIterativeAccept(this._iterativeBestText || currentText, bestScore);
       return;
     }
 
-    // Score is below 90% — fix errors surgically
+    // Score is below threshold — fix errors surgically
     this._updateIterativePhase('Fixing errors\u2026');
     this._updateIterativeLog(`Iteration ${iteration}: Fixing ${this._iterPrevIssueCount} issues\u2026`);
 
@@ -2379,6 +2547,7 @@ class App {
           {
             onChunk: (text) => {
               rewrittenText += text;
+              rewrittenText = this._stripEmDashes(rewrittenText);
               const startingContent = baseContent.trim() ? baseContent : '';
               const paragraphs = rewrittenText.split('\n\n');
               const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
@@ -2808,6 +2977,7 @@ class App {
       {
         onChunk: (text) => {
           streamedText += text;
+          streamedText = this._stripEmDashes(streamedText);
           const startingContent = baseContent.trim() ? baseContent : '';
           const paragraphs = streamedText.split('\n\n');
           const newHtml = paragraphs
@@ -3121,6 +3291,16 @@ class App {
     document.getElementById('btn-scene-break')?.addEventListener('click', () => this.editor.insertSceneBreak());
     document.getElementById('btn-undo')?.addEventListener('click', () => this.editor.undo());
     document.getElementById('btn-redo')?.addEventListener('click', () => this.editor.redo());
+
+    // --- Help button ---
+    document.getElementById('btn-help')?.addEventListener('click', () => {
+      const overlay = document.getElementById('help-features-overlay');
+      if (overlay) overlay.classList.add('visible');
+    });
+    document.getElementById('btn-help-close')?.addEventListener('click', () => {
+      const overlay = document.getElementById('help-features-overlay');
+      if (overlay) overlay.classList.remove('visible');
+    });
 
     // --- Panel buttons ---
     document.getElementById('btn-generate')?.addEventListener('click', () => this.openGeneratePanel());
@@ -3913,6 +4093,42 @@ class App {
       }
     }
     return { label, rules };
+  }
+
+  /**
+   * Format generated prose HTML: convert chapter headings to H1, scene breaks to centered markers.
+   */
+  _formatGeneratedHtml(html, chapterTitle) {
+    if (!html) return html;
+    // Convert scene break paragraphs (e.g. "* * *") to centered format
+    html = html.replace(/<p>\s*\*\s*\*\s*\*\s*<\/p>/gi, '<p style="text-align:center;text-indent:0">* * *</p>');
+
+    // If the first paragraph matches the chapter title, convert it to H1
+    if (chapterTitle) {
+      const escapedTitle = chapterTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const h1Regex = new RegExp(`^(<p>)(\\s*${escapedTitle}\\s*)(</p>)`, 'i');
+      html = html.replace(h1Regex, '<h1 style="text-align:center;margin:1em 0 0.5em;font-size:1.8em;">$2</h1>');
+    }
+    return html;
+  }
+
+  /**
+   * Strip em dashes and en dashes from generated text, replacing with commas or appropriate punctuation.
+   */
+  _stripEmDashes(text) {
+    if (!text) return text;
+    // Replace em dash (U+2014) and en dash (U+2013) surrounded by spaces with comma
+    text = text.replace(/\s*\u2014\s*/g, ', ');
+    text = text.replace(/\s*\u2013\s*/g, ', ');
+    // Replace double/triple hyphens used as em dashes
+    text = text.replace(/\s*---\s*/g, ', ');
+    text = text.replace(/\s*--\s*/g, ', ');
+    // Clean up double commas or comma-period
+    text = text.replace(/,\s*,/g, ',');
+    text = text.replace(/,\s*\./g, '.');
+    text = text.replace(/,\s*!/g, '!');
+    text = text.replace(/,\s*\?/g, '?');
+    return text;
   }
 
   _esc(str) {

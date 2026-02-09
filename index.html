@@ -78,7 +78,7 @@
     </div>
 
     <div class="sidebar-setup-book">
-      <button class="setup-book-pill" id="btn-book-structure" data-tooltip="Setup Book — Configure the overall structure of your book: total words, number of chapters, subtitle, and generate AI-powered chapter outlines.">Setup Book</button>
+      <button class="setup-book-pill" id="btn-book-structure" data-tooltip="Setup Book — Configure the overall structure of your book: total words, number of chapters, subtitle, quality threshold for AI generation, and generate AI-powered chapter outlines.">Setup Book</button>
     </div>
 
     <nav class="sidebar-nav">
@@ -133,9 +133,9 @@
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-bold" data-tooltip="Bold — Make selected text bold to emphasize important words or phrases. Keyboard shortcut: Cmd+B."><b>B</b></button>
       <button class="toolbar-btn" id="btn-italic" data-tooltip="Italic — Make selected text italic. Used for emphasis, internal thoughts, or foreign words. Keyboard shortcut: Cmd+I."><i>I</i></button>
-      <button class="toolbar-btn" id="btn-heading" data-tooltip="Heading — Insert a heading at the cursor position. Use for chapter titles or major section breaks within your manuscript.">H</button>
+      <button class="toolbar-btn" id="btn-heading" data-tooltip="Heading — Insert a Heading 1 at the cursor position. Use for chapter titles (required for KDP table of contents). AI-generated chapters automatically start with an H1 chapter heading.">H</button>
       <button class="toolbar-btn" id="btn-blockquote" data-tooltip="Blockquote — Format selected text as an indented block quote. Useful for letters, signs, poems, or quoted passages within your story.">&#8220;</button>
-      <button class="toolbar-btn" id="btn-scene-break" data-tooltip="Scene Break — Insert a scene break marker (***). Use to mark a shift in time, location, or point of view within a chapter.">***</button>
+      <button class="toolbar-btn" id="btn-scene-break" data-tooltip="Scene Break — Insert a scene break marker (* * *). Use to mark a shift in time, location, or point of view within a chapter. AI-generated prose automatically includes scene breaks between beats and at chapter endings.">***</button>
     </div>
 
     <div class="toolbar-group">
@@ -149,10 +149,11 @@
     <div class="toolbar-spacer"></div>
 
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-generate" data-tooltip="AI Prose Generator — Open the AI writing assistant. Describe your scene and Claude will generate prose that matches your story's voice, style, and characters." style="color:var(--accent-primary);font-weight:700;">AI</button>
+      <button class="toolbar-btn" id="btn-generate" data-tooltip="AI Prose Generator — Open the AI writing assistant. Describe your scene and Claude will generate quality-scored prose that matches your story's voice, style, and characters. Each chunk is scored and refined to meet your quality threshold. Em dashes are automatically removed. Scene breaks and chapter headings are formatted for KDP." style="color:var(--accent-primary);font-weight:700;">AI</button>
       <button class="toolbar-btn" id="btn-analysis" data-tooltip="Prose Analysis — Analyze your current chapter for writing quality, pacing, dialogue balance, sentence variety, and prose style. Provides detailed feedback and suggestions from Claude AI.">&#9874;</button>
-      <button class="toolbar-btn" id="btn-export" data-tooltip="Export — Export your manuscript in multiple formats: Standard Manuscript (Shunn format for agent/publisher submissions), Styled HTML, Plain Text, Full JSON Backup, or download your cover image.">&#8681;</button>
+      <button class="toolbar-btn" id="btn-export" data-tooltip="Export — Export your manuscript in multiple formats: Standard Manuscript (Shunn format with H1 chapter headings for KDP table of contents), Styled HTML, Plain Text, Full JSON Backup, or download your cover image.">&#8681;</button>
       <button class="toolbar-btn" id="btn-focus-mode" data-tooltip="Focus Mode — Enter distraction-free writing mode. Hides the sidebar, toolbar, and status bar so you can concentrate entirely on your prose. Tap the menu icon to exit.">&#9673;</button>
+      <button class="toolbar-btn" id="btn-help" data-tooltip="Help — View a detailed guide to all features, tools, and workflows available in Genesis 2.">?</button>
       <button class="toolbar-btn" id="btn-settings" data-tooltip="Settings — Configure your writing environment: appearance themes, AI model selection, API keys, daily writing goals, and project-specific settings like title, genre, and word count targets.">&#9881;</button>
     </div>
   </header>
@@ -191,9 +192,9 @@
   <!-- ===== Continue Writing Bar ===== -->
   <div class="continue-bar" id="continue-bar" style="display:none;">
     <div class="continue-group" style="display:flex;gap:4px;flex:1;">
-      <button class="btn btn-primary continue-word-btn" data-words="500" data-tooltip="Continue Writing ~500 words — Generate approximately 500 words of new prose, continuing from where the story left off." style="flex:1;">+500</button>
-      <button class="btn btn-primary continue-word-btn" data-words="1000" data-tooltip="Continue Writing ~1,000 words — Generate approximately 1,000 words of new prose, continuing from where the story left off." style="flex:1;">+1,000</button>
-      <button class="btn btn-primary continue-word-btn" data-words="2000" data-tooltip="Continue Writing ~2,000 words — Generate approximately 2,000 words of new prose, continuing from where the story left off." style="flex:1;">+2,000</button>
+      <button class="btn btn-primary continue-word-btn" data-words="500" data-tooltip="Continue Writing ~500 words — Generate approximately 500 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+500</button>
+      <button class="btn btn-primary continue-word-btn" data-words="1000" data-tooltip="Continue Writing ~1,000 words — Generate approximately 1,000 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+1,000</button>
+      <button class="btn btn-primary continue-word-btn" data-words="2000" data-tooltip="Continue Writing ~2,000 words — Generate approximately 2,000 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+2,000</button>
     </div>
     <button class="btn" id="btn-continue-rethink" data-tooltip="Rethink — Revise the current chapter's outline based on your instructions before continuing to write." style="font-size:0.8rem;">Rethink</button>
     <button class="btn" id="btn-continue-to-target" data-tooltip="Write to Goal — Calculate the remaining words needed to reach your project's word count goal, then generate prose to complete the story with a satisfying conclusion.">Write to Goal</button>
@@ -259,7 +260,7 @@
         Export your manuscript in various formats for submission, sharing, or backup.
       </p>
 
-      <button class="btn" id="export-manuscript" data-tooltip="Export in standard Shunn manuscript format: Courier 12pt, double-spaced, with proper headers and page breaks. This is the industry-standard format required by most literary agents and publishers for submissions." style="width:100%;margin-bottom:8px;">
+      <button class="btn" id="export-manuscript" data-tooltip="Export in standard Shunn manuscript format: Courier 12pt, double-spaced, with H1 chapter headings for KDP table of contents, scene break markers, and proper page breaks. Industry-standard format for agents, publishers, and self-publishing." style="width:100%;margin-bottom:8px;">
         Standard Manuscript Format (HTML)
         <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
       </button>
@@ -351,7 +352,7 @@
       <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
         Persistent rules the AI must follow for every generation in this project. These are given high priority in the prompt.
       </p>
-      <textarea class="form-input" id="generate-ai-instructions" rows="4" data-tooltip="Enter rules or constraints the AI must follow for every prose generation. Examples: 'Each chapter covers 10 years of the protagonist's life', 'Write in first person present tense', 'Never use flashbacks'. These instructions are saved with the project and strongly emphasized in the AI prompt." placeholder="e.g. Each chapter covers exactly 10 years. Chapter 1 covers 1863-1873. Write in a formal, historical narrative style. Focus on factual events and real historical details."></textarea>
+      <textarea class="form-input" id="generate-ai-instructions" rows="4" data-tooltip="Enter rules or constraints the AI must follow for every prose generation. Examples: 'Each chapter covers 10 years of the protagonist's life', 'Write in first person present tense', 'Never use flashbacks'. These instructions are saved with the project and strongly emphasized in the AI prompt. Note: Em dashes are automatically banned from all generated prose." placeholder="e.g. Each chapter covers exactly 10 years. Chapter 1 covers 1863-1873. Write in a formal, historical narrative style. Focus on factual events and real historical details."></textarea>
       <button class="btn btn-sm" id="btn-save-ai-instructions" data-tooltip="Save these AI instructions to your project so they persist across sessions." style="width:100%;margin-top:6px;">Save Instructions</button>
     </div>
 
@@ -365,8 +366,8 @@
     <div id="generate-error" style="display:none;margin-bottom:16px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
 
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI. The generated prose will be appended to your current chapter in the editor. You can edit, revise, or regenerate as needed." style="flex:1;">Generate Prose</button>
-      <button class="btn" id="btn-iterative-write" data-tooltip="Iterative Write — Generate ~100 words at a time, automatically scoring and refining each paragraph until it reaches 90% quality. Shows a progress bar while working. You approve each paragraph before moving to the next." style="flex:1;color:var(--accent-primary);border-color:var(--accent-primary);">Iterative Write</button>
+      <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI. Prose is generated in scored chunks, with each chunk rewritten if it falls below your quality threshold. Em dashes are stripped, scene breaks are inserted between beats, and chapters begin with H1 headings for KDP." style="flex:1;">Generate Prose</button>
+      <button class="btn" id="btn-iterative-write" data-tooltip="Iterative Write — Generate ~100 words at a time, automatically scoring and refining each paragraph until it meets your quality threshold (set in Setup Book). Each chunk is rewritten and rescored if it falls below the threshold. You approve each paragraph before moving to the next." style="flex:1;color:var(--accent-primary);border-color:var(--accent-primary);">Iterative Write</button>
       <button class="btn" id="btn-generate-cancel" data-tooltip="Stop — Cancel the current AI generation. Any prose already received will remain in the editor." style="display:none;">Stop</button>
     </div>
 
@@ -416,6 +417,15 @@
         </div>
       </div>
       <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
+    </div>
+
+    <div class="analysis-section">
+      <h3>Quality Settings</h3>
+      <div class="form-group">
+        <label data-tooltip="Quality Threshold -- Set the minimum quality score (out of 100) that AI-generated prose must achieve before the system moves to the next chunk. Higher values produce better prose but require more iterations and API calls. Lower values generate faster with fewer rewrites. Recommended: 70-90.">Quality Threshold (%)</label>
+        <input type="number" class="form-input" id="bs-quality-threshold" value="90" min="50" max="100" step="5" placeholder="90">
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Minimum score prose must reach before continuing. Lower = faster generation, higher = better quality. Default: 90%.</p>
+      </div>
     </div>
 
     <div class="analysis-section">
@@ -505,10 +515,10 @@
         </div>
         <div class="iterative-progress-bar">
           <div id="iterative-progress-fill" class="iterative-progress-fill" style="width:0%;"></div>
-          <div class="iterative-progress-threshold"></div>
+          <div id="iterative-progress-threshold" class="iterative-progress-threshold"></div>
         </div>
         <div style="display:flex;justify-content:flex-end;font-size:0.7rem;color:var(--text-muted);margin-top:2px;">
-          <span>Target: 90%</span>
+          <span id="iterative-threshold-label">Target: 90%</span>
         </div>
       </div>
 
@@ -582,14 +592,14 @@
     </div>
     <div class="modal-body" style="overflow-y:auto;">
       <p style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:20px;line-height:1.7;">
-        Genesis 2 is a complete writing studio designed to help you craft world-class prose from concept to finished manuscript. Here's how to get started with your new project:
+        Genesis 2 is a complete writing studio designed to help you craft world-class, publication-ready prose from concept to finished manuscript. Here's how to get started with your new project:
       </p>
 
       <div class="help-step">
         <div class="help-step-number">1</div>
         <div class="help-step-content">
           <h3>Set Up Your Book Structure</h3>
-          <p>Start by tapping the <strong>Setup Book</strong> button in the sidebar. Here you'll define your book's total word count goal and number of chapters. Genesis will calculate the approximate words per chapter to help you plan your pacing. You can also choose a narrative structure template (Three-Act, Hero's Journey, etc.) to guide your story's pacing.</p>
+          <p>Start by tapping the <strong>Setup Book</strong> button in the sidebar. Here you'll define your book's total word count goal, number of chapters, and <strong>quality threshold</strong> (the minimum score AI-generated prose must achieve before moving to the next section). Genesis calculates approximate words per chapter to help plan pacing. Choose a narrative structure template (Three-Act, Hero's Journey, Seven-Point, Kishoutenketsu) to guide your story.</p>
         </div>
       </div>
 
@@ -607,10 +617,10 @@
           <h3>Add Notes &amp; Research</h3>
           <p>Use the <strong>Notes</strong> tab to organize your story's foundation. Create notes for:</p>
           <ul style="margin:8px 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
-            <li><strong>Story Plot</strong> — Outline major plot points, twists, and the arc of your narrative</li>
-            <li><strong>World Building</strong> — Detail settings, rules, history, and the world your characters inhabit</li>
-            <li><strong>General Notes</strong> — Keep track of themes, tone, timelines, and style preferences</li>
-            <li><strong>Research</strong> — Store reference material, historical facts, and technical details for accuracy</li>
+            <li><strong>Story Plot</strong> -- Outline major plot points, twists, and the arc of your narrative</li>
+            <li><strong>World Building</strong> -- Detail settings, rules, history, and the world your characters inhabit</li>
+            <li><strong>General Notes</strong> -- Keep track of themes, tone, timelines, and style preferences</li>
+            <li><strong>Research</strong> -- Store reference material, historical facts, and technical details for accuracy</li>
           </ul>
         </div>
       </div>
@@ -623,8 +633,9 @@
           <ul style="margin:8px 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
             <li>Set your book's <strong>title</strong> and <strong>subtitle</strong></li>
             <li>Choose a <strong>genre</strong> and <strong>sub-genre</strong> to guide the AI's writing style</li>
+            <li>Select a <strong>narrative voice/POV</strong> (first-person, third-limited, deep POV, and more)</li>
             <li>View and change your <strong>story structure</strong> template and track pacing progress</li>
-            <li>Add a persistent <strong>AI prompt</strong> that carries across all chapters — use this for rules like point of view, tense, or stylistic constraints</li>
+            <li>Add a persistent <strong>AI prompt</strong> that carries across all chapters for rules like tense or stylistic constraints</li>
           </ul>
         </div>
       </div>
@@ -641,7 +652,7 @@
         <div class="help-step-number">6</div>
         <div class="help-step-content">
           <h3>Write &amp; Generate Prose</h3>
-          <p>Select any chapter from the sidebar and start writing. Use the <strong>AI</strong> button in the toolbar to generate prose. You can also select a chapter with an outline and tap <strong>Accept Outline</strong> in the chapter toolbar to auto-generate prose from the outline. Continue writing with the +500, +1000, or +2000 word buttons that appear after each generation.</p>
+          <p>Select any chapter from the sidebar and start writing. Use the <strong>AI</strong> button in the toolbar to generate prose. Prose is generated in scored chunks, with each chunk automatically scored and rewritten if it falls below your quality threshold. You can also use <strong>Iterative Write</strong> to generate one paragraph at a time with fine-grained quality control. Generated chapters automatically begin with an <strong>H1 heading</strong> (for KDP table of contents) and include <strong>scene breaks</strong> between beats and at chapter endings. Continue writing with the +500, +1000, or +2000 word buttons.</p>
         </div>
       </div>
 
@@ -649,7 +660,7 @@
         <div class="help-step-number">7</div>
         <div class="help-step-content">
           <h3>Analyze &amp; Refine</h3>
-          <p>Use the <strong>anvil icon</strong> (&#9874;) in the toolbar for prose analysis to check quality, pacing, and style. The AI scores your prose and highlights areas for improvement. Use the <strong>Rewrite</strong> and <strong>Rethink</strong> tools to iterate and polish your manuscript to a professional standard.</p>
+          <p>Use the <strong>anvil icon</strong> (&#9874;) in the toolbar for prose analysis to check quality, pacing, and style. The AI scores your prose across 8 dimensions and highlights areas for improvement. Use <strong>Fix Serious Only</strong> or <strong>Fix All Issues</strong> for automated rewriting. The <strong>Rethink</strong> tool lets you revise chapter outlines.</p>
         </div>
       </div>
 
@@ -657,7 +668,7 @@
         <div class="help-step-number">8</div>
         <div class="help-step-content">
           <h3>Generate a Book Cover</h3>
-          <p>Once you have prose written, the sidebar displays a cover area. Tap <strong>Create Cover</strong> to generate an AI-powered book cover image based on your story's content and genre. You can regenerate it as many times as you like until you're satisfied. A Hugging Face API token is required (free tier available) — add it in Settings.</p>
+          <p>Once you have prose written, the sidebar displays a cover area. Tap <strong>Create Cover</strong> to generate an AI-powered book cover image based on your story's content and genre. You can regenerate it as many times as you like until you're satisfied. A Hugging Face API token is required (free tier available) -- add it in Settings.</p>
         </div>
       </div>
 
@@ -665,7 +676,7 @@
         <div class="help-step-number">9</div>
         <div class="help-step-content">
           <h3>Export Your Manuscript</h3>
-          <p>When you're ready, tap the <strong>export icon</strong> (&#8681;) to export in multiple formats: Standard Manuscript (Shunn format for agents/publishers), Styled HTML, Plain Text, or a full JSON backup. You can also download your cover image separately.</p>
+          <p>When you're ready, tap the <strong>export icon</strong> (&#8681;) to export in multiple formats: Standard Manuscript (Shunn format with H1 chapter headings for KDP table of contents), Styled HTML, Plain Text, or a full JSON backup. Scene breaks are properly formatted in all export formats. You can also download your cover image separately.</p>
         </div>
       </div>
 
@@ -674,10 +685,13 @@
         <ul style="margin:0 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.8;">
           <li>The more detail you put into characters, notes, and outlines, the better the AI prose will be</li>
           <li>Use the AI Instructions field (in the AI panel) for persistent rules the AI must follow in every generation</li>
+          <li><strong>Em dashes are banned</strong> from all AI-generated prose (they signal AI writing and format poorly in published works)</li>
+          <li>Lower your <strong>quality threshold</strong> (in Setup Book) for faster generation, raise it for higher quality</li>
           <li>Use the chapter toolbar's <strong>Select All</strong> and <strong>Delete Selected</strong> to manage chapters in bulk</li>
           <li>Set a daily writing goal in Settings to track your progress and build a consistent habit</li>
+          <li>Tap the <strong>?</strong> button in the toolbar anytime for a complete features guide</li>
           <li>Use Focus Mode (&#9673;) to remove all distractions when you need to concentrate</li>
-          <li>Your work is saved automatically — both locally and to the cloud</li>
+          <li>Your work is saved automatically to both local storage and the cloud</li>
         </ul>
       </div>
     </div>
@@ -811,6 +825,180 @@
   </div>
   <div class="panel-body" id="panel-settings-body">
     <!-- Rendered dynamically -->
+  </div>
+</div>
+
+<!-- ===== Help / Features Guide Modal ===== -->
+<div class="modal-overlay" id="help-features-overlay">
+  <div class="modal new-project-help-modal" style="max-width:640px;">
+    <div class="modal-header">
+      <h2>Genesis 2 Features Guide</h2>
+    </div>
+    <div class="modal-body" style="overflow-y:auto;max-height:70vh;">
+
+      <div class="help-step">
+        <div class="help-step-number">&#9998;</div>
+        <div class="help-step-content">
+          <h3>Rich Text Editor</h3>
+          <p>A full-featured prose editor with <strong>bold</strong>, <strong>italic</strong>, <strong>heading</strong>, <strong>blockquote</strong>, and <strong>scene break</strong> formatting. Undo/redo support, auto-save to cloud and local storage, and real-time word count tracking. Focus Mode hides all UI for distraction-free writing.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">AI</div>
+        <div class="help-step-content">
+          <h3>AI Prose Generator</h3>
+          <p>Generate prose from scene descriptions using Claude AI. Choose word targets from 250 to 2,000 words. Set tone, style inspiration, and use your characters and notes as context. AI Instructions persist across sessions and apply to every generation. The AI avoids common AI writing patterns, PET phrases, and em dashes to produce authentic, human-sounding prose.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#9881;</div>
+        <div class="help-step-content">
+          <h3>Iterative Writing</h3>
+          <p>Generate prose in ~100-word chunks with automatic quality scoring and refinement. Each chunk is scored against 8 dimensions (sentence variety, dialogue, sensory detail, emotional resonance, vocabulary, narrative flow, originality, and technical execution). If a chunk scores below your quality threshold, it is automatically rewritten and rescored until it passes or max iterations are reached. You approve each paragraph before continuing.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#9874;</div>
+        <div class="help-step-content">
+          <h3>Scored Chunk Generation</h3>
+          <p>Standard prose generation (500+ words) uses scored chunks. The total word target is broken into ~300-word segments. Each segment is generated, scored, and if it falls below your quality threshold, automatically rewritten and rescored before the next segment begins. This ensures consistent quality across longer passages.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">%</div>
+        <div class="help-step-content">
+          <h3>Variable Quality Threshold</h3>
+          <p>Set the minimum quality score (50-100%) in <strong>Setup Book &gt; Quality Settings</strong>. Lower thresholds generate faster with fewer rewrites. Higher thresholds produce more polished prose but require more API calls. Default is 90%. The threshold applies to both iterative writing and scored chunk generation.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#9878;</div>
+        <div class="help-step-content">
+          <h3>Prose Analysis &amp; Rewriting</h3>
+          <p>Analyze any chapter for quality using the <strong>anvil icon</strong>. Claude scores your prose across 8 dimensions and identifies specific issues with severity levels and estimated point impact. Use <strong>Fix Serious Only</strong> to address high-impact issues, or <strong>Fix All Issues</strong> for comprehensive improvement. The rewrite engine makes surgical changes while preserving your voice.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#9733;</div>
+        <div class="help-step-content">
+          <h3>Chapter Headings &amp; Scene Breaks</h3>
+          <p>Generated chapters automatically begin with a <strong>Heading 1</strong> chapter title for KDP table of contents compatibility. Scene breaks (<strong>* * *</strong>) are automatically inserted between beats and at chapter endings. You can also manually insert scene breaks using the <strong>***</strong> button in the toolbar.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128218;</div>
+        <div class="help-step-content">
+          <h3>Book Structure &amp; Outlines</h3>
+          <p>Define your book's total word count goal, number of chapters, title, and subtitle in <strong>Setup Book</strong>. Choose from narrative structure templates (Three-Act, Hero's Journey, Seven-Point, Kishoutenketsu) or create custom outlines. AI generates detailed ~200-250 word outlines per chapter based on your characters, notes, and structure.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128100;</div>
+        <div class="help-step-content">
+          <h3>Character Profiles</h3>
+          <p>Create detailed character profiles with name, role, description, motivation, character arc, and personality traits. Character data is automatically included as context when generating prose, ensuring consistency. Access via the <strong>Characters</strong> tab in the sidebar.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128221;</div>
+        <div class="help-step-content">
+          <h3>Notes &amp; Research</h3>
+          <p>Organize story foundation with categorized notes: <strong>General</strong>, <strong>Worldbuilding</strong>, <strong>Research</strong>, and <strong>Plot</strong>. All notes are fed to the AI as context during generation. Access via the <strong>Notes</strong> tab in the sidebar.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#127912;</div>
+        <div class="help-step-content">
+          <h3>Genre &amp; Voice Settings</h3>
+          <p>Choose from 20+ literary genres with specialized prose style rules. Select a narrative voice/POV (first-person, third-limited, deep POV, stream-of-consciousness, and more). Genre and voice settings are saved per project and guide all AI generation. Configure in <strong>Settings &gt; Project Settings</strong>.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128248;</div>
+        <div class="help-step-content">
+          <h3>AI Book Cover</h3>
+          <p>Generate AI-powered book covers based on your story content and genre. Uses Hugging Face Stable Diffusion / FLUX models. Covers display your book title and optional subtitle. Requires a free Hugging Face API token (configured in Settings). Regenerate as many times as needed.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#8681;</div>
+        <div class="help-step-content">
+          <h3>Export Formats</h3>
+          <p>Export your manuscript in multiple formats:</p>
+          <ul style="margin:8px 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+            <li><strong>Standard Manuscript</strong> (Shunn format) with H1 chapter headings for KDP/agent submissions</li>
+            <li><strong>Styled HTML</strong> for ebook formatting with proper chapter headings</li>
+            <li><strong>Plain Text</strong> for universal compatibility</li>
+            <li><strong>JSON Backup</strong> with all project data for backup and transfer</li>
+            <li><strong>Cover Image</strong> download separately</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128274;</div>
+        <div class="help-step-content">
+          <h3>Writing Quality Rules</h3>
+          <p>Genesis 2 enforces strict quality rules to produce publication-ready prose:</p>
+          <ul style="margin:8px 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+            <li><strong>Em dashes are banned</strong> from all generated text (they signal AI writing and format poorly in published works)</li>
+            <li>AI writing patterns are detected and penalized in scoring</li>
+            <li>PET phrases (cliched body reactions) are flagged and rewritten</li>
+            <li>Show-don't-tell is enforced over exposition</li>
+            <li>Genre-specific style rules maintain consistency</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128736;</div>
+        <div class="help-step-content">
+          <h3>Continue Writing &amp; Write to Goal</h3>
+          <p>After each generation, use <strong>+500</strong>, <strong>+1,000</strong>, or <strong>+2,000</strong> buttons to continue writing. <strong>Write to Goal</strong> automatically generates prose until your project's word count target is reached, including a concluding section. <strong>Rethink</strong> lets you revise a chapter's outline before continuing.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#128187;</div>
+        <div class="help-step-content">
+          <h3>Multi-User &amp; Cloud Sync</h3>
+          <p>Support for multiple users on a single device. Projects are stored in Firebase Firestore (cloud) and IndexedDB (local). Auto-save ensures no work is lost. Switch between users and projects from the home screen.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#127919;</div>
+        <div class="help-step-content">
+          <h3>Daily Writing Goals</h3>
+          <p>Set a daily word count target in Settings. Progress is tracked in the status bar and resets each day at midnight. Build a consistent writing habit by setting achievable daily goals.</p>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:16px;margin-top:20px;">
+        <h3 style="font-size:0.85rem;font-weight:600;color:var(--accent-primary);margin-bottom:8px;">Keyboard Shortcuts</h3>
+        <ul style="margin:0 0 0 20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.8;">
+          <li><strong>Cmd/Ctrl + B</strong> — Bold text</li>
+          <li><strong>Cmd/Ctrl + I</strong> — Italic text</li>
+          <li><strong>Cmd/Ctrl + Z</strong> — Undo</li>
+          <li><strong>Cmd/Ctrl + Shift + Z</strong> — Redo</li>
+        </ul>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:center;">
+      <button class="btn btn-primary" id="btn-help-close" style="padding:12px 48px;">Close</button>
+    </div>
   </div>
 </div>
 
