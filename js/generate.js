@@ -135,6 +135,14 @@ class ProseGenerator {
 
     const systemPrompt = `You are a master book architect and bestselling author. You create extraordinarily detailed chapter outlines that serve as the blueprint for an entire novel. Your outlines are specific, actionable, and rich with narrative detail.
 
+IMPORTANT — KNOWLEDGE BASE INTEGRATION:
+If the notes section contains a "PROJECT KNOWLEDGE BASE" section, you MUST actively incorporate information from those reference materials into your outlines. This includes:
+- Historical facts, dates, names, and events should be woven into chapter events
+- Technical details and domain knowledge should inform scene accuracy
+- World-building information should shape settings and atmosphere
+- Character background information should drive motivations and dialogue
+- Any research materials should enrich the specificity and authenticity of each chapter outline
+
 Your output must be valid JSON — an array of objects with "title" and "outline" fields. No markdown, no commentary, just JSON.`;
 
     let userPrompt = `Create detailed chapter outlines for a ${numChapters}-chapter novel.
@@ -567,7 +575,18 @@ This self-checking protocol is MANDATORY. The error database represents patterns
     }
 
     if (notes) {
-      prompt += `\nAdditional context/notes:\n${notes}\n`;
+      // Separate knowledge base from regular notes for clearer AI consumption
+      const knowledgeStart = notes.indexOf('=== PROJECT KNOWLEDGE BASE');
+      if (knowledgeStart >= 0) {
+        const regularNotes = notes.slice(0, knowledgeStart).trim();
+        const knowledgeSection = notes.slice(knowledgeStart);
+        if (regularNotes) {
+          prompt += `\nAdditional context/notes:\n${regularNotes}\n`;
+        }
+        prompt += `\n${knowledgeSection}\n`;
+      } else {
+        prompt += `\nAdditional context/notes:\n${notes}\n`;
+      }
     }
 
     if (existingContent) {
@@ -852,20 +871,31 @@ CRITICAL: Previous rewrites have failed to improve the score because they introd
       throw new Error('No API key set.');
     }
 
-    let systemPrompt = `You are an expert literary editor performing a self-reflection analysis. You just scored a piece of prose and now must deeply analyze HOW to improve it. Think step by step about what's holding the score back and create a precise, actionable fix list.
+    let systemPrompt = `You are an expert literary editor performing a deep self-reflection analysis. You just scored a piece of prose and now must deeply analyze HOW to improve it. Think step by step about what's holding the score back and create a precise, actionable fix list.
 
 Your analysis should consider:
-1. What specific weaknesses are dragging the score down?
-2. For each weakness, what is the EXACT surgical fix or rewrite needed?
+1. What specific weaknesses are dragging the score down the most?
+2. For each weakness, what is the EXACT surgical fix needed? Prefer the SMALLEST possible change.
 3. Will each proposed fix genuinely improve the prose, or just change it?
 4. Are there any fixes that could be applied together for compounding improvement?
+5. Could this fix introduce NEW problems (broken rhythm, lost voice, new clichés)?
+
+CRITICAL — SURGICAL, MINIMUM-CHANGE APPROACH:
+- Prefer word-level and phrase-level substitutions over full sentence rewrites
+- Full sentence rewrites often INTRODUCE more errors than they fix
+- Full paragraph rewrites are FORBIDDEN unless explicitly necessary
+- The goal is to PRESERVE what works while fixing ONLY what's broken
+- Each fix should change the MINIMUM number of words needed to resolve the issue
+- Example of GOOD surgical fix: Replace "very tired" → "exhausted" (one word swap)
+- Example of BAD fix: Rewrite the entire paragraph to fix one weak word
 
 RULES:
 - Be specific — reference exact phrases from the prose
 - Each fix must include the problematic text AND the proposed replacement approach
 - Prioritize fixes by estimated point impact (highest first)
 - Never suggest introducing: em dashes, filter words (felt/saw/noticed/seemed/realized), AI-telltale words (delicate/intricate/testament/tapestry/symphony/nestled), PET phrases, tricolons
-- Focus on fixes that will MEASURABLY improve the score toward the threshold`;
+- Focus on fixes that will MEASURABLY improve the score toward the threshold
+- Limit to the top 8 highest-impact fixes — more fixes increases the risk of regression`;
 
     if (previousFixLists && previousFixLists.length > 0) {
       systemPrompt += `\n\nIMPORTANT: Previous fix lists have already been attempted but the score has not reached the threshold.
@@ -1002,17 +1032,25 @@ Create a fix list based on this analysis. Output valid JSON only:
 
     this.abortController = new AbortController();
 
-    let systemPrompt = `You are a senior literary editor implementing a pre-analyzed fix list. You have already reflected on this prose and identified specific improvements. Now implement them precisely.
+    let systemPrompt = `You are a senior literary editor implementing a pre-analyzed fix list. You have already reflected on this prose and identified specific improvements. Now implement them with SURGICAL PRECISION.
 
 === YOUR APPROACH ===
 1. Read the original prose and the fix list carefully
-2. For each fix, implement the change as described in the guidance
-3. Ensure each fix genuinely improves the prose — more vivid, more specific, more human-sounding
-4. Preserve everything that isn't being fixed — copy unchanged text verbatim
-5. After all fixes, read the result to verify it flows naturally
+2. For each fix, change ONLY the specific words or phrases identified — do NOT rewrite surrounding text
+3. Copy all unchanged text VERBATIM — character for character, including punctuation and whitespace
+4. Surgical means: if the fix targets a two-word phrase, only change those two words
+5. After all fixes, verify the result reads naturally without introducing new problems
+
+=== CRITICAL: MINIMUM CHANGE PRINCIPLE ===
+- Change the ABSOLUTE MINIMUM number of words needed for each fix
+- Do NOT "improve" surrounding text while making a fix — that introduces new errors
+- Do NOT restructure sentences unless the fix list explicitly calls for it
+- Do NOT change paragraph breaks, sentence order, or narrative structure
+- If a fix says to replace a phrase, replace ONLY that phrase
+- Rewrites of full sentences or paragraphs often induce MORE errors than they fix
 
 === RULES ===
-- PRESERVE: voice, tense, POV, paragraph structure, approximate length
+- PRESERVE: voice, tense, POV, paragraph structure, approximate length, sentence count
 - OUTPUT: Only the rewritten prose. No commentary, labels, or meta-text
 - NEVER introduce: em dashes, filter words (felt/saw/noticed/seemed/realized), AI-telltale words (delicate/intricate/testament/tapestry/symphony/nestled), tricolons, purple prose, PET phrases
 - Each fix must result in measurably better prose, not just different prose`;
