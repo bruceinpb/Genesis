@@ -1964,14 +1964,14 @@ class App {
       placeholder.style.display = 'none';
       img.style.display = 'block';
       img.src = project.coverImage;
-      regenBtn.style.display = '';
-      if (editBtn) editBtn.style.display = '';
+      regenBtn.style.cssText = 'display:block; width:100%; margin-top:6px;';
+      if (editBtn) editBtn.style.cssText = 'display:block; width:100%; margin-top:6px;';
     } else {
       placeholder.style.display = '';
       img.style.display = 'none';
       img.src = '';
-      regenBtn.style.display = 'none';
-      if (editBtn) editBtn.style.display = 'none';
+      regenBtn.style.cssText = 'display:none; width:100%; margin-top:6px;';
+      if (editBtn) editBtn.style.cssText = 'display:none; width:100%; margin-top:6px;';
     }
   }
 
@@ -3705,6 +3705,12 @@ class App {
 
     // --- Delete Project (sidebar) ---
     document.getElementById('btn-delete-project-sidebar')?.addEventListener('click', () => this._deleteCurrentProject());
+
+    // --- Import Knowledge (sidebar) ---
+    document.getElementById('btn-import-knowledge-sidebar')?.addEventListener('click', () => this._openImportKnowledgePanel());
+
+    // --- Error Database (sidebar) ---
+    document.getElementById('btn-error-database-sidebar')?.addEventListener('click', () => this.openErrorDatabasePanel());
 
     // --- Sidebar toggle ---
     document.getElementById('btn-sidebar-toggle')?.addEventListener('click', () => {
