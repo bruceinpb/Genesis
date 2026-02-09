@@ -385,6 +385,7 @@ For "estimatedImpact": estimate how many points the score would improve if this 
       body: JSON.stringify({
         model: this.model,
         max_tokens: 4096,
+        temperature: 0,
         messages: [{ role: 'user', content: `Score this prose critically and detect ALL AI patterns and PET phrases. Be thorough and honest — do not default to any particular score. Score each sub-category independently based on evidence from the text, then sum them:\n\n"""${proseText.slice(-12000)}"""` }],
         system: systemPrompt
       })

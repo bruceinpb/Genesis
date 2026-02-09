@@ -5,7 +5,7 @@
  */
 
 const DB_NAME = 'genesis2';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 const STORES = {
   projects: 'projects',
