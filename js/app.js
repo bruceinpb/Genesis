@@ -799,6 +799,7 @@ class App {
     let chunkNum = 0;
     let allStreamedText = '';
     let chunkScores = []; // Track per-chunk best scores for weighted average
+    const generationSessionKey = `gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     // Show iterative overlay for the scoring phases
     const qualityThresholdDisplay = this._currentProject?.qualityThreshold || 90;
@@ -976,14 +977,22 @@ class App {
           prevIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
           prevSubscores = review.subscores || {};
 
-          // Record errors to the cross-project error pattern database
+          // Record errors to the cross-project error pattern database (session-aware to prevent frequency inflation)
           if (this.errorDb && prevIssueCount > 0) {
             this.errorDb.recordFromReview(review, {
               projectId: this.state.currentProjectId,
               chapterId: this.state.currentChapterId,
               chapterTitle,
-              genre
+              genre,
+              sessionKey: generationSessionKey
             }).catch(() => {}); // Non-blocking
+
+            // Refresh error patterns prompt after each scoring so newly discovered errors
+            // are immediately fed back to the next rewrite iteration
+            try {
+              errorPatternsPrompt = await this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 1 });
+              this._cachedErrorPatternsPrompt = errorPatternsPrompt;
+            } catch (_) {}
           }
 
           if (score > chunkBestScore) {
@@ -1037,7 +1046,8 @@ class App {
           }
           if (review.issues) {
             for (const issue of review.issues) {
-              if (issue.severity === 'low') continue;
+              // Skip low-severity issues only in early iterations; include them when stagnant
+              if (issue.severity === 'low' && !isStagnant) continue;
               problems.push({
                 text: issue.text || '',
                 description: issue.problem || '',
@@ -1293,13 +1303,14 @@ class App {
           await new Promise(r => setTimeout(r, 1500));
           this._showIterativeOverlay(false);
 
-          // Record final review errors into the cross-project error database
+          // Record final review errors into the cross-project error database (session-aware)
           if (this.errorDb && ((finalReview.issues?.length || 0) + (finalReview.aiPatterns?.length || 0)) > 0) {
             this.errorDb.recordFromReview(finalReview, {
               projectId: this.state.currentProjectId,
               chapterId: this.state.currentChapterId,
               chapterTitle,
-              genre
+              genre,
+              sessionKey: generationSessionKey
             }).catch(() => {});
           }
 
@@ -2852,12 +2863,10 @@ class App {
         sessionKey  // prevents duplicate frequency bumps within the same iteration session
       }).catch(() => {});
 
-      // Refresh error patterns prompt every 3 iterations so rewrites learn from newly-found errors
-      if (iteration % 3 === 0) {
-        this.errorDb.buildNegativePrompt().then(prompt => {
-          this._cachedErrorPatternsPrompt = prompt;
-        }).catch(() => {});
-      }
+      // Refresh error patterns prompt after every scoring so rewrites learn from newly-found errors immediately
+      this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 1 }).then(prompt => {
+        this._cachedErrorPatternsPrompt = prompt;
+      }).catch(() => {});
     }
 
     // Track best-scoring text — revert to it if score drops

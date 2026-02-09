@@ -498,6 +498,26 @@ PROSE EXCELLENCE — what makes your writing score 90+:
     // Inject error pattern database as negative prompts (learned from previous scoring)
     if (errorPatternsPrompt) {
       prompt += errorPatternsPrompt;
+
+      // Add sentence/paragraph-level error checking instructions
+      prompt += `
+
+=== SENTENCE-LEVEL ERROR CHECKING PROTOCOL ===
+You MUST follow this protocol while writing:
+
+WHILE WRITING EACH SENTENCE:
+1. Before committing a sentence, mentally check it against the ERROR PATTERN DATABASE above
+2. If the sentence contains ANY pattern from the database (a PET phrase, an AI pattern, a cliche, telling instead of showing, weak words), REWRITE the sentence immediately before moving on
+3. The rewritten sentence must not contain any error from the database
+
+AFTER EACH PARAGRAPH:
+1. Re-read the paragraph as a whole
+2. Check for: repeated sentence structures, monotonous rhythm, any error patterns that slipped through
+3. If any errors are found, fix them before writing the next paragraph
+4. Verify sentence length variety within the paragraph (mix of short and long)
+
+This self-checking protocol is MANDATORY. The error database represents patterns that have been repeatedly flagged in past scoring. Producing prose that contains these known errors is unacceptable.
+=== END ERROR CHECKING PROTOCOL ===`;
     }
 
     if (tone) {
@@ -709,6 +729,19 @@ This prose has been rewritten ${rewriteIteration - 1} time(s). Focus on quality 
     // Inject error pattern database as negative prompts (learned from previous scoring)
     if (errorPatternsPrompt) {
       systemPrompt += errorPatternsPrompt;
+
+      // Add sentence-level validation for rewrites
+      systemPrompt += `
+
+=== REWRITE VALIDATION PROTOCOL ===
+For EACH sentence you rewrite:
+1. Check the replacement against the ERROR PATTERN DATABASE above
+2. If the replacement contains ANY known error pattern (PET phrase, AI pattern, cliche, weak word), rewrite it again until clean
+3. Do NOT replace one error with another error from the database
+4. After fixing all listed issues, re-read the full paragraph to verify no new errors were introduced
+
+CRITICAL: Previous rewrites have failed to improve the score because they introduced new errors from the database while fixing old ones. Break this cycle by validating every replacement.
+=== END VALIDATION PROTOCOL ===`;
     }
 
     let userPrompt = '';
