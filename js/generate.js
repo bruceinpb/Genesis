@@ -1450,6 +1450,339 @@ CRITICAL: Previous rewrites have failed to improve the score because they introd
     }
   }
 
+  // ========================================
+  //  Prose CI/CD — Intent Ledger & Patching
+  // ========================================
+
+  /**
+   * Generate an Intent Ledger for a prose passage — a locked set of constraints
+   * that must NOT change during iterative refinement.
+   * Returns { ledger: string[], povCharacter, emotionalArc, sensoryAnchors, canonFacts }
+   */
+  async generateIntentLedger({ plot, chapterOutline, characters, existingProse, chapterTitle }) {
+    if (!this.apiKey) throw new Error('No API key set.');
+
+    const systemPrompt = `You are a continuity editor. Given a story passage and its context, extract a concise Intent Ledger: the non-negotiable elements that must be preserved during any revision.
+
+Output valid JSON only:
+{
+  "povCharacter": "name or null if unclear",
+  "povType": "first-person|third-limited|third-omniscient|other",
+  "emotionalArc": "start emotion → end emotion",
+  "sceneChange": "what changes in the scene (decision, revelation, bond, etc.)",
+  "sensoryAnchors": ["3-5 key sensory details that must remain"],
+  "canonFacts": ["3-5 factual claims that must not change"],
+  "tense": "past|present",
+  "ledger": ["5-10 bullet-point constraints for revision"]
+}`;
+
+    let userPrompt = '';
+    if (chapterTitle) userPrompt += `Chapter: ${chapterTitle}\n`;
+    if (chapterOutline) userPrompt += `Outline: ${chapterOutline}\n`;
+    if (plot) userPrompt += `Plot: ${plot}\n`;
+    if (characters && characters.length > 0) {
+      userPrompt += `Characters: ${characters.map(c => `${c.name} (${c.role})`).join(', ')}\n`;
+    }
+    userPrompt += `\nProse to analyze:\n"""${(existingProse || '').slice(0, 6000)}"""\n`;
+    userPrompt += `\nExtract the Intent Ledger. Be specific and concrete.`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 1024,
+        temperature: 0,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const text = result.content?.[0]?.text?.trim() || '';
+
+    let jsonStr = text;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) jsonStr = jsonMatch[0];
+
+    try {
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      return {
+        povCharacter: null, povType: 'unknown', emotionalArc: 'unknown',
+        sceneChange: 'unknown', sensoryAnchors: [], canonFacts: [],
+        tense: 'past', ledger: ['Preserve overall meaning and plot progression']
+      };
+    }
+  }
+
+  /**
+   * Identify the single dominant craft constraint to focus on this iteration.
+   * Returns { dimension, description, targetImprovement }
+   */
+  identifyDominantConstraint(review, lintResult) {
+    if (!review || !review.subscores) return null;
+
+    // Priority 1: If there are hard lint defects, focus on those
+    if (lintResult && lintResult.defects) {
+      const hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
+      if (hardDefects.length > 0) {
+        // Group by type to find most common
+        const typeGroups = {};
+        for (const d of hardDefects) {
+          typeGroups[d.type] = (typeGroups[d.type] || 0) + 1;
+        }
+        const topType = Object.entries(typeGroups).sort((a, b) => b[1] - a[1])[0];
+        return {
+          dimension: 'hard-defects',
+          defectType: topType[0],
+          count: topType[1],
+          description: `Fix ${topType[1]} ${topType[0].replace(/-/g, ' ')} defects`,
+          targetImprovement: Math.min(topType[1] * 2, 10)
+        };
+      }
+    }
+
+    // Priority 2: Find weakest scoring dimension
+    const dimLabels = {
+      sentenceVariety: { label: 'Sentence Variety & Rhythm', max: 15 },
+      dialogueAuthenticity: { label: 'Dialogue Authenticity', max: 15 },
+      sensoryDetail: { label: 'Sensory Detail / Show vs Tell', max: 15 },
+      emotionalResonance: { label: 'Emotional Resonance', max: 15 },
+      vocabularyPrecision: { label: 'Vocabulary Precision', max: 10 },
+      narrativeFlow: { label: 'Narrative Flow & Pacing', max: 10 },
+      originalityVoice: { label: 'Originality & Voice', max: 10 },
+      technicalExecution: { label: 'Technical Execution', max: 10 }
+    };
+
+    let worstDim = null;
+    let worstGap = 0;
+    for (const [dim, val] of Object.entries(review.subscores)) {
+      const info = dimLabels[dim];
+      if (!info) continue;
+      const gap = info.max - val;
+      // Weight gap by the dimension's max to find proportionally weakest
+      const proportionalGap = gap / info.max;
+      if (proportionalGap > worstGap) {
+        worstGap = proportionalGap;
+        worstDim = { dimension: dim, label: info.label, max: info.max, current: val, gap };
+      }
+    }
+
+    if (!worstDim) return null;
+
+    return {
+      dimension: worstDim.dimension,
+      description: `Improve ${worstDim.label} from ${worstDim.current}/${worstDim.max}`,
+      currentScore: worstDim.current,
+      maxScore: worstDim.max,
+      targetImprovement: Math.max(2, Math.ceil(worstDim.gap * 0.5))
+    };
+  }
+
+  /**
+   * Generate targeted patches for a specific defect class or craft dimension.
+   * Returns patches via streaming (same interface as rewriteProse).
+   * Uses the intent ledger to prevent regressions.
+   */
+  async patchProse({ originalProse, focus, intentLedger, voiceFingerprint, lintDefects, review, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, genre, genreRules, voice, errorPatternsPrompt }, { onChunk, onDone, onError }) {
+    if (!this.apiKey) {
+      onError(new Error('No API key set.'));
+      return;
+    }
+
+    this.abortController = new AbortController();
+
+    // Build a tightly-focused patch prompt
+    let systemPrompt = `You are a precision prose editor. You make MINIMAL, TARGETED changes to fix ONE specific weakness while preserving everything else.
+
+=== PATCHING RULES ===
+1. You are fixing ONE thing: ${focus.description}
+2. Change ONLY sentences that directly relate to this one weakness
+3. Copy ALL other text VERBATIM — character for character
+4. Your output must be the COMPLETE passage with patches applied
+5. Each patch must be the smallest possible change that fixes the issue
+6. NEVER introduce: em dashes, PET phrases, AI-telltale words, filter words
+7. Maintain the same approximate word count (within 10%)`;
+
+    // Add intent ledger constraints
+    if (intentLedger) {
+      systemPrompt += `\n\n=== INTENT LEDGER (NON-NEGOTIABLE — any violation means patch is rejected) ===`;
+      if (intentLedger.povType) systemPrompt += `\nPOV: ${intentLedger.povType}`;
+      if (intentLedger.tense) systemPrompt += `\nTense: ${intentLedger.tense}`;
+      if (intentLedger.emotionalArc) systemPrompt += `\nEmotional arc: ${intentLedger.emotionalArc}`;
+      if (intentLedger.canonFacts && intentLedger.canonFacts.length > 0) {
+        systemPrompt += `\nCanon facts that must remain:`;
+        intentLedger.canonFacts.forEach(f => { systemPrompt += `\n- ${f}`; });
+      }
+      if (intentLedger.sensoryAnchors && intentLedger.sensoryAnchors.length > 0) {
+        systemPrompt += `\nSensory anchors that must remain:`;
+        intentLedger.sensoryAnchors.forEach(a => { systemPrompt += `\n- ${a}`; });
+      }
+      if (intentLedger.ledger && intentLedger.ledger.length > 0) {
+        systemPrompt += `\nAdditional constraints:`;
+        intentLedger.ledger.forEach(l => { systemPrompt += `\n- ${l}`; });
+      }
+    }
+
+    // Add voice fingerprint target
+    if (voiceFingerprint) {
+      systemPrompt += `\n\n=== VOICE FINGERPRINT TARGET (must stay within 15% of these values) ===`;
+      systemPrompt += `\nSentence length mean: ${voiceFingerprint.sentenceLengthMean} words`;
+      systemPrompt += `\nSentence length std dev: ${voiceFingerprint.sentenceLengthStdDev}`;
+      systemPrompt += `\nShort sentences (<=8 words): ${voiceFingerprint.shortPct}%`;
+      systemPrompt += `\nLong sentences (>=20 words): ${voiceFingerprint.longPct}%`;
+      systemPrompt += `\nDialogue ratio: ${Math.round(voiceFingerprint.dialogueRatio * 100)}%`;
+    }
+
+    // Add genre/voice context
+    if (genre) systemPrompt += `\nGenre: ${genre}`;
+    if (voice && voice !== 'auto') {
+      const voiceNames = {
+        'first-person': 'first person', 'third-limited': 'third-person limited',
+        'third-omniscient': 'third-person omniscient', 'deep-pov': 'deep POV'
+      };
+      systemPrompt += `\nNarrative voice: ${voiceNames[voice] || voice}`;
+    }
+
+    if (errorPatternsPrompt) {
+      systemPrompt += errorPatternsPrompt;
+    }
+
+    // Build focused user prompt
+    let userPrompt = '';
+    if (aiInstructions) {
+      userPrompt += `=== AUTHOR INSTRUCTIONS ===\n${aiInstructions}\n\n`;
+    }
+
+    userPrompt += `=== ORIGINAL PROSE ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n`;
+
+    userPrompt += `\n=== FOCUS: ${focus.description} ===\n`;
+
+    // Add specific defects to fix if targeting hard defects
+    if (focus.dimension === 'hard-defects' && lintDefects && lintDefects.length > 0) {
+      const relevantDefects = lintDefects
+        .filter(d => d.severity === 'hard' && d.type === focus.defectType)
+        .slice(0, 15);
+      userPrompt += `Fix these specific defects:\n`;
+      relevantDefects.forEach((d, i) => {
+        userPrompt += `${i + 1}. ${d.suggestion} [text: "${d.text}"]\n`;
+      });
+    } else if (focus.dimension !== 'hard-defects') {
+      // Craft dimension improvement
+      const craftInstructions = {
+        sentenceVariety: 'Find 4+ consecutive sentences with similar word counts. Break the pattern: split long ones into short punchy fragments, combine short ones into flowing compound sentences. Target: mix of 3-8 word and 15-30 word sentences.',
+        dialogueAuthenticity: 'Make each character sound distinctly different. Vary tags: "said" 60%, action beats 30%, no tag 10%. Add an interruption, trailing thought, or mid-sentence correction.',
+        sensoryDetail: 'Replace 3+ abstract descriptions with concrete sensory details. Name specific colors, textures, smells, sounds. Change abstractions to camera-capturable details.',
+        emotionalResonance: 'Replace stated emotions with character-specific actions that IMPLY the emotion. Find 2+ places to add behavioral details revealing inner state without naming it.',
+        vocabularyPrecision: 'Replace 5+ generic verbs with precise ones (walked→shuffled, said→muttered). Delete every instance of: very, really, quite, just, rather, somewhat.',
+        narrativeFlow: 'Vary paragraph lengths. Add one single-sentence paragraph for emphasis. Cut unnecessary transition words.',
+        originalityVoice: 'Replace 3+ template-sounding phrases with genuinely novel alternatives. If any metaphor is cliche, delete or replace with something a reader has never seen.',
+        technicalExecution: 'Fix grammar issues. Ensure purposeful paragraph breaks. Verify tense consistency throughout.'
+      };
+      userPrompt += (craftInstructions[focus.dimension] || 'Improve this dimension throughout the passage.') + '\n';
+
+      if (review && review.issues) {
+        const relevantIssues = review.issues
+          .filter(i => {
+            const catMap = {
+              sentenceVariety: 'structure', dialogueAuthenticity: 'dialogue',
+              sensoryDetail: 'telling', emotionalResonance: ['telling', 'pet-phrase'],
+              vocabularyPrecision: 'weak-words', narrativeFlow: 'pacing',
+              originalityVoice: ['cliche', 'ai-pattern'], technicalExecution: 'other'
+            };
+            const cats = catMap[focus.dimension];
+            if (Array.isArray(cats)) return cats.includes(i.category);
+            return i.category === cats;
+          })
+          .slice(0, 8);
+        if (relevantIssues.length > 0) {
+          userPrompt += `\nSpecific issues from scoring:\n`;
+          relevantIssues.forEach((iss, i) => {
+            userPrompt += `${i + 1}. ${iss.text ? `"${iss.text}" → ` : ''}${iss.problem}\n`;
+          });
+        }
+      }
+    }
+
+    userPrompt += `\nApply ONLY the patches needed for the focus above. Copy everything else VERBATIM. Output ONLY the patched prose.`;
+
+    try {
+      const response = await fetch(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: maxTokens || 4096,
+          stream: true,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        }),
+        signal: this.abortController.signal
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        let msg = `API error (${response.status})`;
+        try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const event = JSON.parse(data);
+              if (event.type === 'content_block_delta' && event.delta?.text) {
+                onChunk(event.delta.text);
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      this.abortController = null;
+      onDone();
+    } catch (err) {
+      this.abortController = null;
+      if (err.name === 'AbortError') {
+        onDone();
+      } else {
+        onError(err);
+      }
+    }
+  }
+
   _wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     const words = text.split(' ');
     let line = '';
