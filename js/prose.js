@@ -426,6 +426,452 @@ class ProseAnalyzer {
     return { repeated };
   }
 
+  // ========================================
+  //  Deterministic Prose Lint (Prose CI/CD)
+  // ========================================
+
+  /**
+   * Deterministic lint pass — detects hard defects without an API call.
+   * Returns { defects[], stats{} } where each defect has:
+   *   { type, severity, text, position, suggestion }
+   * Stats include sentence length variance, filter word count, etc.
+   */
+  lintProse(text) {
+    if (!text || text.trim().length === 0) {
+      return { defects: [], stats: {} };
+    }
+
+    const cleanText = this._stripHtml(text);
+    const words = this._getWords(cleanText);
+    const sentences = this._getSentences(cleanText);
+    const lower = cleanText.toLowerCase();
+    const defects = [];
+
+    // --- Hard Gate 1: Repeated n-grams (8+ word sequences repeated) ---
+    const ngramRepeats = this._findRepeatedNgrams(cleanText, 6);
+    for (const ng of ngramRepeats) {
+      defects.push({
+        type: 'repeated-ngram',
+        severity: 'hard',
+        text: ng.ngram,
+        position: ng.positions[0],
+        suggestion: `Repeated phrase "${ng.ngram}" appears ${ng.count} times. Rephrase at least one occurrence.`
+      });
+    }
+
+    // --- Hard Gate 2: Template transitions ---
+    const templateTransitions = [
+      'suddenly', 'in that moment', 'little did .* know', 'it was then that',
+      'as if on cue', 'without warning', 'before .* knew it',
+      'in the blink of an eye', 'out of nowhere', 'all of a sudden',
+      'at that very moment', 'just then', 'meanwhile'
+    ];
+    for (const tt of templateTransitions) {
+      const regex = new RegExp(`\\b${tt}\\b`, 'gi');
+      let match;
+      while ((match = regex.exec(lower)) !== null) {
+        defects.push({
+          type: 'template-transition',
+          severity: 'hard',
+          text: match[0],
+          position: match.index,
+          suggestion: `Template transition "${match[0]}". Remove or replace with a concrete action.`
+        });
+      }
+    }
+
+    // --- Hard Gate 3: AI cadence clusters ---
+    const aiWords = [
+      'delicate', 'intricate', 'testament to', 'tapestry', 'symphony of',
+      'dance of', 'nestled', 'whispering', 'pierced the silence',
+      'shattered the silence', 'hung in the air', 'palpable',
+      'echoed through', 'weight of .* words', 'a sense of'
+    ];
+    for (const aw of aiWords) {
+      const regex = new RegExp(`\\b${aw}\\b`, 'gi');
+      let match;
+      while ((match = regex.exec(lower)) !== null) {
+        defects.push({
+          type: 'ai-pattern',
+          severity: 'hard',
+          text: match[0],
+          position: match.index,
+          suggestion: `AI-telltale word/phrase "${match[0]}". Replace with a concrete, specific alternative.`
+        });
+      }
+    }
+
+    // --- Hard Gate 4: PET phrases ---
+    const petFinds = this._findPetPhrases(cleanText);
+    for (const pf of petFinds) {
+      const regex = new RegExp(pf.phrase, 'gi');
+      let match;
+      while ((match = regex.exec(lower)) !== null) {
+        defects.push({
+          type: 'pet-phrase',
+          severity: 'hard',
+          text: match[0],
+          position: match.index,
+          suggestion: `PET phrase "${match[0]}". Replace with character-specific action that implies the emotion.`
+        });
+      }
+    }
+
+    // --- Hard Gate 5: Em dashes ---
+    const emDashRegex = /[\u2014\u2013]|---/g;
+    let emMatch;
+    while ((emMatch = emDashRegex.exec(cleanText)) !== null) {
+      defects.push({
+        type: 'em-dash',
+        severity: 'hard',
+        text: emMatch[0],
+        position: emMatch.index,
+        suggestion: 'Em dash found. Replace with comma, semicolon, colon, period, or parentheses.'
+      });
+    }
+
+    // --- Hard Gate 6: Perspective slips (detect mixed pronouns) ---
+    // This is heuristic — count first-person vs third-person pronouns
+    const firstPersonCount = (lower.match(/\b(i|me|my|myself|mine)\b/g) || []).length;
+    const thirdPersonCount = (lower.match(/\b(he|she|him|her|his|hers|himself|herself)\b/g) || []).length;
+    if (firstPersonCount > 5 && thirdPersonCount > 5) {
+      const ratio = Math.min(firstPersonCount, thirdPersonCount) / Math.max(firstPersonCount, thirdPersonCount);
+      if (ratio > 0.3) {
+        defects.push({
+          type: 'perspective-slip',
+          severity: 'hard',
+          text: `Mixed POV: ${firstPersonCount} first-person, ${thirdPersonCount} third-person pronouns`,
+          position: 0,
+          suggestion: 'Possible perspective slip. Verify consistent POV throughout.'
+        });
+      }
+    }
+
+    // --- Measurable: Filter words count ---
+    let filterCount = 0;
+    const filterInstances = [];
+    for (const fw of this.filterWords) {
+      const regex = new RegExp(`\\b${fw}\\b`, 'gi');
+      let match;
+      while ((match = regex.exec(lower)) !== null) {
+        filterCount++;
+        if (filterInstances.length < 10) {
+          filterInstances.push({ word: fw, position: match.index });
+        }
+      }
+    }
+    const filterDensity = words.length > 0 ? filterCount / words.length : 0;
+    if (filterDensity > 0.015) {
+      defects.push({
+        type: 'filter-words',
+        severity: 'medium',
+        text: `${filterCount} filter words (${(filterDensity * 100).toFixed(1)}% density)`,
+        position: filterInstances[0]?.position || 0,
+        suggestion: `Too many filter words (${filterInstances.map(f => f.word).join(', ')}). Remove or replace with showing.`
+      });
+    }
+
+    // --- Measurable: Hedge words ---
+    const hedgeWords = ['seemed', 'almost', 'a bit', 'somewhat', 'rather', 'slightly', 'perhaps', 'maybe', 'sort of', 'kind of'];
+    let hedgeCount = 0;
+    for (const hw of hedgeWords) {
+      const regex = new RegExp(`\\b${hw}\\b`, 'gi');
+      const matches = lower.match(regex);
+      if (matches) hedgeCount += matches.length;
+    }
+    if (hedgeCount > 3) {
+      defects.push({
+        type: 'hedge-words',
+        severity: 'medium',
+        text: `${hedgeCount} hedge words found`,
+        position: 0,
+        suggestion: `Reduce hedge words (seemed, almost, perhaps, etc.). Be more definitive.`
+      });
+    }
+
+    // --- Measurable: AI connector density ---
+    const aiConnectors = ['however', 'moreover', 'in fact', 'as though', 'furthermore', 'nevertheless', 'consequently', 'additionally'];
+    let connectorCount = 0;
+    for (const ac of aiConnectors) {
+      const regex = new RegExp(`\\b${ac}\\b`, 'gi');
+      const matches = lower.match(regex);
+      if (matches) connectorCount += matches.length;
+    }
+    const connectorDensity = words.length > 0 ? connectorCount / words.length : 0;
+    if (connectorDensity > 0.008) {
+      defects.push({
+        type: 'ai-connectors',
+        severity: 'medium',
+        text: `${connectorCount} AI-style connectors (${(connectorDensity * 100).toFixed(1)}% density)`,
+        position: 0,
+        suggestion: 'Too many formal connectors (however, moreover, etc.). Use simpler transitions or eliminate.'
+      });
+    }
+
+    // --- Measurable: Sentence opening repetition ---
+    const openings = {};
+    sentences.forEach(s => {
+      const firstWord = (s.match(/^[a-zA-Z]+/) || [''])[0].toLowerCase();
+      if (firstWord && firstWord.length > 1) {
+        openings[firstWord] = (openings[firstWord] || 0) + 1;
+      }
+    });
+    for (const [word, count] of Object.entries(openings)) {
+      const pct = sentences.length > 0 ? (count / sentences.length) * 100 : 0;
+      if (count >= 3 && pct > 20) {
+        defects.push({
+          type: 'opening-repetition',
+          severity: 'medium',
+          text: `"${word}" starts ${count} sentences (${pct.toFixed(0)}%)`,
+          position: 0,
+          suggestion: `Too many sentences starting with "${word}". Vary sentence openings.`
+        });
+      }
+    }
+
+    // --- Measurable: Weak words ---
+    let weakCount = 0;
+    for (const ww of this.weakWords) {
+      const regex = new RegExp(`\\b${ww}\\b`, 'gi');
+      const matches = lower.match(regex);
+      if (matches) weakCount += matches.length;
+    }
+    const weakDensity = words.length > 0 ? weakCount / words.length : 0;
+    if (weakDensity > 0.02) {
+      defects.push({
+        type: 'weak-words',
+        severity: 'medium',
+        text: `${weakCount} weak/filler words (${(weakDensity * 100).toFixed(1)}% density)`,
+        position: 0,
+        suggestion: 'Reduce weak/filler words (very, really, just, quite, etc.).'
+      });
+    }
+
+    // --- Stats for voice fingerprint comparison ---
+    const sentenceLengths = sentences.map(s => this._getWords(s).length);
+    const meanLen = sentenceLengths.length > 0
+      ? sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length : 0;
+    const variance = sentenceLengths.length > 0
+      ? sentenceLengths.reduce((sum, l) => sum + Math.pow(l - meanLen, 2), 0) / sentenceLengths.length : 0;
+    const stdDev = Math.sqrt(variance);
+
+    const shortSentences = sentenceLengths.filter(l => l <= 8).length;
+    const longSentences = sentenceLengths.filter(l => l >= 20).length;
+    const shortPct = sentenceLengths.length > 0 ? shortSentences / sentenceLengths.length : 0;
+    const longPct = sentenceLengths.length > 0 ? longSentences / sentenceLengths.length : 0;
+
+    const dialogue = this._getDialogueRatio(cleanText);
+
+    const stats = {
+      wordCount: words.length,
+      sentenceCount: sentences.length,
+      sentenceLengthMean: Math.round(meanLen * 10) / 10,
+      sentenceLengthStdDev: Math.round(stdDev * 10) / 10,
+      shortSentencePct: Math.round(shortPct * 100),
+      longSentencePct: Math.round(longPct * 100),
+      dialogueRatio: dialogue.ratio,
+      filterWordDensity: Math.round(filterDensity * 1000) / 10,
+      weakWordDensity: Math.round(weakDensity * 1000) / 10,
+      hedgeCount,
+      petPhraseCount: petFinds.reduce((s, p) => s + p.count, 0),
+      emDashCount: (cleanText.match(/[\u2014\u2013]|---/g) || []).length,
+      passiveVoicePct: this._findPassiveVoice(sentences).percentage,
+      hardDefects: defects.filter(d => d.severity === 'hard').length,
+      mediumDefects: defects.filter(d => d.severity === 'medium').length
+    };
+
+    return { defects, stats };
+  }
+
+  /**
+   * Find repeated n-grams (sequences of n words appearing more than once).
+   */
+  _findRepeatedNgrams(text, n) {
+    const words = text.toLowerCase().replace(/[^a-z\s'-]/g, ' ').split(/\s+/).filter(w => w.length > 0);
+    if (words.length < n * 2) return [];
+
+    const ngramCounts = {};
+    const ngramPositions = {};
+    for (let i = 0; i <= words.length - n; i++) {
+      const ngram = words.slice(i, i + n).join(' ');
+      ngramCounts[ngram] = (ngramCounts[ngram] || 0) + 1;
+      if (!ngramPositions[ngram]) ngramPositions[ngram] = [];
+      ngramPositions[ngram].push(i);
+    }
+
+    const repeats = [];
+    for (const [ngram, count] of Object.entries(ngramCounts)) {
+      if (count >= 2) {
+        // Skip if it's all common words
+        const ngramWords = ngram.split(' ');
+        const commonCount = ngramWords.filter(w =>
+          ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'was', 'it', 'he', 'she', 'they', 'that', 'this'].includes(w)
+        ).length;
+        if (commonCount < ngramWords.length * 0.6) {
+          repeats.push({ ngram, count, positions: ngramPositions[ngram] });
+        }
+      }
+    }
+
+    return repeats.sort((a, b) => b.count - a.count).slice(0, 10);
+  }
+
+  // ========================================
+  //  Voice Fingerprint (Prose CI/CD)
+  // ========================================
+
+  /**
+   * Calculate a voice fingerprint: measurable style characteristics.
+   * Used to detect drift during iterative refinement.
+   * Returns { sentenceLengthMean, sentenceLengthStdDev, shortPct, longPct,
+   *           dialogueRatio, abstractNounRatio, verbSpecificity, avgParagraphLen }
+   */
+  calculateVoiceFingerprint(text) {
+    if (!text || text.trim().length === 0) {
+      return this._emptyFingerprint();
+    }
+
+    const cleanText = this._stripHtml(text);
+    const words = this._getWords(cleanText);
+    const sentences = this._getSentences(cleanText);
+    const paragraphs = this._getParagraphs(cleanText);
+
+    // Sentence length distribution
+    const sentenceLengths = sentences.map(s => this._getWords(s).length);
+    const meanLen = sentenceLengths.length > 0
+      ? sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length : 0;
+    const variance = sentenceLengths.length > 0
+      ? sentenceLengths.reduce((sum, l) => sum + Math.pow(l - meanLen, 2), 0) / sentenceLengths.length : 0;
+    const stdDev = Math.sqrt(variance);
+
+    const shortSentences = sentenceLengths.filter(l => l <= 8).length;
+    const longSentences = sentenceLengths.filter(l => l >= 20).length;
+    const shortPct = sentenceLengths.length > 0 ? shortSentences / sentenceLengths.length : 0;
+    const longPct = sentenceLengths.length > 0 ? longSentences / sentenceLengths.length : 0;
+
+    // Simple/compound/complex sentence ratio
+    const simpleCount = sentenceLengths.filter(l => l <= 10).length;
+    const compoundCount = sentenceLengths.filter(l => l > 10 && l <= 22).length;
+    const complexCount = sentenceLengths.filter(l => l > 22).length;
+
+    // Dialogue-to-narration ratio
+    const dialogue = this._getDialogueRatio(cleanText);
+
+    // Abstract noun detection (common abstract nouns that signal AI prose)
+    const abstractNouns = ['notion', 'idea', 'sense', 'presence', 'essence', 'feeling',
+      'thought', 'weight', 'silence', 'darkness', 'realization', 'understanding',
+      'awareness', 'consciousness', 'emotion', 'sensation', 'intensity', 'beauty',
+      'truth', 'reality', 'possibility', 'certainty', 'inevitability'];
+    const lower = cleanText.toLowerCase();
+    let abstractCount = 0;
+    for (const an of abstractNouns) {
+      const regex = new RegExp(`\\b${an}s?\\b`, 'g');
+      const matches = lower.match(regex);
+      if (matches) abstractCount += matches.length;
+    }
+    const abstractRatio = words.length > 0 ? abstractCount / words.length : 0;
+
+    // Verb specificity: ratio of specific/vivid verbs vs generic ones
+    const genericVerbs = ['was', 'were', 'is', 'are', 'had', 'have', 'went', 'came',
+      'got', 'made', 'said', 'looked', 'walked', 'moved', 'took', 'put'];
+    let genericVerbCount = 0;
+    for (const gv of genericVerbs) {
+      const regex = new RegExp(`\\b${gv}\\b`, 'g');
+      const matches = lower.match(regex);
+      if (matches) genericVerbCount += matches.length;
+    }
+    const genericVerbRatio = words.length > 0 ? genericVerbCount / words.length : 0;
+
+    // Average paragraph length
+    const parLengths = paragraphs.map(p => this._getWords(p).length);
+    const avgParLen = parLengths.length > 0
+      ? parLengths.reduce((a, b) => a + b, 0) / parLengths.length : 0;
+
+    // Interiority frequency (thought/feeling markers)
+    const interiorityMarkers = ['thought', 'felt', 'wondered', 'realized', 'knew',
+      'remembered', 'noticed', 'sensed', 'imagined', 'hoped', 'feared',
+      'wished', 'believed', 'considered', 'supposed'];
+    let interiorityCount = 0;
+    for (const im of interiorityMarkers) {
+      const regex = new RegExp(`\\b${im}\\b`, 'g');
+      const matches = lower.match(regex);
+      if (matches) interiorityCount += matches.length;
+    }
+    const interiorityDensity = words.length > 0 ? interiorityCount / words.length : 0;
+
+    return {
+      sentenceLengthMean: Math.round(meanLen * 10) / 10,
+      sentenceLengthStdDev: Math.round(stdDev * 10) / 10,
+      shortPct: Math.round(shortPct * 100),
+      longPct: Math.round(longPct * 100),
+      simpleRatio: sentenceLengths.length > 0 ? Math.round((simpleCount / sentenceLengths.length) * 100) : 0,
+      compoundRatio: sentenceLengths.length > 0 ? Math.round((compoundCount / sentenceLengths.length) * 100) : 0,
+      complexRatio: sentenceLengths.length > 0 ? Math.round((complexCount / sentenceLengths.length) * 100) : 0,
+      dialogueRatio: dialogue.ratio,
+      abstractNounRatio: Math.round(abstractRatio * 1000) / 10,
+      genericVerbRatio: Math.round(genericVerbRatio * 1000) / 10,
+      avgParagraphLen: Math.round(avgParLen),
+      interiorityDensity: Math.round(interiorityDensity * 1000) / 10,
+      wordCount: words.length
+    };
+  }
+
+  /**
+   * Compare two voice fingerprints. Returns a drift score (0 = identical, higher = more drift).
+   * Also returns which dimensions drifted and by how much.
+   */
+  compareFingerprints(baseline, current) {
+    if (!baseline || !current) return { totalDrift: 0, dimensions: [] };
+
+    const dimensions = [];
+    const weights = {
+      sentenceLengthMean: 2,
+      sentenceLengthStdDev: 2,
+      shortPct: 1.5,
+      longPct: 1.5,
+      dialogueRatio: 1,
+      abstractNounRatio: 1,
+      genericVerbRatio: 1,
+      avgParagraphLen: 1,
+      interiorityDensity: 0.5
+    };
+
+    let totalDrift = 0;
+    for (const [key, weight] of Object.entries(weights)) {
+      const bVal = baseline[key] || 0;
+      const cVal = current[key] || 0;
+      const maxVal = Math.max(Math.abs(bVal), Math.abs(cVal), 1);
+      const drift = Math.abs(bVal - cVal) / maxVal;
+      const weightedDrift = drift * weight;
+      totalDrift += weightedDrift;
+
+      if (drift > 0.15) {
+        dimensions.push({
+          dimension: key,
+          baseline: bVal,
+          current: cVal,
+          drift: Math.round(drift * 100),
+          direction: cVal > bVal ? 'increased' : 'decreased'
+        });
+      }
+    }
+
+    return {
+      totalDrift: Math.round(totalDrift * 100) / 100,
+      dimensions: dimensions.sort((a, b) => b.drift - a.drift)
+    };
+  }
+
+  _emptyFingerprint() {
+    return {
+      sentenceLengthMean: 0, sentenceLengthStdDev: 0,
+      shortPct: 0, longPct: 0,
+      simpleRatio: 0, compoundRatio: 0, complexRatio: 0,
+      dialogueRatio: 0, abstractNounRatio: 0, genericVerbRatio: 0,
+      avgParagraphLen: 0, interiorityDensity: 0, wordCount: 0
+    };
+  }
+
   /**
    * Generate a prose quality score (0-100) from analysis results.
    */
