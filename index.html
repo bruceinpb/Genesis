@@ -151,6 +151,7 @@
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-generate" data-tooltip="AI Prose Generator — Open the AI writing assistant. Describe your scene and Claude will generate quality-scored prose that matches your story's voice, style, and characters. Each chunk is scored and refined to meet your quality threshold. Em dashes are automatically removed. Scene breaks and chapter headings are formatted for KDP." style="color:var(--accent-primary);font-weight:700;">AI</button>
       <button class="toolbar-btn" id="btn-analysis" data-tooltip="Prose Analysis — Analyze your current chapter for writing quality, pacing, dialogue balance, sentence variety, and prose style. Provides detailed feedback and suggestions from Claude AI.">&#9874;</button>
+      <button class="toolbar-btn" id="btn-error-database" data-tooltip="Error Database — View and manage the cross-project error pattern database. Tracks common prose errors found during scoring (PET phrases, AI patterns, weak words, etc.) and uses them as negative prompts during future prose generation to avoid repeating the same mistakes.">&#9888;</button>
       <button class="toolbar-btn" id="btn-export" data-tooltip="Export — Export your manuscript in multiple formats: Standard Manuscript (Shunn format with H1 chapter headings for KDP table of contents), Styled HTML, Plain Text, Full JSON Backup, or download your cover image.">&#8681;</button>
       <button class="toolbar-btn" id="btn-focus-mode" data-tooltip="Focus Mode — Enter distraction-free writing mode. Hides the sidebar, toolbar, and status bar so you can concentrate entirely on your prose. Tap the menu icon to exit.">&#9673;</button>
       <button class="toolbar-btn" id="btn-help" data-tooltip="Help — View a detailed guide to all features, tools, and workflows available in Genesis 2.">?</button>
@@ -818,6 +819,17 @@
   </div>
 </div>
 
+<!-- ===== Error Pattern Database Panel ===== -->
+<div class="panel" id="panel-error-database">
+  <div class="panel-header">
+    <h2>Error Pattern Database</h2>
+    <button class="panel-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="panel-body" id="panel-error-database-body">
+    <!-- Rendered dynamically by app.js -->
+  </div>
+</div>
+
 <!-- ===== Settings Panel ===== -->
 <div class="panel" id="panel-settings">
   <div class="panel-header">
@@ -866,6 +878,14 @@
         <div class="help-step-content">
           <h3>Scored Chunk Generation</h3>
           <p>Standard prose generation (1,000+ words) uses scored chunks. The total word target is broken into ~1,000-word segments. Each segment is generated, scored, and if it falls below your quality threshold, automatically rewritten and rescored before the next segment begins. This ensures consistent quality across longer passages.</p>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-number">&#9888;</div>
+        <div class="help-step-content">
+          <h3>Error Pattern Database</h3>
+          <p>Tracks common prose errors (PET phrases, AI patterns, weak words, cliches, etc.) found during scoring across all projects. These patterns are automatically used as "negative prompts" during future prose generation, teaching the AI to avoid repeating the same mistakes. View and manage patterns via the <strong>&#9888;</strong> toolbar button. Patterns seen 2+ times become active negative prompts.</p>
         </div>
       </div>
 
