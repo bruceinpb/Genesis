@@ -737,6 +737,12 @@ class App {
       }
     }
 
+    // Append project knowledge base as reference materials
+    const knowledgePromptMain = await this._getProjectKnowledge();
+    if (knowledgePromptMain) {
+      notes = notes ? notes + '\n\n' + knowledgePromptMain : knowledgePromptMain;
+    }
+
     // Load AI instructions from project
     const aiInstructions = this._currentProject?.aiInstructions || '';
 
@@ -1951,6 +1957,7 @@ class App {
     const placeholder = document.getElementById('cover-placeholder');
     const img = document.getElementById('cover-image');
     const regenBtn = document.getElementById('btn-regenerate-cover');
+    const editBtn = document.getElementById('btn-edit-cover');
     if (!placeholder || !img || !regenBtn) return;
 
     if (project?.coverImage) {
@@ -1958,11 +1965,13 @@ class App {
       img.style.display = 'block';
       img.src = project.coverImage;
       regenBtn.style.display = '';
+      if (editBtn) editBtn.style.display = '';
     } else {
       placeholder.style.display = '';
       img.style.display = 'none';
       img.src = '';
       regenBtn.style.display = 'none';
+      if (editBtn) editBtn.style.display = 'none';
     }
   }
 
@@ -2314,6 +2323,12 @@ class App {
       }).join('\n\n');
     }
 
+    // Append project knowledge base as reference materials
+    const knowledgePromptOutline = await this._getProjectKnowledge();
+    if (knowledgePromptOutline) {
+      notes = notes ? notes + '\n\n' + knowledgePromptOutline : knowledgePromptOutline;
+    }
+
     const aiInstructions = project.aiInstructions || '';
     const genreInfo = this._getGenreRules(project.genre, project.subgenre);
     const genre = genreInfo ? genreInfo.label : (project.genre || '');
@@ -2655,6 +2670,12 @@ class App {
       }
     }
 
+    // Append project knowledge base as reference materials
+    const knowledgePrompt = await this._getProjectKnowledge();
+    if (knowledgePrompt) {
+      notes = notes ? notes + '\n\n' + knowledgePrompt : knowledgePrompt;
+    }
+
     const aiInstructions = this._currentProject?.aiInstructions || '';
     let chapterTitle = '';
     if (this.state.currentChapterId) {
@@ -2744,6 +2765,8 @@ class App {
     this._iterPrevScore = 0;
     this._iterPrevIssueCount = 0;
     this._iterPrevSubscores = {};
+    // Unique session key to prevent duplicate error recording within the same iteration session
+    this._iterativeSessionKey = `iter_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this._lastGenSettings = {
       plot: settings.plot, wordTarget: 100, tone: settings.tone,
       style: settings.style, useCharacters: settings.useCharacters,
@@ -2818,6 +2841,25 @@ class App {
 
     const score = review.score;
 
+    // Record errors to the cross-project error pattern database during iteration
+    const issueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+    if (this.errorDb && issueCount > 0) {
+      const sessionKey = this._iterativeSessionKey || null;
+      this.errorDb.recordFromReview(review, {
+        projectId: this.state.currentProjectId,
+        chapterId: this.state.currentChapterId,
+        genre: this._currentProject?.genre || '',
+        sessionKey  // prevents duplicate frequency bumps within the same iteration session
+      }).catch(() => {});
+
+      // Refresh error patterns prompt every 3 iterations so rewrites learn from newly-found errors
+      if (iteration % 3 === 0) {
+        this.errorDb.buildNegativePrompt().then(prompt => {
+          this._cachedErrorPatternsPrompt = prompt;
+        }).catch(() => {});
+      }
+    }
+
     // Track best-scoring text — revert to it if score drops
     if (score > bestScore) {
       bestScore = score;
@@ -2828,11 +2870,15 @@ class App {
       this._iterativeNoImprovement = (this._iterativeNoImprovement || 0) + 1;
 
       if (score < bestScore && this._iterativeBestText && iteration > 1) {
-        // Score dropped — revert to best version
-        this._updateIterativeLog(`Iteration ${iteration}: Score dropped (${score} < best ${bestScore}). Reverting to best version.`);
+        // Score dropped — revert to best version and force escalation immediately
+        this._updateIterativeLog(`Iteration ${iteration}: Score dropped (${score} < best ${bestScore}). Reverting to best version and escalating.`);
         currentText = this._iterativeBestText;
-        // Use best review's issues since we're now working with the best text
+        // Use best review's issues since we're reverting to that text,
+        // but force escalation so the rewrite takes a bolder, different approach
         if (this._iterativeBestReview) review = this._iterativeBestReview;
+
+        // Force escalation since the previous fix approach made things worse
+        this._iterativeNoImprovement = Math.max(this._iterativeNoImprovement, 2);
 
         // Restore best text in editor
         const baseContent = this._preGenerationContent || '';
@@ -2853,7 +2899,7 @@ class App {
 
     // Store for next iteration context
     this._iterPrevScore = score;
-    this._iterPrevIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+    this._iterPrevIssueCount = issueCount;
     this._iterPrevSubscores = review.subscores;
 
     // Check if we've reached the target (use bestScore which may be from a previous iteration)
@@ -2970,6 +3016,12 @@ class App {
     }
 
     problems.sort((a, b) => b.impact - a.impact);
+    // When stagnant/escalating, rotate issue priority so the AI focuses on different problems first
+    if (isStagnant && problems.length > 2) {
+      const rotateBy = Math.min(3, Math.floor(problems.length / 2));
+      const top = problems.splice(0, rotateBy);
+      problems.push(...top);
+    }
     const cappedProblems = problems.slice(0, 10);
     const formattedProblems = cappedProblems.map(p => {
       if (p.text) return `FIND: "${p.text}" \u2192 PROBLEM: ${p.description} [${p.severity}, ~${p.impact} pts]`;
@@ -3441,6 +3493,12 @@ class App {
           return entry;
         }).join('\n\n');
       }
+    }
+
+    // Append project knowledge base as reference materials
+    const knowledgePromptRewrite = await this._getProjectKnowledge();
+    if (knowledgePromptRewrite) {
+      notes = notes ? notes + '\n\n' + knowledgePromptRewrite : knowledgePromptRewrite;
     }
 
     let chapterTitle = '';
@@ -3919,6 +3977,31 @@ class App {
       }
       if (e.target.id === 'btn-regenerate-cover') {
         await this._generateCover(true);
+      }
+      if (e.target.id === 'btn-edit-cover') {
+        this._openEditCoverPanel();
+      }
+      if (e.target.id === 'btn-cover-edit-apply') {
+        this._applyCoverEdits();
+      }
+      if (e.target.id === 'btn-cover-edit-save') {
+        await this._saveCoverEdits();
+      }
+      if (e.target.id === 'btn-import-knowledge') {
+        this._openImportKnowledgePanel();
+      }
+      if (e.target.id === 'btn-knowledge-paste') {
+        this._showKnowledgePasteArea();
+      }
+      if (e.target.id === 'btn-knowledge-file') {
+        document.getElementById('knowledge-file-input')?.click();
+      }
+      if (e.target.id === 'btn-knowledge-save') {
+        await this._saveKnowledge();
+      }
+      if (e.target.classList.contains('knowledge-delete-btn')) {
+        const id = e.target.dataset.knowledgeId;
+        if (id) await this._deleteKnowledge(id);
       }
       if (e.target.id === 'export-cover-download') {
         await this._downloadCover();
@@ -4640,6 +4723,371 @@ class App {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  // ======== Edit Cover Methods ========
+
+  _openEditCoverPanel() {
+    const project = this._currentProject;
+    if (!project?.coverImage) {
+      alert('Generate a cover first before editing.');
+      return;
+    }
+    const panel = document.getElementById('panel-edit-cover');
+    if (!panel) return;
+    panel.classList.add('visible');
+
+    // Populate fields from project
+    const titleInput = document.getElementById('cover-edit-title');
+    const subtitleInput = document.getElementById('cover-edit-subtitle');
+    const authorInput = document.getElementById('cover-edit-author');
+    if (titleInput) titleInput.value = project.coverTitle || project.title || '';
+    if (subtitleInput) subtitleInput.value = project.coverSubtitle || project.subtitle || '';
+    if (authorInput) authorInput.value = project.coverAuthor || this.state.currentUser || '';
+
+    // Load saved cover edit settings
+    const fontInput = document.getElementById('cover-edit-font');
+    const sizeInput = document.getElementById('cover-edit-fontsize');
+    const colorInput = document.getElementById('cover-edit-color');
+    const posInput = document.getElementById('cover-edit-position');
+    const shadowInput = document.getElementById('cover-edit-shadow');
+    if (fontInput) fontInput.value = project.coverFont || 'Georgia';
+    if (sizeInput) {
+      sizeInput.value = project.coverFontSize || 48;
+      const label = document.getElementById('cover-edit-fontsize-label');
+      if (label) label.textContent = (project.coverFontSize || 48) + 'px';
+    }
+    if (colorInput) colorInput.value = project.coverTextColor || '#ffffff';
+    if (posInput) posInput.value = project.coverTextPosition || 'bottom';
+    if (shadowInput) shadowInput.value = project.coverTextShadow || 'light';
+
+    // Set up live font size label update
+    if (sizeInput) {
+      sizeInput.oninput = () => {
+        const label = document.getElementById('cover-edit-fontsize-label');
+        if (label) label.textContent = sizeInput.value + 'px';
+      };
+    }
+
+    // Draw initial preview
+    this._drawCoverPreview();
+  }
+
+  _drawCoverPreview() {
+    const project = this._currentProject;
+    if (!project?.coverImage) return;
+
+    const canvas = document.getElementById('cover-edit-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const titleText = document.getElementById('cover-edit-title')?.value || '';
+    const subtitleText = document.getElementById('cover-edit-subtitle')?.value || '';
+    const authorText = document.getElementById('cover-edit-author')?.value || '';
+    const fontFamily = document.getElementById('cover-edit-font')?.value || 'Georgia';
+    const fontSize = parseInt(document.getElementById('cover-edit-fontsize')?.value || '48', 10);
+    const textColor = document.getElementById('cover-edit-color')?.value || '#ffffff';
+    const position = document.getElementById('cover-edit-position')?.value || 'bottom';
+    const shadow = document.getElementById('cover-edit-shadow')?.value || 'light';
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      canvas.width = img.width || 600;
+      canvas.height = img.height || 900;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // Apply text shadow
+      if (shadow === 'light') {
+        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+      } else if (shadow === 'heavy') {
+        ctx.shadowColor = 'rgba(0,0,0,0.9)';
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetX = 3;
+        ctx.shadowOffsetY = 3;
+      }
+
+      ctx.fillStyle = textColor;
+      ctx.textAlign = 'center';
+
+      // Calculate Y position
+      let titleY, subtitleY, authorY;
+      if (position === 'top') {
+        titleY = fontSize + 30;
+        subtitleY = titleY + fontSize * 0.6 + 10;
+        authorY = canvas.height - 40;
+      } else if (position === 'center') {
+        titleY = canvas.height / 2 - fontSize * 0.3;
+        subtitleY = titleY + fontSize * 0.6 + 10;
+        authorY = canvas.height - 40;
+      } else {
+        titleY = canvas.height - 120;
+        subtitleY = titleY + fontSize * 0.6 + 10;
+        authorY = canvas.height - 40;
+      }
+
+      const centerX = canvas.width / 2;
+
+      // Draw title
+      if (titleText) {
+        ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+        ctx.fillText(titleText, centerX, titleY, canvas.width - 40);
+      }
+
+      // Draw subtitle
+      if (subtitleText) {
+        ctx.font = `${Math.round(fontSize * 0.5)}px "${fontFamily}"`;
+        ctx.fillText(subtitleText, centerX, subtitleY, canvas.width - 40);
+      }
+
+      // Draw author
+      if (authorText) {
+        ctx.shadowBlur = Math.max(ctx.shadowBlur - 2, 0);
+        ctx.font = `${Math.round(fontSize * 0.4)}px "${fontFamily}"`;
+        ctx.fillText(authorText, centerX, authorY, canvas.width - 40);
+      }
+    };
+    img.src = project.coverImage;
+  }
+
+  _applyCoverEdits() {
+    this._drawCoverPreview();
+  }
+
+  async _saveCoverEdits() {
+    const project = this._currentProject;
+    if (!project) return;
+
+    const canvas = document.getElementById('cover-edit-canvas');
+    if (!canvas) return;
+
+    // Redraw to make sure canvas is current
+    this._drawCoverPreview();
+
+    // Wait a moment for the image to draw
+    await new Promise(r => setTimeout(r, 300));
+
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+
+      // Save cover typography settings
+      const updates = {
+        coverImage: dataUrl,
+        coverTitle: document.getElementById('cover-edit-title')?.value || '',
+        coverSubtitle: document.getElementById('cover-edit-subtitle')?.value || '',
+        coverAuthor: document.getElementById('cover-edit-author')?.value || '',
+        coverFont: document.getElementById('cover-edit-font')?.value || 'Georgia',
+        coverFontSize: parseInt(document.getElementById('cover-edit-fontsize')?.value || '48', 10),
+        coverTextColor: document.getElementById('cover-edit-color')?.value || '#ffffff',
+        coverTextPosition: document.getElementById('cover-edit-position')?.value || 'bottom',
+        coverTextShadow: document.getElementById('cover-edit-shadow')?.value || 'light'
+      };
+
+      await this.fs.updateProject(project.id, updates);
+      Object.assign(project, updates);
+      this._updateCoverDisplay();
+
+      document.getElementById('panel-edit-cover')?.classList.remove('visible');
+    } catch (err) {
+      alert('Failed to save cover: ' + err.message);
+    }
+  }
+
+  // ======== Import Knowledge Methods ========
+
+  _openImportKnowledgePanel() {
+    const panel = document.getElementById('panel-import-knowledge');
+    if (!panel) return;
+    panel.classList.add('visible');
+
+    // Reset form
+    const titleInput = document.getElementById('knowledge-title');
+    const contentArea = document.getElementById('knowledge-content');
+    const pasteArea = document.getElementById('knowledge-paste-area');
+    const fileInfo = document.getElementById('knowledge-file-info');
+    if (titleInput) titleInput.value = '';
+    if (contentArea) contentArea.value = '';
+    if (pasteArea) pasteArea.style.display = 'none';
+    if (fileInfo) fileInfo.style.display = 'none';
+
+    // Set up file input handler
+    const fileInput = document.getElementById('knowledge-file-input');
+    if (fileInput) {
+      fileInput.onchange = (e) => this._handleKnowledgeFile(e);
+    }
+
+    // Render existing knowledge list
+    this._renderKnowledgeList();
+  }
+
+  _showKnowledgePasteArea() {
+    const pasteArea = document.getElementById('knowledge-paste-area');
+    const fileInfo = document.getElementById('knowledge-file-info');
+    if (pasteArea) pasteArea.style.display = '';
+    if (fileInfo) fileInfo.style.display = 'none';
+    this._knowledgeFileContent = null;
+  }
+
+  _handleKnowledgeFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const pasteArea = document.getElementById('knowledge-paste-area');
+    const fileInfo = document.getElementById('knowledge-file-info');
+    if (pasteArea) pasteArea.style.display = 'none';
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      this._knowledgeFileContent = reader.result;
+      if (fileInfo) {
+        fileInfo.style.display = '';
+        fileInfo.textContent = `File loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+      }
+      // Auto-fill title from filename if empty
+      const titleInput = document.getElementById('knowledge-title');
+      if (titleInput && !titleInput.value) {
+        titleInput.value = file.name.replace(/\.[^.]+$/, '');
+      }
+    };
+    reader.onerror = () => {
+      alert('Failed to read file.');
+    };
+    reader.readAsText(file);
+  }
+
+  async _saveKnowledge() {
+    const project = this._currentProject;
+    if (!project) {
+      alert('Open a project first.');
+      return;
+    }
+
+    const title = document.getElementById('knowledge-title')?.value?.trim();
+    if (!title) {
+      alert('Please enter a title for this knowledge entry.');
+      return;
+    }
+
+    const type = document.getElementById('knowledge-type')?.value || 'research';
+    const pastedContent = document.getElementById('knowledge-content')?.value?.trim();
+    const content = this._knowledgeFileContent || pastedContent;
+
+    if (!content) {
+      alert('Please paste text or upload a file.');
+      return;
+    }
+
+    const entry = {
+      id: `kb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      projectId: project.id,
+      title,
+      type,
+      content,
+      wordCount: (content.match(/[a-zA-Z'''\u2019-]+/g) || []).length,
+      createdAt: Date.now()
+    };
+
+    try {
+      await this.localStorage.put('knowledgeBase', entry);
+      this._knowledgeFileContent = null;
+
+      // Reset form
+      const titleInput = document.getElementById('knowledge-title');
+      const contentArea = document.getElementById('knowledge-content');
+      const pasteArea = document.getElementById('knowledge-paste-area');
+      const fileInfo = document.getElementById('knowledge-file-info');
+      if (titleInput) titleInput.value = '';
+      if (contentArea) contentArea.value = '';
+      if (pasteArea) pasteArea.style.display = 'none';
+      if (fileInfo) fileInfo.style.display = 'none';
+
+      this._renderKnowledgeList();
+    } catch (err) {
+      alert('Failed to save knowledge: ' + err.message);
+    }
+  }
+
+  async _deleteKnowledge(knowledgeId) {
+    if (!confirm('Delete this knowledge entry?')) return;
+    try {
+      await this.localStorage.delete('knowledgeBase', knowledgeId);
+      this._renderKnowledgeList();
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+    }
+  }
+
+  async _renderKnowledgeList() {
+    const listEl = document.getElementById('knowledge-list');
+    if (!listEl) return;
+
+    const project = this._currentProject;
+    if (!project) {
+      listEl.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">Open a project first.</p>';
+      return;
+    }
+
+    try {
+      const allKnowledge = await this.localStorage.getAll('knowledgeBase');
+      const projectKnowledge = allKnowledge.filter(k => k.projectId === project.id);
+
+      if (projectKnowledge.length === 0) {
+        listEl.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No knowledge imported yet.</p>';
+        return;
+      }
+
+      const typeLabels = {
+        research: 'Research',
+        reference: 'Reference',
+        wikipedia: 'Wikipedia',
+        notes: 'Notes',
+        other: 'Other'
+      };
+
+      listEl.innerHTML = projectKnowledge.map(k => `
+        <div style="padding:8px; margin-bottom:8px; background:var(--bg-secondary); border-radius:var(--radius-sm); border:1px solid var(--border-color);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="font-size:14px;">${this._escapeHtml(k.title)}</strong>
+            <button class="btn btn-sm knowledge-delete-btn" data-knowledge-id="${k.id}" style="padding:2px 8px; border-color:var(--danger); color:var(--danger); font-size:12px;">&times;</button>
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+            ${typeLabels[k.type] || k.type} &bull; ${(k.wordCount || 0).toLocaleString()} words &bull; ${new Date(k.createdAt).toLocaleDateString()}
+          </div>
+        </div>
+      `).join('');
+    } catch (err) {
+      listEl.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">Failed to load knowledge.</p>';
+    }
+  }
+
+  async _getProjectKnowledge() {
+    const project = this._currentProject;
+    if (!project) return '';
+
+    try {
+      const allKnowledge = await this.localStorage.getAll('knowledgeBase');
+      const projectKnowledge = allKnowledge.filter(k => k.projectId === project.id);
+      if (projectKnowledge.length === 0) return '';
+
+      let knowledgePrompt = '\n=== PROJECT KNOWLEDGE BASE (reference materials) ===\n';
+      knowledgePrompt += 'The following reference materials have been imported for this project. Consult them for factual accuracy and context:\n\n';
+
+      for (const k of projectKnowledge) {
+        // Truncate very long knowledge entries to keep prompt manageable
+        const truncated = k.content.length > 8000
+          ? k.content.slice(0, 8000) + '\n[... truncated ...]'
+          : k.content;
+        knowledgePrompt += `--- ${k.title} (${k.type}) ---\n${truncated}\n\n`;
+      }
+
+      knowledgePrompt += '=== END PROJECT KNOWLEDGE BASE ===\n';
+      return knowledgePrompt;
+    } catch (err) {
+      return '';
+    }
   }
 
   _registerServiceWorker() {

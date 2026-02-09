@@ -34,7 +34,10 @@ class ErrorDatabase {
    * Called after each scoring pass (chunk or final).
    *
    * @param {object} review - The scoring review object from scoreProse()
-   * @param {object} context - { projectId, chapterId, chapterTitle, genre }
+   * @param {object} context - { projectId, chapterId, chapterTitle, genre, sessionKey }
+   *   sessionKey: optional unique key for the current iteration session.
+   *   When provided, each pattern is only recorded once per session to prevent
+   *   duplicate frequency bumps during iterative refinement loops.
    */
   async recordFromReview(review, context = {}) {
     if (!review) return;
@@ -81,17 +84,27 @@ class ErrorDatabase {
 
   /**
    * Merge a new error entry with existing patterns.
-   * If a similar pattern exists, increment its frequency.
+   * If a similar pattern exists, increment its frequency (once per session).
    * Otherwise, create a new pattern entry.
+   *
+   * Session-aware: When context.sessionKey is provided, frequency is only
+   * incremented once per session per pattern to prevent inflated counts
+   * during iterative refinement loops.
    */
   async _mergePattern(entry, context, timestamp) {
     const key = this._patternKey(entry);
     const existing = await this.storage.get('errorPatterns', key);
 
     if (existing) {
-      // Update existing pattern
-      existing.frequency = (existing.frequency || 1) + 1;
+      // Session-aware deduplication: skip frequency bump if already recorded this session
+      const sessionKey = context.sessionKey || null;
+      const alreadySeenThisSession = sessionKey && existing._lastSessionKey === sessionKey;
+
+      if (!alreadySeenThisSession) {
+        existing.frequency = (existing.frequency || 1) + 1;
+      }
       existing.lastSeen = timestamp;
+      if (sessionKey) existing._lastSessionKey = sessionKey;
       existing.estimatedImpact = Math.max(existing.estimatedImpact, entry.estimatedImpact);
       // Track which projects this pattern appears in
       if (context.projectId && !existing.projectIds.includes(context.projectId)) {
@@ -118,7 +131,8 @@ class ErrorDatabase {
         firstSeen: timestamp,
         lastSeen: timestamp,
         projectIds: context.projectId ? [context.projectId] : [],
-        dismissed: false
+        dismissed: false,
+        _lastSessionKey: context.sessionKey || null
       };
       await this.storage.put('errorPatterns', pattern);
     }
