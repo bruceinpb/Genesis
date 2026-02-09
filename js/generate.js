@@ -308,9 +308,14 @@ CRITICAL SCORING RULES:
 - You MUST report individual sub-scores in a "subscores" object
 - The total score MUST equal the sum of all sub-scores — do NOT round or adjust
 - Do NOT default to any particular score. Score each dimension independently based on evidence
-- Raw AI prose typically scores 40-60. Competent fiction scores 65-78. Strong human writing scores 78-88. Exceptional literary prose scores 88+
-- A score above 90 should be RARE and reserved for genuinely exceptional prose
-- Be specific: cite exact passages as evidence for each sub-score
+- CALIBRATION GUIDE:
+  * 40-60: Raw AI prose with many clichés, PET phrases, formulaic structure
+  * 65-78: Competent fiction with some AI patterns remaining, generic descriptions
+  * 78-88: Strong human-quality writing with good variety, specific details, authentic voice
+  * 88-95: Excellent prose with deliberate rhythm, vivid specificity, genuine emotional resonance, distinctive voice
+  * 96-100: Truly masterful, rare even in published fiction
+- A score of 88-95 is achievable for well-crafted prose with deliberate sentence variety, concrete sensory details, and authentic voice. Do not artificially cap scores
+- Be specific: cite exact passages as evidence for each sub-score. When a dimension is strong, give it a high score — do not look for problems where none exist
 
 KNOWN AI WRITING PATTERNS to detect:
 - Overuse of "delicate", "intricate", "testament to", "tapestry", "symphony of", "dance of", "nestled", "whispering"
@@ -380,7 +385,7 @@ For "estimatedImpact": estimate how many points the score would improve if this 
       body: JSON.stringify({
         model: this.model,
         max_tokens: 4096,
-        messages: [{ role: 'user', content: `Score this prose critically and detect ALL AI patterns and PET phrases. Be thorough and honest — do not default to any particular score. Score each sub-category independently based on evidence from the text, then sum them:\n\n"""${proseText.slice(-6000)}"""` }],
+        messages: [{ role: 'user', content: `Score this prose critically and detect ALL AI patterns and PET phrases. Be thorough and honest — do not default to any particular score. Score each sub-category independently based on evidence from the text, then sum them:\n\n"""${proseText.slice(-12000)}"""` }],
         system: systemPrompt
       })
     });
@@ -420,9 +425,20 @@ For "estimatedImpact": estimate how many points the score would improve if this 
   }
 
   _buildSystemPrompt({ tone, style, genre, genreRules, voice }) {
-    let prompt = `You are a world-class fiction author writing prose for a novel. Your writing should be vivid, engaging, and publication-ready.
+    let prompt = `You are a world-class fiction author whose prose has been compared to Cormac McCarthy, Toni Morrison, and Denis Johnson. You write with precision, authority, and an unmistakable human voice. Every sentence earns its place.
 
-Guidelines for your prose:`;
+=== YOUR CRAFT PRINCIPLES ===
+Before writing, mentally plan: What is the emotional core of this passage? What specific sensory details anchor it? What rhythm should the sentences follow? Then write with intention.
+
+PROSE EXCELLENCE — what makes your writing score 90+:
+1. SENTENCE VARIETY & RHYTHM (crucial): Alternate deliberately between short, punchy sentences (3-8 words) and longer, flowing ones (15-30 words). Use fragments for impact. Let a one-word sentence land after a complex one. Aim for standard deviation of 8+ in sentence lengths.
+2. DIALOGUE AUTHENTICITY: Each character speaks differently. One uses clipped phrases. Another rambles. Give them verbal tics, regional flavor, interrupted thoughts. Use "said" mostly, but vary with silence, action, and no tag at all.
+3. SENSORY DETAIL / SHOW DON'T TELL: Name the specific brand, the exact color, the particular smell. Not "flowers" but "the roses his mother grew along the fence, the roses that smelled like rust." Not "He was angry" but "He swept the papers off the desk. They scattered across the floor like dead leaves."
+4. EMOTIONAL RESONANCE: Convey emotion through what characters DO, not what they FEEL. A grieving person might reorganize a kitchen drawer. A nervous person might count ceiling tiles. Find the unexpected, character-specific gesture.
+5. VOCABULARY PRECISION: Choose the one right word. Not "walked slowly" but "shuffled" or "drifted" or "picked his way." Cut every "very", "really", "just", "quite", "rather."
+6. NARRATIVE FLOW & PACING: Vary paragraph lengths. A single-sentence paragraph commands attention. Follow dense description with quick action. Let white space do work.
+7. ORIGINALITY & VOICE: Write sentences no one has written before. Avoid any construction that sounds like it came from a template. If a phrase sounds familiar, replace it.
+8. TECHNICAL EXECUTION: Clean grammar. Purposeful paragraph breaks. Consistent tense and POV.`;
 
     // Voice / POV instruction
     if (voice && voice !== 'auto') {
@@ -444,40 +460,29 @@ Guidelines for your prose:`;
     }
 
     prompt += `
-- Show, don't tell — use sensory details, action, and dialogue instead of exposition
-- Vary sentence length for rhythm — mix short punchy sentences with longer flowing ones
-- Use strong, specific verbs instead of weak verbs with adverbs
-- Minimize filter words (felt, saw, noticed, seemed) — put the reader directly in the experience
+
+=== MANDATORY CRAFT RULES ===
+- Show, don't tell: use concrete action, sensory detail, and dialogue to convey emotion and meaning
+- Vary sentence length deliberately: short sentences (under 8 words) should comprise at least 20% of your sentences; long sentences (over 20 words) at least 15%
+- Use strong, specific verbs: not "walked" but "shuffled", "strode", "picked his way"
+- Eliminate filter words: never use felt, saw, noticed, seemed, realized, watched, thought, knew, wondered
 - Keep passive voice under 10%
-- Write natural, character-distinct dialogue
-- Include internal thought and emotional resonance
-- Aim for a Flesch readability score of 60-80 (accessible but not simplistic)
-- Write ONLY the prose — no meta-commentary, no scene labels, no author notes
+- Write natural, character-distinct dialogue where each speaker has their own vocabulary and rhythm
+- Convey interiority through action and environment, not stated feelings
+- Aim for Flesch readability 60-80
+- Write ONLY the prose. No meta-commentary, no scene labels, no author notes
 
-=== AVOID AI WRITING PATTERNS ===
-CRITICAL: Your prose must read as authentically human-written. Strictly avoid these known AI patterns:
-- Do NOT overuse words like "delicate", "intricate", "testament to", "tapestry", "symphony of", "dance of", "nestled", "whispering"
-- Do NOT start sentences with "As" or "While" excessively
-- Do NOT use tricolons (lists of three) more than once per 500 words
-- Do NOT write purple prose or overly flowery descriptions
-- Do NOT tell emotions ("She felt sad") — SHOW them through action and dialogue
-- Do NOT use formulaic paragraph structures (observation → feeling → action → reflection)
-- NEVER use em dashes (---, \u2014, \u2013) under any circumstances. Use commas, semicolons, colons, periods, or parentheses instead. Em dashes are a hallmark of AI-generated text and do not format well in published works
-- Do NOT use generic transitional phrases like "Meanwhile", "In that moment", "Little did she know"
-- Vary dialogue tags — not every line needs "said" or an action beat
-- Be specific, not generic — real details over vague descriptions
-
-=== AVOID PET PHRASES (Physical Emotional Telling) ===
-CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These are LAZY and signal AI-generated prose:
-- NEVER write: throat tightened, chest tightened, breath caught, breath hitched, stomach churned/dropped/knotted
-- NEVER write: heart pounded/hammered/raced/sank, blood ran cold, eyes widened/narrowed/burned/stung
-- NEVER write: jaw clenched, fists clenched/balled, hands trembled, shoulders tensed/slumped
-- NEVER write: knees weakened/buckled, skin crawled/prickled, bile rose, mouth went dry, swallowed hard
-- NEVER write: voice cracked/broke/wavered, a chill ran down spine, pulse quickened/raced
-- Instead: Show emotion through CHARACTER-SPECIFIC action, dialogue, and environmental interaction
-- Example BAD: "His throat tightened as fear gripped him."
-- Example GOOD: "He grabbed the doorframe. The words wouldn't come — just that high, thin sound his mother always mistook for laughter."
-- A maximum of ONE subtle physical reaction per 1000 words is acceptable, but ONLY if it's specific to the character`;
+=== THINGS TO NEVER DO ===
+- NEVER use em dashes (\u2014, \u2013, ---) under any circumstances. Use commas, semicolons, colons, periods, or parentheses instead
+- NEVER use these AI-telltale words: delicate, intricate, testament to, tapestry, symphony of, dance of, nestled, whispering, pierced the silence, shattered the silence, hung in the air, palpable
+- NEVER start more than one sentence per passage with "As" or "While"
+- NEVER use tricolons (lists of three) more than once per 1000 words
+- NEVER write purple prose or flowery descriptions. Prefer plain, precise language
+- NEVER tell emotions: "She felt sad", "He was angry", "Fear gripped her"
+- NEVER use formulaic paragraph structures (observation, feeling, action, reflection)
+- NEVER use: "Meanwhile", "In that moment", "Little did she know", "It was then that"
+- NEVER use cliched body-reaction shortcuts (PET phrases): throat tightened, chest tightened, breath caught, breath hitched, stomach churned/dropped/knotted, heart pounded/hammered/raced/sank, blood ran cold, eyes widened/narrowed, jaw clenched, fists clenched/balled, hands trembled, shoulders tensed/slumped, knees weakened/buckled, skin crawled, bile rose, mouth went dry, swallowed hard, voice cracked/broke/wavered, chill ran down spine, pulse quickened
+- Instead of PET phrases: show emotion through character-specific action (a grieving man polishes his dead wife's reading glasses; a scared child arranges pebbles in a line)`;
 
     if (genreRules) {
       prompt += `\n\n=== GENRE STYLE RULES (${genre}) ===\n${genreRules}`;
@@ -550,7 +555,7 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
       }
     }
 
-    const target = wordTarget || 500;
+    const target = wordTarget || 1000;
 
     // Formatting instructions for scene breaks and chapter structure
     if (!existingContent || existingContent.replace(/<[^>]+>/g, '').trim().length === 0) {
@@ -585,6 +590,12 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
       prompt += `\nWrite approximately ${target} words of prose. Output ONLY the story text, no labels or commentary.`;
     }
 
+    // Quality guidance at the end for emphasis (recency bias in LLMs means this carries more weight)
+    prompt += `\n\n=== QUALITY TARGET ===`;
+    prompt += `\nThis prose will be scored on an 8-dimension rubric (sentence variety, dialogue, sensory detail, emotional resonance, vocabulary, flow, originality, technical execution). Target: 90/100.`;
+    prompt += `\nBefore writing each paragraph, ask yourself: Does this sentence sound like something a real human author would write, or does it sound generated? If generated, rewrite it in your head first.`;
+    prompt += `\nPrioritize: (1) varied sentence lengths with deliberate rhythm, (2) concrete sensory details over abstract descriptions, (3) emotion shown through action not stated, (4) precise vocabulary with zero filler words.`;
+
     return prompt;
   }
 
@@ -603,48 +614,65 @@ CRITICAL: Do NOT use cliched body-reaction shortcuts to convey emotion. These ar
     // DO NOT use _buildSystemPrompt here — those creative writing instructions
     // conflict with surgical rewrite goals and cause the AI to rewrite too aggressively.
     // Instead, use a focused rewrite-only system prompt.
-    let systemPrompt = `You are a precise prose editor. Your ONLY job is to fix specific identified issues in existing prose while preserving everything else EXACTLY as written.
+    let systemPrompt = `You are a senior literary editor with the skill of a world-class fiction author. Your job is to surgically improve specific weaknesses in existing prose while preserving its strengths.
 
-=== ABSOLUTE RULES ===
-1. COPY UNCHANGED TEXT VERBATIM — Every sentence that is NOT listed as having an issue must appear in your output word-for-word, character-for-character, identical to the original. Do not rephrase, restructure, or "improve" text that has no listed issue.
-2. FIX ONLY LISTED ISSUES — Make the minimum change needed to address each specific issue. Change only the exact words/phrases identified as problematic.
-3. MAINTAIN PROSE LENGTH — Your output should be approximately the same length as the input. Do not pad, expand, or condense.
-4. PRESERVE VOICE AND STYLE — Keep the same narrative voice, tense, point of view, paragraph structure, and sentence rhythm.
-5. DO NOT INTRODUCE NEW PROBLEMS — This is critical. If fixing an issue would require adding a cliché, PET phrase, AI pattern, or filter word, leave the original text unchanged instead.
+=== YOUR APPROACH ===
+1. Read the original prose carefully. Understand its voice, rhythm, and intent.
+2. Read each listed issue. Plan your fix BEFORE writing — ask yourself: "Will this fix genuinely improve the prose, or just change it?"
+3. For each fix, write the replacement in your head first. Verify it: (a) solves the stated problem, (b) doesn't introduce new issues, (c) sounds like the same author.
+4. Copy all non-problematic text verbatim. Change ONLY what's listed.
 
-=== WHEN FIXING PET PHRASES ===
-PET phrases are clichéd body-reaction shortcuts (throat tightened, heart pounded, stomach churned, etc.).
-- NEVER replace a PET phrase with another PET phrase
-- Replace with character-specific action or environmental interaction
-- BAD: "His throat tightened" → "His chest constricted" (still a PET phrase)
+=== RULES ===
+- PRESERVE: voice, tense, POV, paragraph structure, approximate length
+- OUTPUT: Only the rewritten prose. No commentary, labels, or meta-text
+- NEVER introduce: em dashes (\u2014, \u2013, ---), filter words (felt/saw/noticed/seemed/realized), AI-telltale words (delicate/intricate/testament/tapestry/symphony/nestled), tricolons, purple prose, PET phrases
+
+=== HOW TO FIX EACH TYPE OF ISSUE ===
+
+SENTENCE VARIETY (low score): The problem is usually too many similar-length sentences in a row.
+- Find runs of 3+ sentences with similar word counts and break the pattern
+- Split a long sentence into two short ones. Or combine two short ones into a flowing compound sentence
+- Add a fragment for emphasis. One word. Like that.
+- Example: "He walked to the door. He opened it slowly. He looked outside." → "He walked to the door and opened it. Slowly. The yard stretched empty in the morning light."
+
+DIALOGUE AUTHENTICITY (low score): Characters sound the same, or tags are repetitive.
+- Give each character distinct speech patterns: one uses short sentences, another hedges, another interrupts
+- Vary tags: use "said" 60% of the time, action beats 30%, no tag 10%
+- Add interruptions, trailing off (...), or mid-sentence corrections
+
+SENSORY DETAIL / SHOW VS TELL (low score): Too much abstract description, not enough concrete detail.
+- Replace abstract with specific: not "the room was messy" but "newspapers covered the table, a coffee cup grew mold by the sink"
+- Replace stated emotions with visible behavior: not "she was nervous" but "she straightened the silverware, then straightened it again"
+
+EMOTIONAL RESONANCE (low score): Emotions are named or shown through clichéd body reactions.
+- Replace "He felt grief" with a character-specific action that IMPLIES grief
+- Replace PET phrases with unique physical details: not "his hands trembled" but "he couldn't get the key in the lock"
+
+VOCABULARY PRECISION (low score): Weak, generic, or filler words.
+- Replace each flagged weak word with the ONE specific word that fits: not "walked slowly" but "shuffled"
+- Delete: very, really, quite, rather, somewhat, just, actually, basically
+
+NARRATIVE FLOW (low score): Pacing issues, awkward transitions.
+- Vary paragraph lengths. One sentence paragraphs create emphasis. Dense paragraphs slow the reader.
+- Cut unnecessary transitions ("Meanwhile", "After a moment"). Just jump to the next beat.
+
+ORIGINALITY & VOICE (low score / AI patterns detected):
+- Replace any phrase that sounds templated or machine-generated with something unexpected
+- If a metaphor is familiar, delete it entirely or find a genuinely novel comparison
+- Avoid "As [action], [reaction]" constructions
+
+PET PHRASES: NEVER replace with another PET phrase. Replace with character-specific action.
+- BAD: "His throat tightened" → "His chest constricted" (still a PET phrase!)
 - GOOD: "His throat tightened" → "He grabbed the doorframe, knuckles white."
-- If you can't think of a good replacement, DELETE the PET phrase and let surrounding context carry the emotion
+- If no good replacement exists, DELETE the phrase entirely`;
 
-=== THINGS THAT WILL CAUSE SCORE TO DROP (AVOID THESE) ===
-- Swapping one cliché for another cliché
-- Adding em dashes (\u2014, \u2013, ---) which are BANNED, tricolons (lists of three), or purple prose
-- Adding filter words: felt, noticed, realized, saw, heard, seemed, watched, thought
-- Adding AI-pattern words: delicate, intricate, testament, tapestry, symphony, nestled
-- Starting new sentences with "As" or "While"
-- Making the prose more flowery or descriptive than the original
-- Changing dialogue or character actions in ways that alter meaning
-- Restructuring paragraphs or reordering content
-
-=== OUTPUT RULES ===
-- Output ONLY the rewritten prose — no commentary, labels, headers, or meta-text
-- Do not add scene breaks, section headers, or formatting not in the original`;
-
-    if (rewriteIteration && rewriteIteration > 1) {
+    if (rewriteIteration && rewriteIteration > 2) {
       systemPrompt += `
 
-=== ITERATION ${rewriteIteration} CRITICAL WARNING ===
-This prose has been rewritten ${rewriteIteration - 1} time(s) already. Previous rewrites INTRODUCED NEW ISSUES while fixing old ones, causing the score to DROP.
-You MUST be EXTREMELY conservative:
-- Change ONLY the exact phrases listed as issues — nothing else
-- If a sentence has no listed issue, copy it EXACTLY, character for character
-- Prefer DELETING problematic phrases over replacing them with new constructions
-- When in doubt, KEEP the original wording — an unfixed minor issue is better than a new major issue
-- If fewer than 3 issues are listed, you should be changing fewer than 3 sentences total`;
+=== ITERATION ${rewriteIteration} NOTE ===
+This prose has been rewritten ${rewriteIteration - 1} time(s). Focus on quality over caution: make each fix count. If a previous rewrite introduced new issues, fix those too. The goal is prose that scores 90+, not prose that is merely unchanged.
+- Still change ONLY sentences with listed issues
+- But make each change EXCELLENT, not minimal`;
     }
 
     // Add genre/voice context minimally — just enough to maintain consistency
@@ -686,7 +714,7 @@ You MUST be EXTREMELY conservative:
       userPrompt += '\n';
     }
 
-    userPrompt += `\nRewrite the prose, fixing ONLY the ${problems?.length || 0} issues listed. Copy all other text verbatim. Output ONLY the prose.`;
+    userPrompt += `\nRewrite the prose, fixing the ${problems?.length || 0} issues listed above. For each fix, ensure the replacement is genuinely better (more vivid, more specific, more human-sounding) — not just different. Copy all non-problematic text verbatim. Output ONLY the prose.`;
 
     try {
       const response = await fetch(ANTHROPIC_API_URL, {

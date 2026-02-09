@@ -192,9 +192,9 @@
   <!-- ===== Continue Writing Bar ===== -->
   <div class="continue-bar" id="continue-bar" style="display:none;">
     <div class="continue-group" style="display:flex;gap:4px;flex:1;">
-      <button class="btn btn-primary continue-word-btn" data-words="500" data-tooltip="Continue Writing ~500 words — Generate approximately 500 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+500</button>
-      <button class="btn btn-primary continue-word-btn" data-words="1000" data-tooltip="Continue Writing ~1,000 words — Generate approximately 1,000 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+1,000</button>
+      <button class="btn btn-primary continue-word-btn" data-words="1000" data-tooltip="Continue Writing ~1,000 words — Generate approximately 1,000 words of quality-scored prose, continuing from where the story left off. Prose is scored and refined to meet your quality threshold." style="flex:1;">+1,000</button>
       <button class="btn btn-primary continue-word-btn" data-words="2000" data-tooltip="Continue Writing ~2,000 words — Generate approximately 2,000 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+2,000</button>
+      <button class="btn btn-primary continue-word-btn" data-words="3000" data-tooltip="Continue Writing ~3,000 words — Generate approximately 3,000 words of quality-scored prose in chunks, continuing from where the story left off. Each chunk is scored and refined to meet your quality threshold." style="flex:1;">+3,000</button>
     </div>
     <button class="btn" id="btn-continue-rethink" data-tooltip="Rethink — Revise the current chapter's outline based on your instructions before continuing to write." style="font-size:0.8rem;">Rethink</button>
     <button class="btn" id="btn-continue-to-target" data-tooltip="Write to Goal — Calculate the remaining words needed to reach your project's word count goal, then generate prose to complete the story with a satisfying conclusion.">Write to Goal</button>
@@ -318,11 +318,12 @@
       <h3>Options</h3>
       <div class="form-group">
         <label>Approximate Words</label>
-        <select class="form-input" id="generate-word-target" data-tooltip="Choose how much prose to generate. Short scenes (~250 words) for brief moments or transitions. Standard (~500) for typical scenes. Long (~1,000) for detailed, multi-beat scenes. Full chapter (~2,000) for complete chapter drafts.">
+        <select class="form-input" id="generate-word-target" data-tooltip="Choose how much prose to generate. Short scenes (~250 words) for brief moments or transitions. Standard (~1,000) for typical scenes. Long (~2,000) for detailed, multi-beat scenes. Full chapter (~3,000) for complete chapter drafts.">
           <option value="250">~250 (short scene)</option>
-          <option value="500" selected>~500 (standard scene)</option>
-          <option value="1000">~1,000 (long scene)</option>
-          <option value="2000">~2,000 (full chapter)</option>
+          <option value="500">~500 (short scene)</option>
+          <option value="1000" selected>~1,000 (standard scene)</option>
+          <option value="2000">~2,000 (long scene)</option>
+          <option value="3000">~3,000 (full chapter)</option>
         </select>
       </div>
       <div class="form-group">
@@ -461,9 +462,9 @@
     </div>
     <div class="modal-footer" style="flex-wrap:wrap;gap:8px;">
       <div style="display:flex;gap:4px;width:100%;margin-bottom:4px;">
-        <button class="btn btn-primary continue-word-btn" data-words="500" style="flex:1;font-size:0.8rem;">+500</button>
         <button class="btn btn-primary continue-word-btn" data-words="1000" style="flex:1;font-size:0.8rem;">+1,000</button>
         <button class="btn btn-primary continue-word-btn" data-words="2000" style="flex:1;font-size:0.8rem;">+2,000</button>
+        <button class="btn btn-primary continue-word-btn" data-words="3000" style="flex:1;font-size:0.8rem;">+3,000</button>
         <button class="btn" id="btn-prose-review-rethink" style="font-size:0.8rem;">Rethink</button>
       </div>
       <div style="display:flex;gap:8px;width:100%;">
@@ -652,7 +653,7 @@
         <div class="help-step-number">6</div>
         <div class="help-step-content">
           <h3>Write &amp; Generate Prose</h3>
-          <p>Select any chapter from the sidebar and start writing. Use the <strong>AI</strong> button in the toolbar to generate prose. Prose is generated in scored chunks, with each chunk automatically scored and rewritten if it falls below your quality threshold. You can also use <strong>Iterative Write</strong> to generate one paragraph at a time with fine-grained quality control. Generated chapters automatically begin with an <strong>H1 heading</strong> (for KDP table of contents) and include <strong>scene breaks</strong> between beats and at chapter endings. Continue writing with the +500, +1000, or +2000 word buttons.</p>
+          <p>Select any chapter from the sidebar and start writing. Use the <strong>AI</strong> button in the toolbar to generate prose. Prose is generated in scored chunks, with each chunk automatically scored and rewritten if it falls below your quality threshold. You can also use <strong>Iterative Write</strong> to generate one paragraph at a time with fine-grained quality control. Generated chapters automatically begin with an <strong>H1 heading</strong> (for KDP table of contents) and include <strong>scene breaks</strong> between beats and at chapter endings. Continue writing with the +1,000, +2,000, or +3,000 word buttons.</p>
         </div>
       </div>
 
@@ -864,7 +865,7 @@
         <div class="help-step-number">&#9874;</div>
         <div class="help-step-content">
           <h3>Scored Chunk Generation</h3>
-          <p>Standard prose generation (500+ words) uses scored chunks. The total word target is broken into ~300-word segments. Each segment is generated, scored, and if it falls below your quality threshold, automatically rewritten and rescored before the next segment begins. This ensures consistent quality across longer passages.</p>
+          <p>Standard prose generation (1,000+ words) uses scored chunks. The total word target is broken into ~1,000-word segments. Each segment is generated, scored, and if it falls below your quality threshold, automatically rewritten and rescored before the next segment begins. This ensures consistent quality across longer passages.</p>
         </div>
       </div>
 
@@ -966,7 +967,7 @@
         <div class="help-step-number">&#128736;</div>
         <div class="help-step-content">
           <h3>Continue Writing &amp; Write to Goal</h3>
-          <p>After each generation, use <strong>+500</strong>, <strong>+1,000</strong>, or <strong>+2,000</strong> buttons to continue writing. <strong>Write to Goal</strong> automatically generates prose until your project's word count target is reached, including a concluding section. <strong>Rethink</strong> lets you revise a chapter's outline before continuing.</p>
+          <p>After each generation, use <strong>+1,000</strong>, <strong>+2,000</strong>, or <strong>+3,000</strong> buttons to continue writing. <strong>Write to Goal</strong> automatically generates prose until your project's word count target is reached, including a concluding section. <strong>Rethink</strong> lets you revise a chapter's outline before continuing.</p>
         </div>
       </div>
 
