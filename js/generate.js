@@ -842,9 +842,260 @@ CRITICAL: Previous rewrites have failed to improve the score because they introd
   }
 
   /**
-   * Generate a cover image prompt by analyzing the story content.
-   * Uses Claude to create a vivid image generation prompt.
+   * AI self-reflection: Analyze prose and generate a detailed fix list.
+   * Asks the AI "How can I improve this prose? What surgical fixes or rewrites
+   * are needed to get closer to the threshold?"
+   * Returns a structured fix list that can be applied in the next rewrite.
    */
+  async reflectOnProse({ prose, score, subscores, threshold, issues, aiPatterns, iterationNum, previousFixLists }) {
+    if (!this.apiKey) {
+      throw new Error('No API key set.');
+    }
+
+    let systemPrompt = `You are an expert literary editor performing a self-reflection analysis. You just scored a piece of prose and now must deeply analyze HOW to improve it. Think step by step about what's holding the score back and create a precise, actionable fix list.
+
+Your analysis should consider:
+1. What specific weaknesses are dragging the score down?
+2. For each weakness, what is the EXACT surgical fix or rewrite needed?
+3. Will each proposed fix genuinely improve the prose, or just change it?
+4. Are there any fixes that could be applied together for compounding improvement?
+
+RULES:
+- Be specific — reference exact phrases from the prose
+- Each fix must include the problematic text AND the proposed replacement approach
+- Prioritize fixes by estimated point impact (highest first)
+- Never suggest introducing: em dashes, filter words (felt/saw/noticed/seemed/realized), AI-telltale words (delicate/intricate/testament/tapestry/symphony/nestled), PET phrases, tricolons
+- Focus on fixes that will MEASURABLY improve the score toward the threshold`;
+
+    if (previousFixLists && previousFixLists.length > 0) {
+      systemPrompt += `\n\nIMPORTANT: Previous fix lists have already been attempted but the score has not reached the threshold.
+Previous approaches that did NOT work sufficiently:
+${previousFixLists.map((fl, i) => `Attempt ${i + 1}: ${fl.summary || fl.fixes?.map(f => f.description).join('; ')}`).join('\n')}
+
+You MUST take a DIFFERENT and BOLDER approach this time. Do not repeat the same types of fixes. Consider:
+- Restructuring entire sentences rather than word swaps
+- Adding vivid new sensory details rather than tweaking existing ones
+- Dramatically varying sentence rhythm
+- Reworking weak passages more substantially`;
+    }
+
+    let userPrompt = `=== PROSE TO ANALYZE ===
+${prose}
+=== END PROSE ===
+
+Current Score: ${score}/100
+Target Threshold: ${threshold}/100
+Gap: ${threshold - score} points needed
+
+Sub-scores:
+${subscores ? Object.entries(subscores).map(([k, v]) => `  ${k}: ${v}`).join('\n') : 'Not available'}
+
+${issues && issues.length > 0 ? `Known Issues:\n${issues.map((iss, i) => `  ${i + 1}. [${iss.severity}] ${iss.problem || iss.description}${iss.text ? ` — "${iss.text}"` : ''}`).join('\n')}` : ''}
+${aiPatterns && aiPatterns.length > 0 ? `\nAI Patterns Detected:\n${aiPatterns.map(p => `  - ${p.pattern}: "${p.examples?.[0] || ''}"`).join('\n')}` : ''}
+
+Reflect deeply on this prose. Ask yourself:
+1. "How can I improve the prose I just scored? What is holding the score back the most?"
+2. "What fixes — either surgical word/phrase replacements or broader sentence rewrites — are necessary to improve the score closer to ${threshold}?"
+3. "How would I implement each fix on this specific prose? What exact changes would I make?"
+
+Create a fix list based on this analysis. Output valid JSON only:
+{
+  "reflection": "2-3 sentence analysis of what's holding the score back",
+  "summary": "One sentence describing the overall fix strategy",
+  "fixes": [
+    {
+      "target": "exact text from the prose to fix (or 'GENERAL' for broad improvements)",
+      "description": "what's wrong and why it hurts the score",
+      "approach": "surgical|rewrite",
+      "replacement_guidance": "specific guidance on what the replacement should look like",
+      "estimated_impact": number (1-5 points)
+    }
+  ],
+  "expected_score_after": number
+}`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try {
+        const parsed = JSON.parse(errorBody);
+        msg = parsed.error?.message || msg;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const rawText = result.content?.[0]?.text || '';
+
+    // Parse JSON from response (handle markdown code blocks)
+    let jsonStr = rawText;
+    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    // Also handle bare JSON
+    const braceStart = jsonStr.indexOf('{');
+    const braceEnd = jsonStr.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+    }
+
+    try {
+      return JSON.parse(jsonStr);
+    } catch (err) {
+      throw new Error('Failed to parse reflection response: ' + err.message);
+    }
+  }
+
+  /**
+   * Apply a fix list from reflectOnProse to the prose via a targeted rewrite.
+   * The fix list guides the rewrite with specific, pre-analyzed improvements.
+   */
+  async applyFixList({ originalProse, fixList, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, genre, genreRules, voice, errorPatternsPrompt, iterationNum, threshold }, { onChunk, onDone, onError }) {
+    if (!this.apiKey) {
+      onError(new Error('No API key set.'));
+      return;
+    }
+
+    this.abortController = new AbortController();
+
+    let systemPrompt = `You are a senior literary editor implementing a pre-analyzed fix list. You have already reflected on this prose and identified specific improvements. Now implement them precisely.
+
+=== YOUR APPROACH ===
+1. Read the original prose and the fix list carefully
+2. For each fix, implement the change as described in the guidance
+3. Ensure each fix genuinely improves the prose — more vivid, more specific, more human-sounding
+4. Preserve everything that isn't being fixed — copy unchanged text verbatim
+5. After all fixes, read the result to verify it flows naturally
+
+=== RULES ===
+- PRESERVE: voice, tense, POV, paragraph structure, approximate length
+- OUTPUT: Only the rewritten prose. No commentary, labels, or meta-text
+- NEVER introduce: em dashes, filter words (felt/saw/noticed/seemed/realized), AI-telltale words (delicate/intricate/testament/tapestry/symphony/nestled), tricolons, purple prose, PET phrases
+- Each fix must result in measurably better prose, not just different prose`;
+
+    if (genre) systemPrompt += `\nGenre context: ${genre}`;
+    if (voice && voice !== 'auto') {
+      const voiceNames = {
+        'first-person': 'first person', 'third-limited': 'third-person limited',
+        'third-omniscient': 'third-person omniscient', 'deep-pov': 'deep POV',
+        'multiple-pov': 'multiple POV'
+      };
+      systemPrompt += `\nNarrative voice: ${voiceNames[voice] || voice} (preserve this exactly)`;
+    }
+    if (errorPatternsPrompt) systemPrompt += errorPatternsPrompt;
+
+    let userPrompt = '';
+    if (aiInstructions) userPrompt += `=== AUTHOR INSTRUCTIONS ===\n${aiInstructions}\n\n`;
+
+    userPrompt += `=== ORIGINAL PROSE ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n`;
+
+    userPrompt += `\n=== FIX LIST (Iteration ${iterationNum}) — Implement ALL fixes below ===\n`;
+    userPrompt += `Strategy: ${fixList.summary || fixList.reflection || ''}\n\n`;
+
+    if (fixList.fixes && fixList.fixes.length > 0) {
+      fixList.fixes.forEach((fix, i) => {
+        userPrompt += `FIX ${i + 1}: `;
+        if (fix.target && fix.target !== 'GENERAL') {
+          userPrompt += `TARGET: "${fix.target}" — `;
+        }
+        userPrompt += `${fix.description}\n`;
+        userPrompt += `  APPROACH: ${fix.approach || 'surgical'}\n`;
+        userPrompt += `  GUIDANCE: ${fix.replacement_guidance}\n`;
+        userPrompt += `  EXPECTED IMPACT: ~${fix.estimated_impact || 1} pts\n\n`;
+      });
+    }
+
+    userPrompt += `\nImplement ALL ${fixList.fixes?.length || 0} fixes above. Target score: ${threshold}/100. Output ONLY the improved prose.`;
+
+    if (characters && characters.length > 0) {
+      userPrompt += '\nCharacters for context: ';
+      userPrompt += characters.map(c => `${c.name} (${c.role})`).join(', ');
+      userPrompt += '\n';
+    }
+
+    try {
+      const response = await fetch(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: maxTokens || 4096,
+          stream: true,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        }),
+        signal: this.abortController.signal
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        let msg = `API error (${response.status})`;
+        try {
+          const parsed = JSON.parse(errorBody);
+          msg = parsed.error?.message || msg;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const event = JSON.parse(data);
+              if (event.type === 'content_block_delta' && event.delta?.text) {
+                onChunk(event.delta.text);
+              }
+            } catch (_) {}
+          }
+        }
+      }
+
+      this.abortController = null;
+      onDone();
+    } catch (err) {
+      this.abortController = null;
+      if (err.name === 'AbortError') {
+        onDone();
+      } else {
+        onError(err);
+      }
+    }
+  }
+
+  /**
   async generateCoverPrompt({ title, genre, proseExcerpt, characters }) {
     if (!this.apiKey) {
       throw new Error('No API key set. Go to Settings to add your Anthropic API key.');
