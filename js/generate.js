@@ -284,7 +284,7 @@ ${userInstructions}`;
    * Score prose quality on a 100-point scale and detect AI patterns.
    * Returns { score, label, issues[], aiPatterns[], summary }
    */
-  async scoreProse(proseText, { isRewrite, previousIssueCount, previousScore, previousSubscores } = {}) {
+  async scoreProse(proseText, { isRewrite, previousIssueCount } = {}) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
     }
@@ -293,14 +293,12 @@ ${userInstructions}`;
 
 ${isRewrite ? `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues.
 SCORING RULES FOR REWRITES:
-- Score based ONLY on what is genuinely present in THIS text — evaluate it fresh on its own merits
+- Score this text COMPLETELY FRESH — as if you have never seen it before
 - Do NOT artificially inflate or deflate the score
 - Do NOT flag borderline cases or nitpick — only flag clear, unambiguous problems that a professional editor would actually flag
 - Do NOT penalize the same dimension twice for the same type of issue
 - If a passage is competent but not exceptional, that is NOT an issue — only flag things that are clearly wrong
-- IMPORTANT: If the prose has genuinely improved in any dimension, the sub-score for that dimension MUST increase to reflect the improvement. Do not anchor to previous scores — judge the text on its current quality
-${previousSubscores ? `- Previous sub-scores for context (these may increase OR stay the same — judge each dimension honestly based on what you see):
-  ${Object.entries(previousSubscores).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}` : ''}
+- Judge each dimension independently based SOLELY on the text in front of you` : ''}
 
 SCORING INSTRUCTIONS — Score each sub-category independently, then sum them:
 1. Sentence variety and rhythm (0-15): Count sentence length variation. If most sentences are similar length, score 4-6. If there's genuine variety between short punchy and long flowing, score 10+.
