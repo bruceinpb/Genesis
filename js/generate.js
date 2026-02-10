@@ -630,107 +630,97 @@ CRITICAL: If score < ${threshold}, "improvedProse" MUST contain the COMPLETE rew
   }
 
   /**
-   * Score prose and apply ONE micro-fix — the single highest-impact issue.
-   * Returns { score, subscores, label, issues, microFixedProse, fixApplied, summary }
+   * Score prose, apply ONE micro-fix, validate internally, return only if improved.
    *
-   * Philosophy: Fix one thing perfectly rather than five things sloppily.
-   * Each call should improve the score by 1-3 points at most.
+   * KEY INNOVATION: The model scores BEFORE and AFTER its own fix in the same
+   * API call, eliminating inter-call scoring variance. The fix is only returned
+   * if the model's internal validation confirms improvement.
+   *
+   * Returns {
+   *   beforeScore, afterScore, subscores, label, issues,
+   *   microFixedProse (null if no improvement), fixApplied, fixCategory,
+   *   summary, fourRequirementsFound
+   * }
    */
   async scoreAndMicroFix(proseText, {
     threshold = 90,
     iterationNum = 1,
-    maxIterations = 4,
-    previousFixes = [],
+    maxIterations = 3,
+    previousFixes = [],      // Accepted fixes
+    attemptedFixes = [],      // ALL attempted fixes (accepted + rejected)
     lintDefects = [],
     intentLedger = null,
     genre = '',
     voice = '',
-    aiInstructions = '',
-    fourRequirementStatus = null
+    aiInstructions = ''
   } = {}) {
     if (!this.apiKey) throw new Error('No API key set.');
 
-    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience. You score prose honestly, then fix EXACTLY ONE thing — the single most impactful issue.
+    const isFirstPass = iterationNum === 1;
+    const isFinalPass = iterationNum >= maxIterations;
+
+    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You will perform a precise 3-step process:
+
+STEP 1: SCORE the prose as-is (the "before" score)
+STEP 2: Apply exactly ONE surgical micro-fix to the single highest-impact issue
+STEP 3: SCORE your fixed version (the "after" score) — be HONEST, not optimistic
+
+Only return the fix if the after-score is HIGHER than the before-score.
+If the after-score is not higher, set microFixedProse to null and explain why you couldn't improve it without introducing new problems.
 
 === SCORING RUBRIC (100 points total) ===
 Score each dimension independently based on EVIDENCE from the text:
-1. Sentence variety and rhythm (0-15)
-2. Dialogue authenticity (0-15): If no dialogue, score narrative voice distinctiveness
-3. Sensory detail / show vs tell (0-15)
-4. Emotional resonance and depth (0-15)
-5. Vocabulary precision (0-10)
-6. Narrative flow and pacing (0-10)
-7. Originality and voice (0-10)
-8. Technical execution (0-10)
+1. Sentence variety and rhythm (0-15): Measure actual sentence length variation.
+2. Dialogue authenticity (0-15): Distinct character voices? If no dialogue, score narrative voice.
+3. Sensory detail / show vs tell (0-15): Count concrete SHOWING vs abstract TELLING.
+4. Emotional resonance and depth (0-15): Emotions through behavior, not named?
+5. Vocabulary precision (0-10): Specific, earned words?
+6. Narrative flow and pacing (0-10): Right speed? Varied paragraph lengths?
+7. Originality and voice (0-10): Distinct author voice?
+8. Technical execution (0-10): Grammar, punctuation, paragraph breaks.
 
 CALIBRATION:
-- 40-60: Raw AI prose, clichés, formulaic
-- 65-78: Competent, some AI patterns remain
-- 78-88: Strong human-quality, good variety, specific details
-- 88-95: Excellent, deliberate rhythm, vivid specificity, genuine resonance
-- 96-100: Masterful, rare even in published fiction
+- 40-60: Raw AI prose
+- 65-78: Competent, some AI patterns
+- 78-88: Strong human-quality writing
+- 88-95: Excellent, deliberate craft
+- 96-100: Masterful
 
 PROSECUTION FIRST: Catalogue ALL weaknesses before acknowledging strengths.
 
-=== AI PATTERN DETECTION (CRITICAL) ===
-These patterns are the #1 quality killer. Flag EVERY instance:
+=== CONSISTENCY RULE ===
+When scoring the "before" and "after" versions, use IDENTICAL standards. Do not grade on a curve. Do not give the "after" version credit just because you tried to improve it. If your fix weakened another dimension (e.g., broke rhythm to fix a tricolon), the after-score for that dimension must reflect the damage.
 
-OVERWROUGHT SIMILES: Similes that sound crafted rather than observed. A real author's simile comes from the CHARACTER'S world, not from the WRITER trying to be clever.
-- BAD: "opened like a mussel shell" (literary flourish, not how a character would think)
-- BAD: "opened like a patient on a surgical table" (anachronistic, overwrought)
-- GOOD: "opened the way you'd open a letter you'd been dreading" (character-grounded)
-- GOOD: "split down the middle" (plain, direct, human)
-
-TRICOLONS: Lists of three are the single most common AI writing pattern. Flag ALL "X, Y, and Z" constructions. Real human writing uses two items, or four, or restructures entirely.
-- BAD: "brave, kind, and generous"
-- BAD: "the sun, the wind, and the rain"
-- GOOD: "brave and generous" (just two)
-- GOOD: "she was brave. Generous, too, in ways that cost her." (restructured)
-
-PERSONIFICATION OF ABSTRACTIONS: When non-physical things "live," "breathe," "dance," "whisper," "settle," "creep," or "wash over" — this is almost always AI writing.
-- BAD: "knowledge living inside the binding"
-- BAD: "silence settled between them"
-- BAD: "a wave of grief washed over her"
-- GOOD: "she couldn't stop thinking about the book"
-- GOOD: "neither of them spoke"
-- GOOD: "she sat down on the porch steps and stayed there a long time"
-
-TELLING EMOTIONS: Naming the emotion instead of showing it through action.
-- BAD: "She felt a profound sense of loss"
-- GOOD: "She opened his closet. His shirts still smelled like sawdust."
-
-PET PHRASES: Body-reaction shortcuts. Flag ALL: throat tightened, chest constricted, breath caught, heart pounded, eyes widened, jaw clenched, fists clenched, stomach churned, bile rose, pulse quickened, hands trembled, voice wavered.
+=== AI PATTERN DETECTION ===
+Flag EVERY instance of:
+- TRICOLONS: "X, Y, and Z" lists of three. Fix: use two items or restructure.
+- PERSONIFIED ABSTRACTIONS: Non-physical things that "live," "settle," "creep," "wash over," have "weight," "color." Fix: replace with concrete observable action.
+- OVERWROUGHT SIMILES: Similes that sound crafted rather than observed. Fix: simplify or use the character's own vocabulary.
+- FORMULAIC STRUCTURES: observation → metaphor → thematic statement; punchy one-liner paragraphs for dramatic effect; paragraph-ending epigrams. Fix: restructure.
+- RHETORICAL PARALLELISM: "X would... Y would..." used as structural crutch. Fix: break the parallel.
+- PET PHRASES: body-reaction shortcuts (throat tightened, heart pounded, etc.). Fix: character-specific action.
+- TELLING EMOTIONS: naming the emotion. Fix: show through action.
 
 === MICRO-FIX RULES ===
-${iterationNum <= maxIterations ? `After scoring, if score < ${threshold}:
-1. Identify ALL issues (list them all in the issues array)
-2. Pick the SINGLE highest-impact issue
-3. Fix ONLY that one issue. Change the absolute MINIMUM words.
-4. The rest of the prose must be VERBATIM — character for character.
-5. Your fix must be 100% clean — no new AI patterns, no new PET phrases, no tricolons.
+${isFinalPass ? 'This is the FINAL scoring pass. Score only — do NOT apply any fix. Set microFixedProse to null.' : `
+1. From all issues found, pick the SINGLE highest-impact issue
+2. Change the ABSOLUTE MINIMUM words to fix it (1-3 sentences max)
+3. Copy ALL other text VERBATIM — character for character, including punctuation
+4. Your fix must NOT introduce ANY new issues (no new AI patterns, tricolons, PET phrases, personification)
+5. After writing your fix, re-read the full passage. Does the rhythm still work? Did you break anything?
+6. Score your fixed version HONESTLY in Step 3
 
-MICRO-FIX PRIORITIES (in order):
-- Priority 1: Hard lint defects (em dashes, PET phrases, AI-telltale words)
-- Priority 2: Tricolons — restructure or reduce to two items
-- Priority 3: Overwrought similes — simplify or cut
-- Priority 4: Telling vs showing — replace with character-specific action
-- Priority 5: Sentence rhythm issues — break a monotonous run
-- Priority 6: Generic word choice — replace ONE weak word with a precise one
+WHEN YOU CANNOT IMPROVE:
+Sometimes the best fix for an issue would damage something else. In that case:
+- Set microFixedProse to null
+- Explain in fixApplied: "Could not fix [issue] without damaging [dimension]"
+- This is BETTER than returning a fix that makes the prose worse`}
 
-CRITICAL: Change no more than 1-3 sentences. If fixing one issue, do NOT touch any other sentence. Copy everything else EXACTLY.` : `Score only — this is the final scoring pass. Do not fix anything. Set microFixedProse to null.`}
+${lintDefects.length > 0 ? `\n=== HARD DEFECTS FROM LINT (highest priority) ===\n${lintDefects.map((d, i) => `${i + 1}. [${d.severity}] ${d.type}: "${d.text}" — ${d.suggestion}`).join('\n')}` : ''}
 
-${lintDefects.length > 0 ? `=== HARD DEFECTS FROM LINT (fix the worst one FIRST) ===
-${lintDefects.map((d, i) => `${i+1}. [${d.severity}] ${d.type}: "${d.text}" — ${d.suggestion}`).join('\n')}` : ''}
+${attemptedFixes.length > 0 ? `\n=== FIXES ALREADY ATTEMPTED (DO NOT retry these — pick a DIFFERENT issue) ===\n${attemptedFixes.map((f, i) => `Attempt ${i + 1}: ${f}`).join('\n')}\nYou MUST target a different issue than any listed above. If no other fixable issues remain, set microFixedProse to null.` : ''}
 
-${previousFixes.length > 0 ? `=== FIXES ALREADY APPLIED IN PREVIOUS ITERATIONS ===
-${previousFixes.map((f, i) => `Pass ${i+1}: ${f}`).join('\n')}
-DO NOT repeat or undo these fixes. Target a DIFFERENT issue this time.` : ''}
-
-${intentLedger ? `=== INTENT LEDGER (non-negotiables) ===
-- POV: ${intentLedger.povCharacter || 'unknown'} (${intentLedger.povType || 'unknown'})
-- Tense: ${intentLedger.tense || 'past'}
-- Emotional arc: ${intentLedger.emotionalArc || 'unknown'}
-- Canon facts: ${(intentLedger.canonFacts || []).join(', ')}` : ''}
+${intentLedger ? `\n=== INTENT LEDGER (non-negotiables) ===\n- POV: ${intentLedger.povCharacter || 'unknown'} (${intentLedger.povType || 'unknown'})\n- Tense: ${intentLedger.tense || 'past'}\n- Emotional arc: ${intentLedger.emotionalArc || 'unknown'}\n- Canon facts: ${(intentLedger.canonFacts || []).join(', ')}` : ''}
 
 ${genre ? `Genre: ${genre}` : ''}
 ${voice ? `Narrative voice: ${voice} (preserve exactly)` : ''}
@@ -739,8 +729,19 @@ ${aiInstructions ? `Author instructions: ${aiInstructions}` : ''}
 === OUTPUT FORMAT ===
 Output valid JSON:
 {
-  "score": number,
-  "subscores": {
+  "beforeScore": number (Step 1 score — sum of beforeSubscores),
+  "beforeSubscores": {
+    "sentenceVariety": number,
+    "dialogueAuthenticity": number,
+    "sensoryDetail": number,
+    "emotionalResonance": number,
+    "vocabularyPrecision": number,
+    "narrativeFlow": number,
+    "originalityVoice": number,
+    "technicalExecution": number
+  },
+  "afterScore": number (Step 3 score after fix applied — sum of afterSubscores. Same as beforeScore if no fix applied),
+  "afterSubscores": {
     "sentenceVariety": number,
     "dialogueAuthenticity": number,
     "sensoryDetail": number,
@@ -752,12 +753,14 @@ Output valid JSON:
   },
   "label": "Exceptional|Strong|Good|Competent|Needs Work",
   "issues": [
-    {"text": "quoted passage", "problem": "description", "severity": "high|medium|low", "category": "ai-pattern|tricolon|pet-phrase|telling|simile|cliche|weak-word|rhythm|other", "estimatedImpact": number}
+    {"text": "quoted passage", "problem": "description", "severity": "high|medium|low", "category": "ai-pattern|tricolon|pet-phrase|telling|simile|cliche|formulaic|parallelism|weak-word|rhythm|other", "estimatedImpact": number}
   ],
-  "summary": "2-3 sentence assessment",
-  "fixApplied": "Description of the ONE fix made, or null if score >= threshold or final pass",
-  "fixCategory": "Which category was fixed: ai-pattern|tricolon|pet-phrase|telling|simile|cliche|weak-word|rhythm|other, or null",
-  "microFixedProse": "Complete prose with ONE fix applied. null if score >= ${threshold} or no fix needed.",
+  "summary": "2-3 sentence assessment of the original prose",
+  "fixApplied": "Description of the ONE fix made, or explanation of why no fix was applied",
+  "fixCategory": "ai-pattern|tricolon|pet-phrase|telling|simile|cliche|formulaic|parallelism|weak-word|rhythm|other|none",
+  "fixTarget": "The exact text that was changed (for tracking attempted fixes)",
+  "microFixedProse": "COMPLETE prose with ONE fix applied. null if beforeScore >= ${threshold}, or if fix would not improve the score, or if this is the final pass.",
+  "internalValidation": "Explanation of why the after-score is higher/lower/same. What dimension improved? Did any dimension get worse?",
   "fourRequirementsFound": {
     "characterSpecificThought": "quote or null",
     "preciseObservation": "quote or null",
@@ -766,11 +769,13 @@ Output valid JSON:
   }
 }
 
-CRITICAL: score = sum of subscores exactly. Do NOT round or adjust.
-CRITICAL: If score >= ${threshold}, set microFixedProse to null.
-CRITICAL: microFixedProse must be the COMPLETE passage — not just the changed sentence.`;
+CRITICAL RULES:
+- beforeScore MUST equal sum of beforeSubscores. afterScore MUST equal sum of afterSubscores.
+- If afterScore <= beforeScore, set microFixedProse to null. The fix didn't help.
+- microFixedProse must contain the COMPLETE passage, not just the changed part.
+- Be HONEST in Step 3. Do not inflate the after-score to justify your fix.`;
 
-    const userPrompt = `Score this prose using prosecution-first methodology. If below ${threshold}/100, apply ONE surgical micro-fix to the single highest-impact issue. Output valid JSON only.\n\n"""${proseText}"""`;
+    const userPrompt = `Perform the 3-step process: (1) Score this prose, (2) Apply one micro-fix to the highest-impact issue, (3) Score your fixed version. Only return the fix if it genuinely improved the score. Output valid JSON only.\n\n"""${proseText}"""`;
 
     const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
@@ -799,6 +804,7 @@ CRITICAL: microFixedProse must be the COMPLETE passage — not just the changed 
     const result = await response.json();
     const rawText = result.content?.[0]?.text?.trim() || '';
 
+    // Parse JSON
     let jsonStr = rawText;
     const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) jsonStr = jsonMatch[1].trim();
@@ -810,21 +816,40 @@ CRITICAL: microFixedProse must be the COMPLETE passage — not just the changed 
 
     try {
       const parsed = JSON.parse(jsonStr);
-      if (parsed.subscores) {
-        const sum = Object.values(parsed.subscores).reduce((a, b) => a + (Number(b) || 0), 0);
-        parsed.score = Math.round(sum);
+      // Validate scores = sum of subscores
+      if (parsed.beforeSubscores) {
+        const sum = Object.values(parsed.beforeSubscores).reduce((a, b) => a + (Number(b) || 0), 0);
+        parsed.beforeScore = Math.round(sum);
       }
-      if (parsed.score >= 88) parsed.label = 'Exceptional';
-      else if (parsed.score >= 78) parsed.label = 'Strong';
-      else if (parsed.score >= 65) parsed.label = 'Good';
-      else if (parsed.score >= 50) parsed.label = 'Competent';
+      if (parsed.afterSubscores) {
+        const sum = Object.values(parsed.afterSubscores).reduce((a, b) => a + (Number(b) || 0), 0);
+        parsed.afterScore = Math.round(sum);
+      }
+      // Use the beforeScore as the primary score for tracking
+      parsed.score = parsed.beforeScore;
+      parsed.subscores = parsed.beforeSubscores;
+      // Label based on before score
+      if (parsed.beforeScore >= 88) parsed.label = 'Exceptional';
+      else if (parsed.beforeScore >= 78) parsed.label = 'Strong';
+      else if (parsed.beforeScore >= 65) parsed.label = 'Good';
+      else if (parsed.beforeScore >= 50) parsed.label = 'Competent';
       else parsed.label = 'Needs Work';
+
+      // CRITICAL: If the model returned a fix but afterScore <= beforeScore,
+      // null out the prose — the fix didn't help even by the model's own assessment
+      if (parsed.microFixedProse && parsed.afterScore <= parsed.beforeScore) {
+        parsed.microFixedProse = null;
+        parsed.fixApplied = (parsed.fixApplied || '') + ' [SELF-REJECTED: after-score did not improve]';
+      }
+
       return parsed;
     } catch (e) {
       return {
-        score: 0, label: 'Parse Error', subscores: {},
+        beforeScore: 0, afterScore: 0, score: 0, label: 'Parse Error',
+        beforeSubscores: {}, afterSubscores: {}, subscores: {},
         issues: [], summary: 'Failed to parse response',
         microFixedProse: null, fixApplied: null, fixCategory: null,
+        fixTarget: null, internalValidation: null,
         fourRequirementsFound: {}
       };
     }
