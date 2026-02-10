@@ -139,12 +139,15 @@ class ErrorDatabase {
   }
 
   /**
-   * Generate a stable key for a pattern based on its category and problem description.
-   * Similar problems get merged under the same key.
+   * Generate a stable key for a pattern based on its category and text/problem.
+   * Uses the quoted text as the primary key when available, since the same text
+   * snippet should always map to the same pattern regardless of how the problem
+   * is described. Falls back to problem description when text is absent.
    */
   _patternKey(entry) {
-    // Normalize the problem description for deduplication
-    const normalized = (entry.problem || '')
+    // Prefer text for the key (same snippet = same pattern, even if described differently)
+    const source = (entry.text && entry.text.trim()) ? entry.text : (entry.problem || '');
+    const normalized = source
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, '')
       .replace(/\s+/g, '_')

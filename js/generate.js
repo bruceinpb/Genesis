@@ -456,7 +456,8 @@ For "estimatedImpact": estimate how many points the score would improve if this 
         parsed.score = Math.round(sum);
       }
       // Enforce AI pattern density caps
-      if (parsed.subscores && parsed.aiPatterns) {
+      // Count from both aiPatterns array and AI-categorized issues
+      if (parsed.subscores) {
         const aiPatternCount = (parsed.aiPatterns || []).reduce((sum, p) =>
           sum + (p.examples?.length || 1), 0
         );
