@@ -914,23 +914,24 @@ class App {
       // If chunk was too small or empty, stop to avoid infinite loop
       if (chunkWords < 10) break;
 
-      // === MICRO-FIX ITERATION PIPELINE ===
-      // 3-4 passes, each fixing exactly 1 issue for a 1-2 point improvement
+      // === MICRO-FIX ITERATION PIPELINE (v2 — with internal validation) ===
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_MICRO_ITERATIONS = 4;
+        const MAX_MICRO_ITERATIONS = 3;
+        const SCORE_NOISE_FLOOR = 2;  // Don't reject a fix for a 1-2 point score difference
         let currentText = streamedText;
         let bestScore = 0;
         let bestText = streamedText;
         let bestReview = null;
-        let previousFixes = [];  // Track what was fixed each pass
+        let previousFixes = [];    // Accepted fixes (descriptions)
+        let attemptedFixes = [];   // ALL attempted fixes — including rejected ones
 
         // Reset iteration display for this chunk
         this._updateIterativeScore(null);
         this._updateIterativeIteration(0, 0);
         this._resetScoreHistory();
 
-        // --- Phase 2: Deterministic lint ---
+        // --- Deterministic lint ---
         let lintResult = this.analyzer.lintProse(currentText);
         let hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
         this._updateIterativeLog(`Chunk ${chunkNum}: Lint \u2014 ${hardDefects.length} hard, ${lintResult.stats.mediumDefects || 0} medium defects`);
@@ -941,7 +942,7 @@ class App {
           this._updateIterativeLog(`Chunk ${chunkNum}: Metrics \u2014 Sentence StdDev: ${qm.sentenceLengthStdDev}, Short%: ${qm.shortSentencePct}%, Filters: ${qm.filterWordCount}`);
         }
 
-        // --- Generate intent ledger once (shared across all iterations) ---
+        // --- Intent ledger (once) ---
         let intentLedger = null;
         try {
           this._updateIterativePhase('Locking intent\u2026');
@@ -955,17 +956,18 @@ class App {
           this._updateIterativeLog(`Chunk ${chunkNum}: Intent ledger failed: ${err.message}. Continuing without.`);
         }
 
-        // --- Micro-fix iteration loop ---
+        // --- Micro-fix loop ---
         for (let iteration = 1; iteration <= MAX_MICRO_ITERATIONS; iteration++) {
           if (this._generateCancelled) break;
 
-          // Re-lint current text each iteration
+          // Re-lint current text
           lintResult = this.analyzer.lintProse(currentText);
           hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
 
-          this._updateIterativePhase(`Micro-fix pass ${iteration}/${MAX_MICRO_ITERATIONS}\u2026`);
+          const isFinalPass = iteration === MAX_MICRO_ITERATIONS;
+          this._updateIterativePhase(`Pass ${iteration}/${MAX_MICRO_ITERATIONS}${isFinalPass ? ' (final score)' : ''}\u2026`);
           this._showIterativeScoringNotice(true);
-          this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration} \u2014 scoring + micro-fix\u2026`);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration}${isFinalPass ? ' (final score only)' : ' \u2014 scoring + micro-fix'}\u2026`);
 
           let result;
           try {
@@ -974,6 +976,7 @@ class App {
               iterationNum: iteration,
               maxIterations: MAX_MICRO_ITERATIONS,
               previousFixes,
+              attemptedFixes,
               lintDefects: hardDefects,
               intentLedger,
               genre,
@@ -988,22 +991,34 @@ class App {
           this._showIterativeScoringNotice(false);
           if (this._generateCancelled) break;
 
-          if (!result || result.score === 0) {
+          if (!result || result.beforeScore === 0) {
             this._updateIterativeLog(`Chunk ${chunkNum}: Scoring returned 0. Using current text.`);
             break;
           }
 
-          const score = result.score;
-          this._updateIterativeScore(score, true);
-          this._recordIterationScore(iteration, score);
-          this._updateIterativeIteration(iteration, Math.max(bestScore, score));
+          const beforeScore = result.beforeScore;
+          const afterScore = result.afterScore || beforeScore;
 
-          // Log what was found and fixed
+          // On first pass, establish the baseline score
+          if (iteration === 1 && bestScore === 0) {
+            bestScore = beforeScore;
+          }
+
+          this._updateIterativeScore(beforeScore, true);
+          this._recordIterationScore(iteration, beforeScore);
+          this._updateIterativeIteration(iteration, bestScore);
+
+          // Log results
           const issueCount = result.issues?.length || 0;
-          this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration} \u2014 Score: ${score}/100 (${result.label}) | Issues found: ${issueCount}`);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration} \u2014 Before: ${beforeScore}/100 | After: ${afterScore}/100 (${result.label}) | Issues: ${issueCount}`);
 
           if (result.fixApplied) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: Fix applied \u2014 [${result.fixCategory || '?'}] ${result.fixApplied}`);
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix: [${result.fixCategory || '?'}] ${result.fixApplied}`);
+          }
+
+          // Log internal validation
+          if (result.internalValidation) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Validation: ${result.internalValidation}`);
           }
 
           // Log Four Requirements
@@ -1028,63 +1043,100 @@ class App {
             } catch (_) {}
           }
 
-          // Track best version
-          if (score >= bestScore) {
-            // If micro-fixed prose was returned, validate it
-            if (result.microFixedProse && result.microFixedProse.length > 20) {
-              const preWords = (currentText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-              const postWords = (result.microFixedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-              const drift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
+          // Track attempted fix (whether or not it's accepted)
+          if (result.fixTarget) {
+            attemptedFixes.push(`[${result.fixCategory || 'unknown'}] Target: "${(result.fixTarget || '').slice(0, 80)}" \u2014 ${(result.fixApplied || '').slice(0, 100)}`);
+          }
 
-              // Verify: word count within 15%, no new hard defects
-              const newLint = this.analyzer.lintProse(result.microFixedProse);
-              const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
+          // === DECISION: Accept or reject the fix ===
 
-              if (drift <= 0.15 && newHardDefects.length <= hardDefects.length) {
-                currentText = result.microFixedProse;
-                bestText = result.microFixedProse;
-                bestScore = score;
-                bestReview = result;
-                if (result.fixApplied) previousFixes.push(result.fixApplied);
-                this._updateIterativeLog(`Chunk ${chunkNum}: Micro-fix accepted. Score: ${score}/100`);
-              } else {
-                // Fix rejected — still update best score if score improved on the unchanged text
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestReview = result;
-                }
-                const reason = drift > 0.15
-                  ? `word count drift ${Math.round(drift * 100)}%`
-                  : `introduced ${newHardDefects.length} hard defects (was ${hardDefects.length})`;
-                this._updateIterativeLog(`Chunk ${chunkNum}: Micro-fix REJECTED \u2014 ${reason}. Keeping previous version.`);
-              }
-            } else {
-              // No fix returned (score met threshold or no fix identified)
-              if (score > bestScore) {
-                bestScore = score;
-                bestReview = result;
-              }
+          // Case 1: No fix was produced (model self-rejected, or score >= threshold, or final pass)
+          if (!result.microFixedProse) {
+            // Update best score if this scoring was higher (reduces variance drift)
+            if (beforeScore > bestScore) {
+              bestScore = beforeScore;
+              bestReview = result;
             }
-          } else {
-            // Score didn't improve — the fix may have hurt
-            this._updateIterativeLog(`Chunk ${chunkNum}: Score did not improve (${score} vs best ${bestScore}). Reverting.`);
-            currentText = bestText;  // Revert to best version
+
+            if (beforeScore >= qualityThreshold) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: PASSED threshold (${qualityThreshold}). Score: ${beforeScore}/100`);
+              break;
+            }
+
+            if (isFinalPass) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Final pass. Best: ${bestScore}/100`);
+              break;
+            }
+
+            if (result.fixApplied && result.fixApplied.includes('Could not fix')) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Model could not find a safe fix. Best: ${bestScore}/100`);
+              // Don't break \u2014 try another iteration, the model might find a different issue
+              continue;
+            }
+
+            this._updateIterativeLog(`Chunk ${chunkNum}: No fix returned. Continuing\u2026`);
+            continue;
           }
 
-          // Check pass condition
-          if (bestScore >= qualityThreshold) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: PASSED threshold (${qualityThreshold}). Score: ${bestScore}/100`);
+          // Case 2: Fix was produced \u2014 validate it
+          // The model already self-validated (afterScore > beforeScore), but we do external checks too
+
+          const preWords = (currentText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+          const postWords = (result.microFixedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+          const wordDrift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
+
+          // External check 1: Word count drift
+          if (wordDrift > 0.15) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix REJECTED \u2014 word count drift ${Math.round(wordDrift * 100)}% (${preWords} \u2192 ${postWords})`);
+            continue;
+          }
+
+          // External check 2: No new hard lint defects
+          const newLint = this.analyzer.lintProse(result.microFixedProse);
+          const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
+          if (newHardDefects.length > hardDefects.length) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix REJECTED \u2014 introduced ${newHardDefects.length - hardDefects.length} new hard defects`);
+            continue;
+          }
+
+          // External check 3: The model's own afterScore should be higher
+          // (We already null'd microFixedProse if afterScore <= beforeScore in the method,
+          //  but double-check here)
+          if (afterScore < beforeScore) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix REJECTED \u2014 model's own after-score (${afterScore}) lower than before (${beforeScore})`);
+            continue;
+          }
+
+          // All checks passed \u2014 accept the fix
+          currentText = result.microFixedProse;
+          bestText = result.microFixedProse;
+          // Use the after-score as the new best (from the model's internal evaluation)
+          // But also compare with external best to handle variance
+          bestScore = Math.max(bestScore, afterScore);
+          bestReview = result;
+          previousFixes.push(result.fixApplied || 'Unknown fix');
+          this._updateIterativeLog(`Chunk ${chunkNum}: Fix ACCEPTED. Before: ${beforeScore} \u2192 After: ${afterScore}. Best: ${bestScore}/100`);
+
+          // Check if we passed threshold
+          if (afterScore >= qualityThreshold) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: PASSED threshold (${qualityThreshold}) after fix. Score: ${afterScore}/100`);
             break;
           }
 
-          // If no fix was applied (scorer found nothing to fix), stop iterating
-          if (!result.fixApplied && !result.microFixedProse) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: No fixable issues identified. Best: ${bestScore}/100`);
-            break;
-          }
-
-          // Brief pause between iterations to avoid rate limits
+          // Brief pause
           await new Promise(r => setTimeout(r, 500));
+        }
+
+        // Record errors to database
+        if (this.errorDb && bestReview) {
+          const issueCount = (bestReview.issues?.length || 0);
+          if (issueCount > 0) {
+            this.errorDb.recordFromReview(bestReview, {
+              projectId: this.state.currentProjectId,
+              chapterId: this.state.currentChapterId,
+              chapterTitle, genre, sessionKey: generationSessionKey
+            }).catch(() => {});
+          }
         }
 
         // Restore best version in editor
@@ -1101,7 +1153,7 @@ class App {
         }
 
         chunkScores.push({ score: bestScore, words: chunkWords });
-        this._updateIterativeLog(`Chunk ${chunkNum}: Complete. Best: ${bestScore}/100 (${previousFixes.length} fixes applied)`);
+        this._updateIterativeLog(`Chunk ${chunkNum}: Complete. Best: ${bestScore}/100 (${previousFixes.length} accepted, ${attemptedFixes.length} attempted)`);
       }
 
       // Check if we should stop (close to target or generation cancelled)
@@ -2693,8 +2745,8 @@ class App {
   /**
    * Score the current paragraph and refine it using the micro-fix pipeline.
    * Phase 2: Deterministic lint (free, instant)
-   * Phase 3: Micro-fix iterations (3-4 passes, each fixing exactly 1 issue)
-   * Each pass targets the single highest-impact defect for a 1-2 point improvement.
+   * Phase 3: Micro-fix iterations (up to 3 passes, each fixing exactly 1 issue)
+   * Each pass targets the single highest-impact defect with internal before/after validation.
    */
   async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
     if (this._iterativeCancelled) {
@@ -2702,13 +2754,14 @@ class App {
       return;
     }
 
-    const MAX_MICRO_ITERATIONS = 4;
+    const MAX_MICRO_ITERATIONS = 3;
     const qualityThreshold = this._currentProject?.qualityThreshold || 90;
     let workingText = currentText;
     let iterationHistory = [];
-    let previousFixes = [];  // Track what was fixed each pass
+    let previousFixes = [];    // Accepted fixes (descriptions)
+    let attemptedFixes = [];   // ALL attempted fixes — including rejected ones
 
-    // --- PHASE 2: Deterministic lint (free, instant) ---
+    // --- Deterministic lint ---
     let lintResult = this.analyzer.lintProse(workingText);
     let hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
     this._updateIterativeLog(`Lint: ${hardDefects.length} hard defects, ${lintResult.stats.mediumDefects || 0} medium`);
@@ -2722,21 +2775,22 @@ class App {
     const project = this._currentProject;
     const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
 
-    // --- PHASE 3: Micro-fix iterations ---
+    // --- Micro-fix loop ---
     for (let iter = 1; iter <= MAX_MICRO_ITERATIONS; iter++) {
       if (this._iterativeCancelled) {
         this._showIterativeOverlay(false);
         return;
       }
 
-      // Re-lint current text each iteration
+      // Re-lint current text
       lintResult = this.analyzer.lintProse(workingText);
       hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
 
-      this._updateIterativePhase(`Micro-fix pass ${iter}/${MAX_MICRO_ITERATIONS}\u2026`);
+      const isFinalPass = iter === MAX_MICRO_ITERATIONS;
+      this._updateIterativePhase(`Pass ${iter}/${MAX_MICRO_ITERATIONS}${isFinalPass ? ' (final score)' : ''}\u2026`);
       this._showIterativeScoringNotice(true);
       this._updateIterativeIteration(iter, bestScore);
-      this._updateIterativeLog(`Pass ${iter}: Scoring + micro-fix\u2026`);
+      this._updateIterativeLog(`Pass ${iter}${isFinalPass ? ' (final score only)' : ' \u2014 scoring + micro-fix'}\u2026`);
 
       let result;
       try {
@@ -2745,6 +2799,7 @@ class App {
           iterationNum: iter,
           maxIterations: MAX_MICRO_ITERATIONS,
           previousFixes,
+          attemptedFixes,
           lintDefects: hardDefects,
           genre: genreInfo?.label || '',
           voice: project?.voice || '',
@@ -2762,12 +2817,18 @@ class App {
         return;
       }
 
-      if (!result || result.score === 0) {
+      if (!result || result.beforeScore === 0) {
         this._updateIterativeLog(`Scoring failed. Using best available version.`);
         break;
       }
 
-      const score = result.score;
+      const beforeScore = result.beforeScore;
+      const afterScore = result.afterScore || beforeScore;
+
+      // On first pass, establish the baseline score
+      if (iter === 1 && bestScore === 0) {
+        bestScore = beforeScore;
+      }
 
       // Record errors to cross-project error pattern database
       if (this.errorDb && result.issues?.length > 0) {
@@ -2784,14 +2845,19 @@ class App {
       }
 
       // Record iteration history
-      iterationHistory.push({ iteration: iter, score, subscores: { ...result.subscores }, issueCount: result.issues?.length || 0, text: workingText });
+      iterationHistory.push({ iteration: iter, score: beforeScore, subscores: { ...result.subscores }, issueCount: result.issues?.length || 0, text: workingText });
 
-      // Log what was found and fixed
+      // Log results
       const issueCount = result.issues?.length || 0;
-      this._updateIterativeLog(`Pass ${iter}: Score = ${score}/100 (${result.label}) | Issues: ${issueCount}`);
+      this._updateIterativeLog(`Pass ${iter} \u2014 Before: ${beforeScore}/100 | After: ${afterScore}/100 (${result.label}) | Issues: ${issueCount}`);
 
       if (result.fixApplied) {
-        this._updateIterativeLog(`Pass ${iter}: Fix applied \u2014 [${result.fixCategory || '?'}] ${result.fixApplied}`);
+        this._updateIterativeLog(`Pass ${iter}: Fix: [${result.fixCategory || '?'}] ${result.fixApplied}`);
+      }
+
+      // Log internal validation
+      if (result.internalValidation) {
+        this._updateIterativeLog(`Pass ${iter}: Validation: ${result.internalValidation}`);
       }
 
       // Log Four Requirements
@@ -2804,74 +2870,108 @@ class App {
       }
 
       // Update UI
-      this._updateIterativeScore(score, true);
-      this._recordIterationScore(iter, score);
-      this._updateIterativeIteration(iter, Math.max(bestScore, score));
+      this._updateIterativeScore(beforeScore, true);
+      this._recordIterationScore(iter, beforeScore);
+      this._updateIterativeIteration(iter, Math.max(bestScore, beforeScore));
 
-      this._iterPrevScore = score;
+      this._iterPrevScore = beforeScore;
       this._iterPrevIssueCount = issueCount;
       this._iterPrevSubscores = result.subscores;
 
-      // Track best version
-      if (score >= bestScore) {
-        // If micro-fixed prose was returned, validate it
-        if (result.microFixedProse && result.microFixedProse.length > 20) {
-          const preWords = (workingText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-          const postWords = (result.microFixedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-          const drift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
-
-          // Verify: word count within 15%, no new hard defects
-          const newLint = this.analyzer.lintProse(result.microFixedProse);
-          const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
-
-          if (drift <= 0.15 && newHardDefects.length <= hardDefects.length) {
-            workingText = result.microFixedProse;
-            this._lastGeneratedText = workingText;
-            bestScore = score;
-            this._iterativeBestText = workingText;
-            this._iterativeBestReview = result;
-            if (result.fixApplied) previousFixes.push(result.fixApplied);
-
-            // Update editor
-            const baseContent = this._preGenerationContent || '';
-            const editorEl = this.editor.element;
-            const paragraphs = workingText.split('\n\n');
-            const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
-            editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
-            if (this.state.currentChapterId) {
-              this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
-              this._updateLocalWordCounts(this.editor.getContent());
-            }
-            this._updateIterativeLog(`Micro-fix accepted. Score: ${score}/100`);
-          } else {
-            // Fix rejected — still update best score if improved
-            if (score > bestScore) {
-              bestScore = score;
-              this._iterativeBestText = workingText;
-              this._iterativeBestReview = result;
-            }
-            const reason = drift > 0.15
-              ? `word count drift ${Math.round(drift * 100)}%`
-              : `introduced ${newHardDefects.length} hard defects (was ${hardDefects.length})`;
-            this._updateIterativeLog(`Micro-fix REJECTED \u2014 ${reason}. Keeping previous version.`);
-          }
-        } else {
-          // No fix returned (score met threshold or no fix identified)
-          if (score > bestScore) {
-            bestScore = score;
-            this._iterativeBestText = workingText;
-            this._iterativeBestReview = result;
-          }
-        }
-      } else {
-        // Score didn't improve — revert
-        this._updateIterativeLog(`Score did not improve (${score} vs best ${bestScore}). Reverting.`);
-        workingText = this._iterativeBestText || currentText;
+      // Track attempted fix (whether or not it's accepted)
+      if (result.fixTarget) {
+        attemptedFixes.push(`[${result.fixCategory || 'unknown'}] Target: "${(result.fixTarget || '').slice(0, 80)}" \u2014 ${(result.fixApplied || '').slice(0, 100)}`);
       }
 
+      // === DECISION: Accept or reject the fix ===
+
+      // Case 1: No fix was produced (model self-rejected, or score >= threshold, or final pass)
+      if (!result.microFixedProse) {
+        // Update best score if this scoring was higher (reduces variance drift)
+        if (beforeScore > bestScore) {
+          bestScore = beforeScore;
+          this._iterativeBestText = workingText;
+          this._iterativeBestReview = result;
+        }
+
+        if (beforeScore >= qualityThreshold) {
+          this._updateIterativeLog(`PASSED threshold (${qualityThreshold}). Score: ${beforeScore}/100`);
+          await new Promise(r => setTimeout(r, 800));
+          this._showIterativeOverlay(false);
+          this._showFinalFixScreen(
+            this._iterativeBestText || workingText,
+            bestScore,
+            this._iterativeBestReview || result,
+            iterationHistory,
+            qualityThreshold,
+            true
+          );
+          return;
+        }
+
+        if (isFinalPass) {
+          this._updateIterativeLog(`Final pass. Best: ${bestScore}/100`);
+          break;
+        }
+
+        if (result.fixApplied && result.fixApplied.includes('Could not fix')) {
+          this._updateIterativeLog(`Model could not find a safe fix. Best: ${bestScore}/100`);
+          continue;
+        }
+
+        this._updateIterativeLog(`No fix returned. Continuing\u2026`);
+        continue;
+      }
+
+      // Case 2: Fix was produced \u2014 validate it
+
+      const preWords = (workingText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+      const postWords = (result.microFixedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+      const wordDrift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
+
+      // External check 1: Word count drift
+      if (wordDrift > 0.15) {
+        this._updateIterativeLog(`Fix REJECTED \u2014 word count drift ${Math.round(wordDrift * 100)}% (${preWords} \u2192 ${postWords})`);
+        continue;
+      }
+
+      // External check 2: No new hard lint defects
+      const newLint = this.analyzer.lintProse(result.microFixedProse);
+      const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
+      if (newHardDefects.length > hardDefects.length) {
+        this._updateIterativeLog(`Fix REJECTED \u2014 introduced ${newHardDefects.length - hardDefects.length} new hard defects`);
+        continue;
+      }
+
+      // External check 3: The model's own afterScore should be higher
+      if (afterScore < beforeScore) {
+        this._updateIterativeLog(`Fix REJECTED \u2014 model's own after-score (${afterScore}) lower than before (${beforeScore})`);
+        continue;
+      }
+
+      // All checks passed \u2014 accept the fix
+      workingText = result.microFixedProse;
+      this._lastGeneratedText = workingText;
+      bestScore = Math.max(bestScore, afterScore);
+      this._iterativeBestText = workingText;
+      this._iterativeBestReview = result;
+      previousFixes.push(result.fixApplied || 'Unknown fix');
+
+      // Update editor
+      const baseContent = this._preGenerationContent || '';
+      const editorEl = this.editor.element;
+      const paragraphs = workingText.split('\n\n');
+      const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+      editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
+      if (this.state.currentChapterId) {
+        this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+        this._updateLocalWordCounts(this.editor.getContent());
+      }
+      this._updateIterativeLog(`Fix ACCEPTED. Before: ${beforeScore} \u2192 After: ${afterScore}. Best: ${bestScore}/100`);
+
       // === THRESHOLD CHECK ===
-      if (bestScore >= qualityThreshold) {
-        this._updateIterativeLog(`Score ${bestScore}/100 meets threshold (${qualityThreshold}%)!`);
+      if (afterScore >= qualityThreshold) {
+        this._updateIterativeLog(`PASSED threshold (${qualityThreshold}) after fix. Score: ${afterScore}/100`);
         await new Promise(r => setTimeout(r, 800));
         this._showIterativeOverlay(false);
         this._showFinalFixScreen(
@@ -2885,13 +2985,7 @@ class App {
         return;
       }
 
-      // If no fix was applied, stop iterating
-      if (!result.fixApplied && !result.microFixedProse) {
-        this._updateIterativeLog(`No fixable issues identified. Best: ${bestScore}/100`);
-        break;
-      }
-
-      // Brief pause between iterations to avoid rate limits
+      // Brief pause between iterations
       await new Promise(r => setTimeout(r, 500));
     }
 
