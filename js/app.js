@@ -4514,20 +4514,11 @@ class App {
         await this._saveBookStructure();
       }
       if (e.target.id === 'btn-perform-translation') {
-        // Pre-select first checked language in the translation modal
-        const langToLocale = {
-          'spanish': 'es-ES', 'french': 'fr-FR', 'italian': 'it-IT',
-          'german': 'de-DE', 'portuguese': 'pt-BR', 'japanese': 'ja-JP'
-        };
         const bsLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
-        const firstChecked = bsLangs.find(lang => document.getElementById(`bs-translate-${lang}`)?.checked);
-        const targetSelect = document.getElementById('trans-target-lang');
-        if (targetSelect && firstChecked && langToLocale[firstChecked]) {
-          targetSelect.value = langToLocale[firstChecked];
-          this._updateTranslationButton();
+        const checkedLangs = bsLangs.filter(lang => document.getElementById(`bs-translate-${lang}`)?.checked);
+        if (checkedLangs.length > 0) {
+          await this._performTranslation(checkedLangs);
         }
-        // Open the full translation settings modal
-        document.getElementById('modal-translation').style.display = 'flex';
       }
       // --- New Project Help modal ---
       if (e.target.id === 'btn-help-create-project') {
@@ -4854,12 +4845,13 @@ class App {
   async _deleteChapter(chapterId) {
     if (!confirm('Delete this chapter? This cannot be undone.')) return;
 
+    const wasCurrentChapter = this.state.currentChapterId === chapterId;
+
     try {
       // If deleting the currently loaded chapter, clear the editor and reset word count
-      if (this.state.currentChapterId === chapterId) {
+      if (wasCurrentChapter) {
         this.state.currentChapterId = null;
         this.editor.clear();
-        this._showWelcome();
         const wcEl = document.getElementById('status-words');
         if (wcEl) wcEl.textContent = '0';
         const fwcWords = document.getElementById('fwc-words');
@@ -4879,6 +4871,15 @@ class App {
       await this._renderChapterList();
       await this.renderChapterNav();
       this._updateStatusBarLocal();
+
+      // If the deleted chapter was displayed, auto-switch to next remaining chapter
+      if (wasCurrentChapter) {
+        if (chapters.length > 0) {
+          await this._loadChapter(chapters[0].id);
+        } else {
+          this._showWelcome();
+        }
+      }
     } catch (err) {
       console.error('Failed to delete chapter:', err);
       alert('Failed to delete chapter.');
@@ -4917,12 +4918,12 @@ class App {
 
     try {
       const idsToDelete = Array.from(checked).map(cb => cb.dataset.chapterId);
+      const deletedCurrentChapter = idsToDelete.includes(this.state.currentChapterId);
 
       for (const chapterId of idsToDelete) {
         if (this.state.currentChapterId === chapterId) {
           this.state.currentChapterId = null;
           this.editor.clear();
-          this._showWelcome();
           const wcEl = document.getElementById('status-words');
           if (wcEl) wcEl.textContent = '0';
           const fwcWords = document.getElementById('fwc-words');
@@ -4943,6 +4944,15 @@ class App {
       await this._renderChapterList();
       await this.renderChapterNav();
       this._updateStatusBarLocal();
+
+      // If the deleted chapters included the one displayed, auto-switch to next remaining
+      if (deletedCurrentChapter) {
+        if (chapters.length > 0) {
+          await this._loadChapter(chapters[0].id);
+        } else {
+          this._showWelcome();
+        }
+      }
     } catch (err) {
       console.error('Failed to delete selected chapters:', err);
       alert('Failed to delete selected chapters.');
@@ -6532,6 +6542,156 @@ ${adaptationRules}
       if (this._currentProject) this._currentProject.translations = translations;
     } catch (err) {
       console.error('Failed to save translation:', err);
+    }
+  }
+
+  async _performTranslation(languages) {
+    const btn = document.getElementById('btn-perform-translation');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+
+    try {
+      // Get current chapter content from the editor
+      const content = this.editor?.getContent();
+      if (!content || content.trim().length < 50) {
+        alert('No prose in the current chapter to translate. Write or generate prose first.');
+        return;
+      }
+
+      // Get the API key (same one used for prose generation)
+      const apiKey = this.generator?.apiKey;
+      if (!apiKey) {
+        alert('No Anthropic API key found. Please set your API key in settings.');
+        return;
+      }
+
+      const projectId = this.state.currentProjectId;
+      const chapterId = this.state.currentChapterId;
+
+      if (!projectId || !chapterId) {
+        alert('No chapter selected. Please select a chapter first.');
+        return;
+      }
+
+      // Get chapter title from Firestore
+      const chapter = await this.fs.getChapter(chapterId);
+      const chapterTitle = chapter?.title || 'Untitled Chapter';
+
+      const langNames = {
+        spanish:    { name: 'Spanish',    native: 'español',    code: 'es' },
+        french:     { name: 'French',     native: 'français',   code: 'fr' },
+        italian:    { name: 'Italian',    native: 'italiano',   code: 'it' },
+        german:     { name: 'German',     native: 'Deutsch',    code: 'de' },
+        portuguese: { name: 'Portuguese', native: 'português',  code: 'pt' },
+        japanese:   { name: 'Japanese',   native: '日本語',      code: 'ja' }
+      };
+
+      const results = {};
+      let completed = 0;
+
+      for (const lang of languages) {
+        completed++;
+        btn.textContent = `Translating ${completed}/${languages.length}: ${langNames[lang].name}…`;
+
+        const langInfo = langNames[lang];
+
+        const systemPrompt = `You are an expert literary translator specializing in ${langInfo.name} (${langInfo.native}). Your translations are indistinguishable from prose originally written in ${langInfo.name} by a native speaker.
+
+TRANSLATION RULES:
+- Preserve the author's narrative voice, tone, rhythm, and style
+- Adapt idioms, metaphors, and cultural references naturally — do NOT translate literally
+- Use vocabulary and sentence structures natural to ${langInfo.name} literary fiction
+- Preserve paragraph breaks exactly as they appear
+- Preserve all dialogue formatting and punctuation conventions appropriate for ${langInfo.name}
+- For terms of endearment, humor, and emotional language: use what a native ${langInfo.name} reader would expect, not word-for-word equivalents
+- Do NOT add translator notes, commentary, or explanations
+- Do NOT change the content, plot, or character actions
+- Output ONLY the translated prose, nothing else
+${lang === 'japanese' ? '\nUse standard modern Japanese (標準語). Use appropriate keigo levels based on character relationships.' : ''}
+${lang === 'spanish' ? '\nUse neutral Latin American Spanish unless the setting specifically calls for Castilian.' : ''}
+${lang === 'portuguese' ? '\nUse Brazilian Portuguese (português brasileiro).' : ''}`;
+
+        try {
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+              model: this.generator.model || 'claude-sonnet-4-20250514',
+              max_tokens: 8192,
+              system: systemPrompt,
+              messages: [{
+                role: 'user',
+                content: `Translate the following prose into ${langInfo.name}:\n\n${content}`
+              }]
+            })
+          });
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`API error ${response.status}: ${errData?.error?.message || response.statusText}`);
+          }
+
+          const data = await response.json();
+          const translatedText = data.content
+            ?.filter(block => block.type === 'text')
+            .map(block => block.text)
+            .join('\n') || '';
+
+          if (!translatedText || translatedText.trim().length < 20) {
+            throw new Error('Translation returned empty or too short');
+          }
+
+          results[lang] = translatedText;
+
+          // Save translation to Firestore
+          // Uses flat collection with composite key: chapterId_langCode
+          const translationDocId = `${chapterId}_${langInfo.code}`;
+          await this.fs.saveTranslation(translationDocId, {
+            language: lang,
+            languageCode: langInfo.code,
+            languageName: langInfo.name,
+            content: translatedText,
+            sourceWordCount: content.split(/\s+/).length,
+            translatedAt: new Date().toISOString(),
+            chapterId: chapterId,
+            projectId: projectId,
+            chapterTitle: chapterTitle
+          });
+
+          console.log(`Translation to ${langInfo.name} saved`);
+
+        } catch (langErr) {
+          console.error(`Translation to ${langInfo.name} failed:`, langErr);
+          results[lang] = `ERROR: ${langErr.message}`;
+        }
+      }
+
+      // Show summary
+      const successCount = Object.values(results).filter(v => !v.startsWith('ERROR:')).length;
+      const failCount = languages.length - successCount;
+      let summary = `Translation complete!\n\n${successCount} language(s) translated successfully.`;
+      if (failCount > 0) {
+        summary += `\n${failCount} language(s) failed:`;
+        for (const [lang, result] of Object.entries(results)) {
+          if (result.startsWith('ERROR:')) {
+            summary += `\n   - ${langNames[lang].name}: ${result}`;
+          }
+        }
+      }
+      alert(summary);
+
+    } catch (err) {
+      console.error('Translation failed:', err);
+      alert('Translation failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      this._updateTranslateButton();
     }
   }
 

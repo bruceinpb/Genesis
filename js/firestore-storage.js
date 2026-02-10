@@ -168,6 +168,13 @@ class FirestoreStorage {
     await batch.commit();
   }
 
+  // --- Translations ---
+
+  async saveTranslation(translationId, data) {
+    const ref = doc(db, 'translations', translationId);
+    await setDoc(ref, { ...data, updatedAt: new Date() });
+  }
+
   // --- Helpers ---
 
   async getProjectWordCount(projectId) {
