@@ -111,6 +111,65 @@ class App {
 
     // Register service worker
     this._registerServiceWorker();
+
+    // ── FAILSAFE: Watch for chapter deletions and clear editor if needed ──
+    this._initChapterDeletionFailsafe();
+  }
+
+  /**
+   * Failsafe: MutationObserver + periodic check to clear the editor
+   * if the current chapter no longer exists (e.g. after deletion).
+   */
+  _initChapterDeletionFailsafe() {
+    const chapterListContainer = document.getElementById('sidebar-chapters');
+
+    if (chapterListContainer) {
+      const observer = new MutationObserver(() => {
+        this._checkCurrentChapterExists();
+      });
+      observer.observe(chapterListContainer, { childList: true, subtree: true });
+    }
+
+    // Periodic check every 2 seconds as ultimate backup
+    setInterval(() => {
+      this._checkCurrentChapterExists();
+    }, 2000);
+  }
+
+  /**
+   * Check if current chapter still exists; if not, clear the editor.
+   */
+  async _checkCurrentChapterExists() {
+    if (!this.state.currentChapterId || !this.state.currentProjectId) return;
+
+    // Check if the current chapter item still exists in the sidebar DOM
+    const chapterEl = document.querySelector(`.tree-item.chapter[data-id="${this.state.currentChapterId}"]`);
+    if (chapterEl) return; // Still in DOM, nothing to do
+
+    // Also check if sidebar has been rendered (avoid false positive during initial load)
+    const sidebar = document.getElementById('sidebar-chapters');
+    if (!sidebar || sidebar.children.length === 0) return;
+
+    console.log('Chapter deletion detected via failsafe — clearing editor');
+
+    // Clear editor
+    try {
+      if (this.editor?.clear) this.editor.clear();
+      else if (this.editor?.commands?.clearContent) this.editor.commands.clearContent();
+      else if (this.editor?.commands?.setContent) this.editor.commands.setContent('');
+    } catch (e) {}
+
+    // DOM fallback
+    for (const sel of ['.ProseMirror', '[contenteditable="true"]', '.tiptap']) {
+      const el = document.querySelector(sel);
+      if (el) { el.innerHTML = ''; break; }
+    }
+
+    this.state.currentChapterId = null;
+
+    // Hide compare button
+    const compareBtn = document.getElementById('btn-compare-current');
+    if (compareBtn) compareBtn.style.display = 'none';
   }
 
   // ========================================
@@ -440,6 +499,12 @@ class App {
       // Update toolbar chapter title
       const titleEl = document.getElementById('scene-title');
       if (titleEl) titleEl.textContent = chapter.title;
+
+      // Show/hide Compare button for translated chapters
+      const compareBtn = document.getElementById('btn-compare-current');
+      if (compareBtn) {
+        compareBtn.style.display = chapter.isTranslation ? 'inline-block' : 'none';
+      }
     } catch (err) {
       console.error('Failed to load chapter:', err);
     }
@@ -2416,12 +2481,13 @@ class App {
 
   _updateTranslateButton() {
     const langs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
-    const anyChecked = langs.some(lang => document.getElementById(`bs-translate-${lang}`)?.checked);
+    const selected = langs.filter(lang => document.getElementById(`bs-translate-${lang}`)?.checked);
     const btn = document.getElementById('btn-perform-translation');
     if (btn) {
-      btn.disabled = !anyChecked;
-      const count = langs.filter(lang => document.getElementById(`bs-translate-${lang}`)?.checked).length;
-      btn.textContent = anyChecked ? `Perform Translation (${count} language${count > 1 ? 's' : ''})` : 'Perform Translation';
+      btn.disabled = selected.length === 0;
+      btn.textContent = selected.length === 1
+        ? `Perform Translation (1 language)`
+        : 'Perform Translation';
     }
   }
 
@@ -4299,11 +4365,33 @@ class App {
     });
 
     // --- Toolbar buttons ---
-    document.getElementById('btn-bold')?.addEventListener('click', () => this.editor.bold());
-    document.getElementById('btn-italic')?.addEventListener('click', () => this.editor.italic());
-    document.getElementById('btn-heading')?.addEventListener('click', () => this.editor.insertHeading());
-    document.getElementById('btn-blockquote')?.addEventListener('click', () => this.editor.insertBlockquote());
-    document.getElementById('btn-scene-break')?.addEventListener('click', () => this.editor.insertSceneBreak());
+    // Use mousedown + preventDefault to keep editor focus/selection when clicking toolbar
+    const toolbarButtons = [
+      ['btn-bold', () => this.editor.bold()],
+      ['btn-italic', () => this.editor.italic()],
+      ['btn-heading', () => {
+        // Cycle: paragraph → H1 → H2 → H3 → paragraph
+        const sel = window.getSelection();
+        const block = sel?.anchorNode?.nodeType === 3
+          ? sel.anchorNode.parentElement
+          : sel?.anchorNode;
+        const tag = block?.closest('h1,h2,h3,p,div')?.tagName || '';
+        if (tag === 'H1') this.editor.insertHeading(2);
+        else if (tag === 'H2') this.editor.insertHeading(3);
+        else if (tag === 'H3') this.editor.insertParagraph();
+        else this.editor.insertHeading(1);
+      }],
+      ['btn-code', () => this.editor.toggleCode()],
+      ['btn-blockquote', () => this.editor.insertBlockquote()],
+      ['btn-scene-break', () => this.editor.insertSceneBreak()],
+    ];
+    for (const [id, handler] of toolbarButtons) {
+      const btn = document.getElementById(id);
+      if (btn) {
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', handler);
+      }
+    }
     document.getElementById('btn-undo')?.addEventListener('click', () => this.editor.undo());
     document.getElementById('btn-redo')?.addEventListener('click', () => this.editor.redo());
 
@@ -4325,12 +4413,24 @@ class App {
     document.getElementById('btn-error-database')?.addEventListener('click', () => this.openErrorDatabasePanel());
     document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openBookStructurePanel());
 
-    // Translation checkbox listeners — enable/disable the Perform Translation button
+    // Translation language selection — SINGLE SELECT (radio behavior with checkboxes)
     const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
     for (const lang of translationLangs) {
-      document.getElementById(`bs-translate-${lang}`)?.addEventListener('change', () => {
-        this._updateTranslateButton();
-      });
+      const cb = document.getElementById(`bs-translate-${lang}`);
+      if (cb) {
+        cb.addEventListener('change', () => {
+          if (cb.checked) {
+            // Uncheck all others — only one language at a time
+            for (const otherLang of translationLangs) {
+              if (otherLang !== lang) {
+                const otherCb = document.getElementById(`bs-translate-${otherLang}`);
+                if (otherCb) otherCb.checked = false;
+              }
+            }
+          }
+          this._updateTranslateButton();
+        });
+      }
     }
 
     // --- Translation split view ---
@@ -4340,6 +4440,15 @@ class App {
 
     document.getElementById('btn-export-translation-docx')?.addEventListener('click', async () => {
       await this._exportTranslationDocx();
+    });
+
+    // Compare with Original button (visible only for translated chapters)
+    document.getElementById('btn-compare-current')?.addEventListener('click', async () => {
+      if (!this.state.currentChapterId) return;
+      const currentChapter = await this.fs.getChapter(this.state.currentChapterId);
+      if (currentChapter?.isTranslation) {
+        await this._openComparisonFromChapter(currentChapter);
+      }
     });
 
     // Close split view on Escape key
@@ -7060,6 +7169,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       const filterBar = document.getElementById('chapter-filter-bar');
       if (filterBar) filterBar.style.display = 'flex';
 
+      // ── 4b. Populate export buttons immediately (don't wait for Setup Book panel) ──
+      await this._populateExportButtons();
+
       // ── 5. Open side-by-side view with the first successful translation ──
       const firstSuccess = Object.entries(results).find(([, r]) => r.success);
       if (firstSuccess) {
@@ -7099,10 +7211,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
     const overlay = document.getElementById('translation-split-view');
     if (!overlay) return;
 
-    // Populate the language dropdown
+    // Populate language dropdown
     const langSelect = document.getElementById('translation-lang-select');
     langSelect.innerHTML = '';
-
     const successfulLangs = Object.entries(results).filter(([, r]) => r.success);
     for (const [lang, r] of successfulLangs) {
       const opt = document.createElement('option');
@@ -7111,11 +7222,11 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       langSelect.appendChild(opt);
     }
 
-    // Set original pane content
+    // Format original text as proper HTML with paragraphs
     const originalPane = document.getElementById('split-original-content');
-    originalPane.textContent = originalText;
+    originalPane.innerHTML = this._proseToHTML(originalText);
 
-    // Store results for switching languages
+    // Store for language switching
     this._translationResults = results;
     this._translationOriginalText = originalText;
     this._translationOriginalTitle = originalTitle;
@@ -7126,15 +7237,11 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       this._showTranslationInPane(successfulLangs[0][0]);
     }
 
-    // Wire up language switcher
     langSelect.onchange = () => {
       if (langSelect.value) this._showTranslationInPane(langSelect.value);
     };
 
-    // Show overlay
     overlay.style.display = 'flex';
-
-    // Update title
     document.getElementById('translation-split-title').textContent =
       `Translation: ${originalTitle}`;
   }
@@ -7147,10 +7254,47 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
     if (!result?.success) return;
 
     const translatedPane = document.getElementById('split-translated-content');
-    translatedPane.textContent = result.translatedProse;
+    translatedPane.innerHTML = this._proseToHTML(result.translatedProse);
 
     const label = document.getElementById('split-translated-label');
-    label.textContent = `${result.langConfig.flag} ${result.langConfig.name} Translation`;
+    label.textContent = `${result.langConfig.flag} ${result.langConfig.name.toUpperCase()} TRANSLATION`;
+  }
+
+  /**
+   * Convert plain text prose into formatted HTML with proper paragraphs,
+   * indentation, and scene breaks.
+   */
+  _proseToHTML(text) {
+    if (!text) return '';
+
+    const blocks = text.split(/\n\s*\n|\n/).map(b => b.trim()).filter(Boolean);
+
+    let html = '';
+    for (const block of blocks) {
+      // Scene break markers
+      if (/^[\*\s#-]{3,}$/.test(block) || block === '* * *' || block === '***') {
+        html += `<div style="text-align:center;margin:24px 0;color:#888;letter-spacing:0.3em;">* * *</div>`;
+        continue;
+      }
+
+      // Detect if this looks like a chapter title (short, no period at end)
+      if (block.length < 80 && !block.endsWith('.') && !block.endsWith(',') && !block.endsWith('"')) {
+        html += `<h3 style="font-family:Georgia,serif;font-size:1.2rem;font-weight:bold;margin:20px 0 16px;text-align:left;">${this._escapeHTML(block)}</h3>`;
+      } else {
+        html += `<p style="font-family:Georgia,serif;font-size:1.05rem;line-height:1.8;margin:0 0 12px;text-indent:2em;">${this._escapeHTML(block)}</p>`;
+      }
+    }
+
+    return html;
+  }
+
+  /**
+   * Escape HTML special characters
+   */
+  _escapeHTML(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 
   /**
@@ -7160,6 +7304,55 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
     const overlay = document.getElementById('translation-split-view');
     if (overlay) overlay.style.display = 'none';
     this._translationResults = null;
+  }
+
+  /**
+   * Open side-by-side view from a translated chapter.
+   * Loads the original chapter content and shows comparison.
+   */
+  async _openComparisonFromChapter(translatedChapter) {
+    try {
+      const sourceId = translatedChapter.sourceChapterId;
+      let originalText = '';
+      let originalTitle = translatedChapter.sourceChapterTitle || 'Original';
+
+      // Try to load the original chapter from Firestore
+      try {
+        const sourceChapter = await this.fs.getChapter(sourceId);
+        if (sourceChapter) {
+          originalText = (sourceChapter.content || '').replace(/<[^>]+>/g, '').trim();
+          originalTitle = sourceChapter.title || originalTitle;
+        }
+      } catch (e) {
+        console.error('Could not load original chapter:', e);
+      }
+
+      if (!originalText) {
+        alert('Could not load the original chapter for comparison.');
+        return;
+      }
+
+      const translatedText = (translatedChapter.content || '').replace(/<[^>]+>/g, '').trim();
+      const lang = translatedChapter.language || 'unknown';
+      const lc = {
+        flag: translatedChapter.languageFlag || '',
+        name: translatedChapter.languageName || lang
+      };
+
+      const results = {
+        [lang]: {
+          success: true,
+          translatedProse: translatedText,
+          translatedTitle: translatedChapter.title,
+          langConfig: lc
+        }
+      };
+
+      this._openTranslationSplitView(originalText, originalTitle, results, { [lang]: lc });
+    } catch (err) {
+      console.error('Failed to open comparison:', err);
+      alert('Could not open comparison view: ' + err.message);
+    }
   }
 
   // ========================================

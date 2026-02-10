@@ -112,6 +112,35 @@ class Editor {
     this.element.focus();
   }
 
+  toggleCode() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) { this.element.focus(); return; }
+
+    const range = sel.getRangeAt(0);
+    const parentCode = sel.anchorNode?.parentElement?.closest('code');
+
+    if (parentCode) {
+      // Remove code formatting — unwrap the <code> tag
+      const text = document.createTextNode(parentCode.textContent);
+      parentCode.parentNode.replaceChild(text, parentCode);
+    } else if (!range.collapsed) {
+      // Wrap selection in <code>
+      const selectedText = range.toString();
+      range.deleteContents();
+      const code = document.createElement('code');
+      code.style.cssText = 'font-family:monospace;background:rgba(128,128,128,0.15);padding:1px 4px;border-radius:3px;';
+      code.textContent = selectedText;
+      range.insertNode(code);
+      // Move cursor after the code element
+      range.setStartAfter(code);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    this.element.focus();
+    this._handleInput();
+  }
+
   undo() {
     document.execCommand('undo', false, null);
   }
