@@ -97,6 +97,9 @@ class App {
     // Initialize Chapter Navigator
     this._initChapterNav();
 
+    // Initialize Translation System
+    this._initTranslation();
+
     // Check for saved user
     this.state.currentUser = window.localStorage.getItem('genesis2_userName') || null;
 
@@ -942,7 +945,7 @@ class App {
       // === MICRO-FIX ITERATION PIPELINE (v2 — with internal validation) ===
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_MICRO_ITERATIONS = 6;
+        const MAX_MICRO_ITERATIONS = 8;
         const SCORE_NOISE_FLOOR = 2;  // Don't reject a fix for a 1-2 point score difference
         let currentText = streamedText;
         let bestScore = 0;
@@ -1234,7 +1237,7 @@ class App {
           }
         }
 
-        chunkScores.push({ score: bestScore, words: chunkWords });
+        chunkScores.push({ score: bestScore, words: chunkWords, review: bestReview });
         this._updateIterativeLog(`Chunk ${chunkNum}: Complete. Best: ${bestScore}/100 (${previousFixes.length} accepted, ${attemptedFixes.length} attempted)`);
       }
 
@@ -1310,6 +1313,16 @@ class App {
 
         if (finalReview && finalReview.score > 0) {
           let finalScore = finalReview.score;
+
+          // Use whichever score is higher: iteration's best chunk or fresh final review
+          // This protects against scoring variance between iteration and final scoreProse
+          const chunkBest = chunkScores.reduce((best, c) => c.score > best.score ? c : best, { score: 0 });
+          if (chunkBest.score > finalScore && chunkBest.review) {
+            this._updateIterativeLog(`Iteration best (${chunkBest.score}) > final review (${finalScore}). Using iteration best.`);
+            finalReview = { ...chunkBest.review };
+            finalScore = chunkBest.score;
+            finalReview.score = chunkBest.score;
+          }
 
           // If full-text score is significantly lower than the weighted chunk average,
           // use the chunk average as a floor (within 5 points) to prevent scoring inconsistency
@@ -4527,13 +4540,8 @@ class App {
         await this._saveBookStructure();
       }
       if (e.target.id === 'btn-perform-translation') {
-        const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
-        const selected = translationLangs.filter(lang =>
-          document.getElementById(`bs-translate-${lang}`)?.checked
-        );
-        if (selected.length > 0) {
-          await this._performTranslation(selected);
-        }
+        // Open the full translation settings modal
+        document.getElementById('modal-translation').style.display = 'flex';
       }
       // --- New Project Help modal ---
       if (e.target.id === 'btn-help-create-project') {
@@ -5298,6 +5306,40 @@ class App {
       await this._renderChapterList();
     });
 
+    // --- Toolbar: Select All ---
+    document.getElementById('nav-toolbar-select-all')?.addEventListener('change', (e) => {
+      const checked = e.target.checked;
+      const allItems = document.querySelectorAll('.nav-item-checkbox');
+      allItems.forEach(cb => {
+        cb.checked = checked;
+        const item = cb.closest('.nav-item');
+        if (item) {
+          const id = item.dataset.navId;
+          if (checked) this._navSelectedIds.add(id);
+          else this._navSelectedIds.delete(id);
+          item.classList.toggle('selected', checked);
+        }
+      });
+      this._updateNavDeleteButton();
+      // Sync header select-all button
+      const headerBtn = document.getElementById('btn-nav-select-all');
+      if (headerBtn) headerBtn.textContent = checked ? '\u2611' : '\u2610';
+      // Update toolbar delete button
+      const delBtn = document.getElementById('btn-nav-toolbar-delete');
+      if (delBtn) delBtn.disabled = this._navSelectedIds.size === 0;
+    });
+
+    // --- Toolbar: Delete Selected ---
+    document.getElementById('btn-nav-toolbar-delete')?.addEventListener('click', async () => {
+      // Delegate to the existing nav delete handler
+      document.getElementById('btn-nav-delete-selected')?.click();
+    });
+
+    // --- Toolbar: Accept Outline ---
+    document.getElementById('btn-nav-accept-outline')?.addEventListener('click', () => {
+      this._showAcceptOutlineConfirmation();
+    });
+
     // --- Add Chapter ---
     document.getElementById('btn-nav-add-chapter')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
@@ -5500,6 +5542,14 @@ class App {
       btn.title = this._navSelectedIds.size > 0
         ? `Delete ${this._navSelectedIds.size} selected`
         : 'Delete Selected';
+    }
+    // Also update toolbar delete button
+    const toolbarBtn = document.getElementById('btn-nav-toolbar-delete');
+    if (toolbarBtn) {
+      toolbarBtn.disabled = this._navSelectedIds.size === 0;
+      toolbarBtn.textContent = this._navSelectedIds.size > 0
+        ? `Delete (${this._navSelectedIds.size})`
+        : 'Delete';
     }
   }
 
@@ -6165,6 +6215,358 @@ class App {
         // Service worker registration failed — app still works without it
       });
     }
+  }
+
+  // ======================================================
+  // TRANSLATION SYSTEM
+  // ======================================================
+
+  _initTranslation() {
+    // Toggle detail panels when adaptation checkboxes change
+    document.querySelectorAll('.trans-option input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const detail = e.target.closest('.trans-option')?.querySelector('.trans-option-detail');
+        if (detail) detail.style.display = e.target.checked ? '' : 'none';
+        this._updateTranslationButton();
+      });
+    });
+
+    // Enable/disable Begin Translation based on target language
+    document.getElementById('trans-target-lang')?.addEventListener('change', () => {
+      this._updateTranslationButton();
+    });
+
+    // Begin Translation
+    document.getElementById('btn-start-translation')?.addEventListener('click', () => {
+      this._beginTranslation();
+    });
+
+    // Close translation view
+    document.getElementById('btn-close-translation')?.addEventListener('click', () => {
+      this._closeTranslationView();
+    });
+
+    // Copy translation
+    document.getElementById('btn-translation-copy')?.addEventListener('click', () => {
+      const el = document.getElementById('editor-translation');
+      if (el) {
+        navigator.clipboard.writeText(el.innerText || el.textContent);
+        alert('Translation copied to clipboard.');
+      }
+    });
+
+    // Modal close buttons
+    document.querySelectorAll('[data-close="modal-translation"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('modal-translation').style.display = 'none';
+      });
+    });
+  }
+
+  _updateTranslationButton() {
+    const btn = document.getElementById('btn-start-translation');
+    const lang = document.getElementById('trans-target-lang')?.value;
+    if (btn) btn.disabled = !lang;
+  }
+
+  _getTranslationSettings() {
+    const targetLang = document.getElementById('trans-target-lang')?.value || '';
+    const sourceLang = document.getElementById('trans-source-lang')?.value || 'en-US';
+    const [targetLangCode, targetCountry] = targetLang.split('-');
+    const [sourceLangCode, sourceCountry] = sourceLang.split('-');
+
+    const langNames = {
+      'es': 'Spanish', 'fr': 'French', 'it': 'Italian', 'de': 'German',
+      'pt': 'Portuguese', 'ja': 'Japanese', 'ko': 'Korean', 'zh': 'Chinese',
+      'nl': 'Dutch', 'sv': 'Swedish', 'pl': 'Polish', 'ru': 'Russian', 'en': 'English'
+    };
+    const countryNames = {
+      'US': 'United States', 'GB': 'United Kingdom', 'AU': 'Australia',
+      'ES': 'Spain', 'MX': 'Mexico', 'AR': 'Argentina',
+      'FR': 'France', 'CA': 'Canada', 'IT': 'Italy',
+      'DE': 'Germany', 'AT': 'Austria', 'BR': 'Brazil', 'PT': 'Portugal',
+      'JP': 'Japan', 'KR': 'South Korea', 'CN': 'China',
+      'NL': 'Netherlands', 'SE': 'Sweden', 'PL': 'Poland', 'RU': 'Russia'
+    };
+
+    return {
+      sourceLang: langNames[sourceLangCode] || sourceLangCode,
+      sourceCountry: countryNames[sourceCountry] || sourceCountry,
+      targetLang: langNames[targetLangCode] || targetLangCode,
+      targetCountry: countryNames[targetCountry] || targetCountry,
+      targetLocale: targetLang,
+      adaptNames: document.getElementById('trans-adapt-names')?.checked || false,
+      namesMode: document.getElementById('trans-names-mode')?.value || 'translate',
+      adaptLocations: document.getElementById('trans-adapt-locations')?.checked || false,
+      locationsMode: document.getElementById('trans-locations-mode')?.value || 'equivalent',
+      adaptBrands: document.getElementById('trans-adapt-brands')?.checked || false,
+      adaptUnits: document.getElementById('trans-adapt-units')?.checked || false,
+      adaptFood: document.getElementById('trans-adapt-food')?.checked || false,
+      adaptCulture: document.getElementById('trans-adapt-culture')?.checked || false,
+      adaptRegister: document.getElementById('trans-adapt-register')?.checked || false,
+      registerMode: document.getElementById('trans-register-mode')?.value || 'contextual',
+      adaptIdioms: document.getElementById('trans-adapt-idioms')?.checked || false,
+      scope: document.querySelector('input[name="trans-scope"]:checked')?.value || 'current-chapter'
+    };
+  }
+
+  async _beginTranslation() {
+    const settings = this._getTranslationSettings();
+    if (!settings.targetLang) return;
+
+    // Close modal
+    document.getElementById('modal-translation').style.display = 'none';
+
+    // Open side-by-side view
+    this._openTranslationView(settings);
+
+    // Get text to translate based on scope
+    let sourceText = '';
+    if (settings.scope === 'selection') {
+      const sel = window.getSelection();
+      sourceText = sel?.toString() || '';
+      if (!sourceText) {
+        alert('No text selected. Please select text first.');
+        return;
+      }
+    } else if (settings.scope === 'current-chapter') {
+      sourceText = this.editor?.getContent() || '';
+    } else {
+      // all-chapters
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const texts = [];
+      for (const ch of chapters) {
+        texts.push(`\n\n--- ${ch.title} ---\n\n${ch.content || ''}`);
+      }
+      sourceText = texts.join('');
+    }
+
+    if (!sourceText.trim()) {
+      alert('No text to translate.');
+      return;
+    }
+
+    await this._executeTranslation(sourceText, settings);
+  }
+
+  _openTranslationView(settings) {
+    const editorArea = document.getElementById('editor-area');
+    if (editorArea) editorArea.classList.add('translation-active');
+
+    // Show headers
+    const origHeader = document.getElementById('editor-pane-header-original');
+    if (origHeader) origHeader.style.display = '';
+
+    const translationPane = document.getElementById('editor-container-translation');
+    if (translationPane) translationPane.style.display = '';
+
+    // Set labels
+    const origLang = document.getElementById('pane-lang-original');
+    if (origLang) origLang.textContent = `${settings.sourceLang} (${settings.sourceCountry})`;
+
+    const transLang = document.getElementById('pane-lang-translation');
+    if (transLang) transLang.textContent = `${settings.targetLang} (${settings.targetCountry})`;
+
+    // Clear previous translation
+    const transEditor = document.getElementById('editor-translation');
+    if (transEditor) transEditor.innerHTML = '<p style="color:var(--text-muted);font-style:italic;">Preparing translation...</p>';
+
+    // Show progress
+    const progress = document.getElementById('translation-progress');
+    if (progress) progress.style.display = '';
+  }
+
+  _closeTranslationView() {
+    const editorArea = document.getElementById('editor-area');
+    if (editorArea) editorArea.classList.remove('translation-active');
+
+    const origHeader = document.getElementById('editor-pane-header-original');
+    if (origHeader) origHeader.style.display = 'none';
+
+    const translationPane = document.getElementById('editor-container-translation');
+    if (translationPane) translationPane.style.display = 'none';
+  }
+
+  async _executeTranslation(sourceText, settings) {
+    if (!this.generator?.apiKey) {
+      alert('Set your Anthropic API key in Settings first.');
+      return;
+    }
+
+    const transEditor = document.getElementById('editor-translation');
+    const progressBar = document.getElementById('translation-progress-bar');
+    const progressText = document.getElementById('translation-progress-text');
+
+    // Build the cultural adaptation instructions
+    let adaptationRules = '';
+
+    if (settings.adaptNames) {
+      const modeDesc = {
+        'translate': 'Translate character names to local equivalents (e.g., William \u2192 Guglielmo, Mary \u2192 Maria)',
+        'phonetic': 'Adapt name spellings for local pronunciation while keeping them recognizable',
+        'keep-first': 'Keep first names unchanged but translate/adapt surnames'
+      };
+      adaptationRules += `\n\nCHARACTER NAMES: ${modeDesc[settings.namesMode] || modeDesc.translate}`;
+    } else {
+      adaptationRules += `\n\nCHARACTER NAMES: Keep all character names exactly as they are in the original.`;
+    }
+
+    if (settings.adaptLocations) {
+      const modeDesc = {
+        'equivalent': `Replace locations with culturally equivalent places in ${settings.targetCountry}. Research and use real places that match the original's social status, geography, climate, and narrative function.`,
+        'same-country-translate': 'Keep the same locations but translate place names where applicable.',
+        'relocate-full': `Fully relocate the entire story to ${settings.targetCountry}. All places, institutions, geography, and regional details should be adapted to feel native to ${settings.targetCountry}.`
+      };
+      adaptationRules += `\n\nLOCATIONS & SETTINGS: ${modeDesc[settings.locationsMode] || modeDesc.equivalent}`;
+    }
+
+    if (settings.adaptBrands) {
+      adaptationRules += `\n\nVEHICLES, BRANDS & PRODUCTS: Replace with locally popular equivalents in ${settings.targetCountry}. American cars \u2192 local market cars. Store brands \u2192 local chain brands. Global brands (Apple, Samsung) can stay.`;
+    }
+
+    if (settings.adaptUnits) {
+      adaptationRules += `\n\nCURRENCY & MEASUREMENTS: Convert all measurements to local standards. USD \u2192 local currency (adjust for approximate economic equivalence). Miles \u2192 kilometers. Fahrenheit \u2192 Celsius. Acres \u2192 hectares. Feet/inches \u2192 meters/centimeters. Pounds \u2192 kilograms.`;
+    }
+
+    if (settings.adaptFood) {
+      adaptationRules += `\n\nFOOD & CUISINE: Replace dishes with local equivalents that carry the same cultural weight and context in ${settings.targetCountry}.`;
+    }
+
+    if (settings.adaptCulture) {
+      adaptationRules += `\n\nCULTURAL REFERENCES: Adapt holidays, institutions, customs, sports, entertainment references, and social norms to ${settings.targetCountry} equivalents.`;
+    }
+
+    if (settings.adaptRegister) {
+      const regDesc = {
+        'contextual': 'Choose formal or informal address based on each character relationship. Strangers and authority figures \u2192 formal. Close friends and family \u2192 informal.',
+        'formal': 'Default to formal address (vous/usted/Sie/Lei) except in very intimate scenes.',
+        'informal': 'Default to informal address (tu/t\u00fa/du/tu) to create a casual, accessible tone.'
+      };
+      adaptationRules += `\n\nFORMAL/INFORMAL REGISTER: ${regDesc[settings.registerMode] || regDesc.contextual}`;
+    }
+
+    if (settings.adaptIdioms) {
+      adaptationRules += `\n\nIDIOMS & EXPRESSIONS: Replace English idioms and colloquialisms with equivalent expressions in ${settings.targetLang} that carry the same meaning and emotional weight. Never translate idioms literally.`;
+    }
+
+    const systemPrompt = `You are an expert literary translator specializing in ${settings.sourceLang}-to-${settings.targetLang} fiction translation. You have deep knowledge of both cultures and produce translations that read as if the story were originally written in ${settings.targetLang}.
+
+=== TRANSLATION PRINCIPLES ===
+1. LITERARY QUALITY: The translation must read as polished ${settings.targetLang} prose, not as translated text. Match the original's literary register, rhythm, and voice.
+2. CULTURAL AUTHENTICITY: Adapted elements must feel genuinely ${settings.targetCountry} \u2014 as if a ${settings.targetCountry} author wrote them.
+3. NARRATIVE FIDELITY: The story's emotional arc, character relationships, themes, and plot must be preserved exactly.
+4. CONSISTENCY: Maintain consistent terminology throughout.
+5. VOICE MATCHING: Mirror the original's style \u2014 plain voice stays plain, ornate stays ornate.
+
+=== TARGET: ${settings.targetLang} (${settings.targetCountry}) ===
+${adaptationRules}
+
+=== OUTPUT FORMAT ===
+- Output ONLY the translated text. No commentary, no notes, no bracketed explanations.
+- Preserve all paragraph breaks, scene breaks (* * *), and chapter headings.
+- Maintain the same approximate word count as the original (\u00b115%).`;
+
+    // Chunk the text for API calls
+    const chunks = this._splitTextForTranslation(sourceText, 2000);
+    let translatedParts = [];
+
+    if (transEditor) transEditor.innerHTML = '';
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (progressBar) progressBar.style.width = `${((i) / chunks.length) * 100}%`;
+      if (progressText) progressText.textContent = `Translating part ${i + 1} of ${chunks.length}...`;
+
+      try {
+        const contextBefore = translatedParts.length > 0
+          ? `\n\n[Previous translated text for context \u2014 do NOT repeat this, continue from where it ends:]\n${translatedParts[translatedParts.length - 1].slice(-500)}`
+          : '';
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.generator.apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: this.generator.model || 'claude-sonnet-4-20250514',
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{
+              role: 'user',
+              content: `Translate the following ${settings.sourceLang} text into ${settings.targetLang} (${settings.targetCountry}). Apply all cultural adaptation rules specified in your instructions.${contextBefore}\n\n---\n\n${chunks[i]}`
+            }]
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.text();
+          throw new Error(`API error: ${response.status} - ${err}`);
+        }
+
+        const result = await response.json();
+        const translatedText = result.content?.[0]?.text || '';
+        translatedParts.push(translatedText);
+
+        // Append to translation editor
+        if (transEditor) {
+          const div = document.createElement('div');
+          div.innerHTML = translatedText.split('\n').map(line =>
+            line.trim() ? `<p>${this._esc(line)}</p>` : ''
+          ).join('');
+          transEditor.appendChild(div);
+        }
+
+      } catch (err) {
+        console.error('Translation error:', err);
+        if (transEditor) {
+          const errDiv = document.createElement('p');
+          errDiv.style.color = 'var(--danger)';
+          errDiv.textContent = `Translation error on part ${i + 1}: ${err.message}`;
+          transEditor.appendChild(errDiv);
+        }
+      }
+    }
+
+    if (progressBar) progressBar.style.width = '100%';
+    if (progressText) progressText.textContent = `Translation complete \u2014 ${chunks.length} part${chunks.length > 1 ? 's' : ''} translated.`;
+
+    // Save translation to project
+    try {
+      const fullTranslation = translatedParts.join('\n\n');
+      const translations = this._currentProject?.translations || {};
+      translations[settings.targetLocale] = {
+        text: fullTranslation,
+        settings: settings,
+        translatedAt: new Date().toISOString(),
+        chapterId: this.state.currentChapterId
+      };
+      await this.fs.updateProject(this.state.currentProjectId, { translations });
+      if (this._currentProject) this._currentProject.translations = translations;
+    } catch (err) {
+      console.error('Failed to save translation:', err);
+    }
+  }
+
+  _splitTextForTranslation(text, maxWords) {
+    const paragraphs = text.split(/\n\s*\n/);
+    const chunks = [];
+    let current = '';
+    let currentWords = 0;
+
+    for (const para of paragraphs) {
+      const paraWords = para.split(/\s+/).length;
+      if (currentWords + paraWords > maxWords && current.trim()) {
+        chunks.push(current.trim());
+        current = '';
+        currentWords = 0;
+      }
+      current += para + '\n\n';
+      currentWords += paraWords;
+    }
+    if (current.trim()) chunks.push(current.trim());
+    return chunks.length > 0 ? chunks : [text];
   }
 }
 

@@ -142,6 +142,14 @@
         <button class="chapter-nav-btn" id="btn-nav-collapse" title="Collapse Navigator">&#9666;</button>
       </div>
     </div>
+    <div class="chapter-nav-toolbar" id="chapter-nav-toolbar">
+      <label class="nav-select-all-label">
+        <input type="checkbox" id="nav-toolbar-select-all" title="Select All">
+        <span>All</span>
+      </label>
+      <button class="btn btn-sm nav-toolbar-btn nav-delete-btn" id="btn-nav-toolbar-delete" disabled>Delete</button>
+      <button class="btn btn-sm nav-toolbar-btn nav-accept-btn" id="btn-nav-accept-outline">Accept Outline</button>
+    </div>
     <div class="chapter-nav-body" id="chapter-nav-body">
       <!-- Front Matter Section -->
       <div class="nav-section" id="nav-section-front">
@@ -217,8 +225,13 @@
   </header>
 
   <!-- ===== Editor ===== -->
-  <main class="editor-area">
-    <div class="editor-container">
+  <main class="editor-area" id="editor-area">
+    <div class="editor-container" id="editor-container-original">
+      <div class="editor-pane-header" id="editor-pane-header-original" style="display:none;">
+        <span class="pane-label">Original</span>
+        <span class="pane-lang" id="pane-lang-original">English</span>
+        <button class="btn btn-sm" id="btn-close-translation" title="Close translation view">&times;</button>
+      </div>
       <div id="chapter-outline-display" class="chapter-outline-section" style="display:none;">
         <h4>Chapter Outline</h4>
         <p id="chapter-outline-text"></p>
@@ -235,6 +248,23 @@
           <button class="btn btn-sm" id="btn-import-project">Import Existing Project</button>
         </div>
       </div>
+    </div>
+
+    <!-- Translation Pane (hidden by default) -->
+    <div class="editor-container translation-pane" id="editor-container-translation" style="display:none;">
+      <div class="editor-pane-header">
+        <span class="pane-label">Translation</span>
+        <span class="pane-lang" id="pane-lang-translation"></span>
+        <div class="pane-actions">
+          <button class="btn btn-sm" id="btn-translation-copy" title="Copy translation">Copy</button>
+          <button class="btn btn-sm" id="btn-translation-export" title="Export translation">Export</button>
+        </div>
+      </div>
+      <div class="translation-progress" id="translation-progress" style="display:none;">
+        <div class="translation-progress-bar" id="translation-progress-bar"></div>
+        <span class="translation-progress-text" id="translation-progress-text">Translating...</span>
+      </div>
+      <div id="editor-translation" class="editor" data-placeholder="Translation will appear here..."></div>
     </div>
   </main>
 
@@ -1367,6 +1397,229 @@
     </div>
     <div class="modal-footer" style="justify-content:center;">
       <button class="btn btn-primary" id="btn-help-close" style="padding:12px 48px;">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Translation Modal ===== -->
+<div class="modal-overlay" id="modal-translation" style="display:none;">
+  <div class="modal modal-lg" style="max-width:680px;">
+    <div class="modal-header">
+      <h2>Translation Settings</h2>
+      <button class="modal-close" data-close="modal-translation">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:75vh;overflow-y:auto;">
+
+      <!-- Step 1: Language & Country -->
+      <div class="translation-step">
+        <h3 style="font-size:0.95rem;margin-bottom:8px;">Source &amp; Target</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label">Source Language</label>
+            <select class="form-input" id="trans-source-lang">
+              <option value="en-US">English (United States)</option>
+              <option value="en-GB">English (United Kingdom)</option>
+              <option value="en-AU">English (Australia)</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Target Language</label>
+            <select class="form-input" id="trans-target-lang">
+              <option value="">&mdash; Select &mdash;</option>
+              <option value="es-ES">Spanish (Spain)</option>
+              <option value="es-MX">Spanish (Mexico)</option>
+              <option value="es-AR">Spanish (Argentina)</option>
+              <option value="fr-FR">French (France)</option>
+              <option value="fr-CA">French (Canada)</option>
+              <option value="it-IT">Italian (Italy)</option>
+              <option value="de-DE">German (Germany)</option>
+              <option value="de-AT">German (Austria)</option>
+              <option value="pt-BR">Portuguese (Brazil)</option>
+              <option value="pt-PT">Portuguese (Portugal)</option>
+              <option value="ja-JP">Japanese (Japan)</option>
+              <option value="ko-KR">Korean (South Korea)</option>
+              <option value="zh-CN">Chinese (Simplified)</option>
+              <option value="nl-NL">Dutch (Netherlands)</option>
+              <option value="sv-SE">Swedish (Sweden)</option>
+              <option value="pl-PL">Polish (Poland)</option>
+              <option value="ru-RU">Russian (Russia)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Cultural Adaptation Options -->
+      <div class="translation-step" style="margin-top:16px;">
+        <h3 style="font-size:0.95rem;margin-bottom:4px;">Cultural Adaptation</h3>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:10px;">
+          Choose how deeply to adapt the story for the target culture.
+          &ldquo;Translate&rdquo; keeps original references. &ldquo;Adapt&rdquo; replaces them with culturally equivalent alternatives.
+        </p>
+
+        <div class="translation-options">
+
+          <!-- Character Names -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-names">
+                <span class="trans-toggle-label">Adapt Character Names</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Translate or culturally adapt character names to the target language.
+              <em>Example: &ldquo;William Ford&rdquo; &rarr; &ldquo;Guglielmo Fordi&rdquo; (Italian) or keep original.</em>
+            </p>
+            <div class="trans-option-detail" id="trans-names-detail" style="display:none;">
+              <select class="form-input form-input-sm" id="trans-names-mode">
+                <option value="translate">Translate names to local equivalents (William &rarr; Guglielmo)</option>
+                <option value="phonetic">Adapt spelling for local pronunciation (William &rarr; Guillem)</option>
+                <option value="keep-first">Keep first names, translate surnames only</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Locations -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-locations">
+                <span class="trans-toggle-label">Adapt Locations &amp; Settings</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Replace locations with culturally equivalent places in the target country.
+              AI will research equivalent communities, landmarks, and venues.
+              <em>Example: &ldquo;Palm Beach, Florida&rdquo; &rarr; &ldquo;Portofino, Liguria&rdquo; (Italian)</em>
+            </p>
+            <div class="trans-option-detail" id="trans-locations-detail" style="display:none;">
+              <select class="form-input form-input-sm" id="trans-locations-mode">
+                <option value="equivalent">Find culturally equivalent locations (same social status, climate, character)</option>
+                <option value="same-country-translate">Keep locations, translate place names only</option>
+                <option value="relocate-full">Fully relocate the story to the target country</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Vehicles, Brands, Products -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-brands">
+                <span class="trans-toggle-label">Adapt Vehicles, Brands &amp; Products</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Replace brand names, car models, and products with locally recognized equivalents.
+              <em>Example: &ldquo;Honda Accord&rdquo; &rarr; &ldquo;Fiat Panda&rdquo; (Italy), &ldquo;Walmart&rdquo; &rarr; &ldquo;Carrefour&rdquo; (France)</em>
+            </p>
+          </div>
+
+          <!-- Currency & Measurements -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-units" checked>
+                <span class="trans-toggle-label">Convert Currency &amp; Measurements</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Convert dollars to local currency, miles to kilometers, Fahrenheit to Celsius, etc.
+              Amounts will be adjusted for approximate economic equivalence.
+              <em>Example: &ldquo;$50&rdquo; &rarr; &ldquo;&euro;45&rdquo;, &ldquo;80 acres&rdquo; &rarr; &ldquo;32 hectares&rdquo;</em>
+            </p>
+          </div>
+
+          <!-- Food & Cuisine -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-food">
+                <span class="trans-toggle-label">Adapt Food &amp; Cuisine References</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Replace dishes and ingredients with local equivalents that carry the same cultural weight.
+              <em>Example: &ldquo;meatloaf and mashed potatoes&rdquo; &rarr; &ldquo;polpettone con pur&egrave;&rdquo; (Italy)</em>
+            </p>
+          </div>
+
+          <!-- Cultural References -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-culture">
+                <span class="trans-toggle-label">Adapt Cultural References</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Adapt holidays, customs, institutions, historical references, and social norms.
+              <em>Example: &ldquo;Thanksgiving dinner&rdquo; &rarr; &ldquo;pranzo di Natale&rdquo; (Italy)</em>
+            </p>
+          </div>
+
+          <!-- Register / Formality -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-register" checked>
+                <span class="trans-toggle-label">Manage Formal/Informal Register</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              In languages with formal/informal address (tu/vous, t&uacute;/usted, du/Sie),
+              AI will choose the appropriate register based on character relationships.
+            </p>
+            <div class="trans-option-detail" id="trans-register-detail" style="display:none;">
+              <select class="form-input form-input-sm" id="trans-register-mode">
+                <option value="contextual">AI determines based on character relationships</option>
+                <option value="formal">Default to formal (vous/usted/Sie/Lei)</option>
+                <option value="informal">Default to informal (tu/t&uacute;/du/tu)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Idioms & Expressions -->
+          <div class="trans-option">
+            <div class="trans-option-header">
+              <label class="trans-toggle">
+                <input type="checkbox" id="trans-adapt-idioms" checked>
+                <span class="trans-toggle-label">Adapt Idioms &amp; Expressions</span>
+              </label>
+            </div>
+            <p class="trans-option-desc">
+              Replace English idioms with equivalent expressions in the target language
+              rather than translating literally.
+              <em>Example: &ldquo;raining cats and dogs&rdquo; &rarr; &ldquo;piove a catinelle&rdquo; (Italian)</em>
+            </p>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Step 3: Scope -->
+      <div class="translation-step" style="margin-top:16px;">
+        <h3 style="font-size:0.95rem;margin-bottom:8px;">What to Translate</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label class="trans-scope-option">
+            <input type="radio" name="trans-scope" value="current-chapter" checked>
+            <span>Current Chapter Only</span>
+          </label>
+          <label class="trans-scope-option">
+            <input type="radio" name="trans-scope" value="all-chapters">
+            <span>All Chapters</span>
+          </label>
+          <label class="trans-scope-option">
+            <input type="radio" name="trans-scope" value="selection">
+            <span>Selected Text Only</span>
+          </label>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--border-color);">
+      <button class="btn" data-close="modal-translation">Cancel</button>
+      <button class="btn btn-primary" id="btn-start-translation" disabled>Begin Translation</button>
     </div>
   </div>
 </div>
