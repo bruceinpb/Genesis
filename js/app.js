@@ -1503,42 +1503,64 @@ class App {
     await this._runGeneration({ isContinuation: true, wordTarget });
   }
 
-  async _handleWriteToGoal() {
+  async _handleWriteToEnd() {
     const project = this._currentProject;
     if (!project) return;
 
-    const totalWords = this._getTotalWordCount();
-    const goal = project.wordCountGoal || 0;
+    const btn = document.getElementById('btn-continue-to-end');
+    if (!btn) return;
 
-    if (goal <= 0) {
-      alert('No word count goal set for this project. Set one in Settings → Project Settings.');
-      return;
-    }
-
-    const remaining = goal - totalWords;
-    const maxOverage = Math.round(goal * 0.03); // 3% overage allowed
-
-    if (remaining <= 0) {
-      alert(`Your story has already reached ${totalWords.toLocaleString()} words (goal: ${goal.toLocaleString()}).`);
-      return;
-    }
-
+    const originalText = btn.textContent;
+    btn.disabled = true;
     this._showContinueBar(false);
 
-    // Generate in chunks, targeting the remaining word count
-    // Each chunk targets min(remaining, 2000) words
-    // The final chunk includes story conclusion instructions
-    this._autoWriteToGoal = true;
-    this._writeToGoalTarget = goal;
-    this._writeToGoalMaxOverage = maxOverage;
+    try {
+      const MAX_ITERATIONS = 20;
+      let iteration = 0;
+      let keepGoing = true;
 
-    // Set the word target for this chunk
-    const chunkSize = Math.min(remaining, 2000);
-    if (this._lastGenSettings) this._lastGenSettings.wordTarget = chunkSize;
+      while (keepGoing && iteration < MAX_ITERATIONS) {
+        iteration++;
+        btn.textContent = `Writing\u2026 (pass ${iteration})`;
 
-    // If remaining words fit in one chunk, include conclusion instructions
-    const concludeStory = remaining <= 2000;
-    await this._runGeneration({ isContinuation: true, wordTarget: chunkSize, concludeStory, writeToGoal: true });
+        const beforeWords = this._getTotalWordCount();
+        await this._runGeneration({ isContinuation: true, wordTarget: 1000 });
+        const afterWords = this._getTotalWordCount();
+        const wordsAdded = afterWords - beforeWords;
+
+        // Check chapter word count against per-chapter target
+        const goal = project.wordCountGoal || 0;
+        const numChapters = project.numChapters || 10;
+        const chapterGoal = goal > 0 ? Math.ceil(goal / numChapters) : 4000;
+        const currentChapterWords = this.editor?.getWordCount?.() || 0;
+
+        // Stop if chapter has reached its target length
+        if (currentChapterWords >= chapterGoal) {
+          keepGoing = false;
+        }
+
+        // Stop if generation produced very few words (indicates natural completion)
+        if (wordsAdded < 100) {
+          keepGoing = false;
+        }
+
+        // Brief pause between iterations to avoid rate limiting
+        if (keepGoing) {
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+
+      if (iteration >= MAX_ITERATIONS) {
+        alert(`Reached maximum of ${MAX_ITERATIONS} generation passes. Review the chapter and continue manually if needed.`);
+      }
+
+    } catch (err) {
+      console.error('Write to End failed:', err);
+      alert('Generation stopped: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   }
 
   _setGenerateStatus(active) {
@@ -4771,8 +4793,8 @@ class App {
         const wordTarget = parseInt(continueBtn.dataset.words) || 1000;
         await this._handleContinueWriting(wordTarget);
       }
-      if (e.target.id === 'btn-continue-to-target' || e.target.closest('#btn-continue-to-target')) {
-        await this._handleWriteToGoal();
+      if (e.target.id === 'btn-continue-to-end' || e.target.closest('#btn-continue-to-end')) {
+        await this._handleWriteToEnd();
       }
       if (e.target.id === 'btn-continue-dismiss' || e.target.closest('#btn-continue-dismiss')) {
         this._showContinueBar(false);
@@ -7360,129 +7382,87 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
   // ========================================
 
   /**
-   * Export the current translation split view as a DOCX file.
+   * Export the currently-viewed translation from the split view as Vellum-ready DOCX.
+   * Exports ONLY the translated version (not side-by-side).
    */
   async _exportTranslationDocx() {
     try {
+      const docx = window.docx;
+      if (!docx) { alert('DOCX library not loaded. Please refresh the page.'); return; }
+
+      const { Document, Packer, Paragraph, TextRun, PageBreak, HeadingLevel, AlignmentType } = docx;
+
       const langSelect = document.getElementById('translation-lang-select');
       const selectedLang = langSelect?.value;
-
       if (!selectedLang || !this._translationResults?.[selectedLang]?.success) {
         alert('No translation selected to export.');
         return;
       }
 
       const result = this._translationResults[selectedLang];
-      const originalTitle = this._translationOriginalTitle || 'Untitled';
-      const originalText = this._translationOriginalText || '';
-      const translatedText = result.translatedProse;
+      const translatedText = result.translatedProse || '';
+      const translatedTitle = (result.translatedTitle || 'Untitled').replace(/^[\uD83C][\uDDE6-\uDDFF][\uD83C][\uDDE6-\uDDFF]\s*/, '');
       const lc = result.langConfig;
 
-      // Build DOCX with docx-js (browser UMD build)
-      const {
-        Document, Packer, Paragraph, TextRun, HeadingLevel,
-        AlignmentType
-      } = window.docx;
+      const children = [];
 
-      // Helper: convert plain text (with paragraph breaks) to Paragraph objects
-      const textToParagraphs = (text, isFirstParagraph = false) => {
-        return text.split(/\n\n+/).map((para, idx) => {
-          const trimmed = para.trim();
-          if (!trimmed) return null;
-          return new Paragraph({
-            spacing: { after: 200, line: 360 },
-            indent: { firstLine: idx === 0 && isFirstParagraph ? 0 : 720 },
-            children: [
-              new TextRun({
-                text: trimmed,
-                font: 'Georgia',
-                size: 24
-              })
-            ]
-          });
-        }).filter(Boolean);
-      };
+      // Chapter title as Heading 1 (Vellum chapter detection)
+      children.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_1,
+          spacing: { after: 400 },
+          children: [
+            new TextRun({ text: translatedTitle, bold: true, size: 32, font: 'Times New Roman' })
+          ]
+        })
+      );
 
-      const sections = [];
-
-      // Section 1: Original prose
-      sections.push({
-        properties: {
-          page: {
-            size: { width: 12240, height: 15840 },
-            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
-          }
-        },
-        children: [
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
+      // Prose paragraphs
+      const blocks = translatedText.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+      for (const block of blocks) {
+        if (/^\*\s*\*\s*\*$/.test(block) || block === '***' || block === '* * *' || /^[-\u2013\u2014]{3,}$/.test(block)) {
+          children.push(new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { after: 480 },
-            children: [
-              new TextRun({ text: originalTitle, font: 'Georgia', size: 32, bold: true })
-            ]
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 600 },
-            children: [
-              new TextRun({ text: 'Original \u2014 English', font: 'Georgia', size: 20, italics: true, color: '888888' })
-            ]
-          }),
-          ...textToParagraphs(originalText, true)
-        ]
-      });
+            spacing: { before: 200, after: 200 },
+            children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
+          }));
+          continue;
+        }
 
-      // Section 2: Translated prose (new page)
-      sections.push({
-        properties: {
-          page: {
-            size: { width: 12240, height: 15840 },
-            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
-          }
-        },
-        children: [
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 480 },
-            children: [
-              new TextRun({ text: result.translatedTitle, font: 'Georgia', size: 32, bold: true })
-            ]
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 600 },
-            children: [
-              new TextRun({ text: `Translation \u2014 ${lc.flag} ${lc.name}`, font: 'Georgia', size: 20, italics: true, color: '888888' })
-            ]
-          }),
-          ...textToParagraphs(translatedText, true)
-        ]
-      });
+        const lines = block.split(/\n/).map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+          children.push(new Paragraph({
+            spacing: { after: 0, before: 0, line: 276 },
+            children: [new TextRun({ text: line, font: 'Times New Roman', size: 24 })]
+          }));
+        }
+      }
 
-      const docxDoc = new Document({
-        creator: 'Genesis 2',
-        title: `${originalTitle} \u2014 ${lc.name} Translation`,
-        description: `Chapter translation from English to ${lc.name}`,
+      const project = this._currentProject || {};
+      const doc = new Document({
+        title: translatedTitle,
+        creator: project.authorName || project.author || '',
         styles: {
-          default: {
-            document: { run: { font: 'Georgia', size: 24 } }
-          },
           paragraphStyles: [{
-            id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal',
-            quickFormat: true,
-            run: { size: 32, bold: true, font: 'Georgia' },
-            paragraph: { spacing: { before: 240, after: 240 } }
-          }]
+            id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+            run: { size: 32, bold: true, font: 'Times New Roman' },
+            paragraph: { spacing: { before: 240, after: 240 }, outlineLevel: 0 }
+          }],
+          default: { document: { run: { font: 'Times New Roman', size: 24 } } }
         },
-        sections: sections
+        sections: [{
+          properties: {
+            page: {
+              size: { width: 12240, height: 15840 },
+              margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+            }
+          },
+          children
+        }]
       });
 
-      // Generate and download
-      const buffer = await Packer.toBlob(docxDoc);
-      const filename = `${originalTitle.replace(/[^a-zA-Z0-9\s-]/g, '').trim()}_${lc.code}.docx`;
-
+      const buffer = await Packer.toBlob(doc);
+      const filename = translatedTitle.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_') + '_Vellum.docx';
       const url = URL.createObjectURL(buffer);
       const a = document.createElement('a');
       a.href = url;
@@ -7492,22 +7472,63 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      console.log(`DOCX exported: ${filename}`);
-
     } catch (err) {
-      console.error('DOCX export failed:', err);
-      alert('DOCX export failed: ' + err.message);
+      console.error('Translation DOCX export failed:', err);
+      alert('Export failed: ' + err.message);
     }
   }
 
   /**
-   * Export full manuscript as DOCX — original or a specific translation language.
-   * Chapters are exported in chapterNumber order.
-   * @param {string|null} languageCode - null for original, 'it'/'fr'/etc. for translation
+   * Convert HTML prose to an array of TextRun objects preserving bold/italic.
+   * For Vellum: only bold and italic matter, everything else is stripped.
+   */
+  _htmlToTextRuns(html) {
+    const { TextRun } = window.docx;
+    if (!html) return [new TextRun({ text: '', font: 'Times New Roman', size: 24 })];
+
+    const runs = [];
+    const pattern = /(<\/?(?:b|strong|i|em)>)/gi;
+    const parts = html.split(pattern).filter(Boolean);
+
+    let isBold = false;
+    let isItalic = false;
+
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+      if (lower === '<b>' || lower === '<strong>') { isBold = true; continue; }
+      if (lower === '</b>' || lower === '</strong>') { isBold = false; continue; }
+      if (lower === '<i>' || lower === '<em>') { isItalic = true; continue; }
+      if (lower === '</i>' || lower === '</em>') { isItalic = false; continue; }
+
+      // Strip any remaining HTML tags
+      const cleanText = part.replace(/<[^>]+>/g, '');
+      if (cleanText) {
+        runs.push(new TextRun({
+          text: cleanText,
+          font: 'Times New Roman',
+          size: 24,
+          bold: isBold || undefined,
+          italics: isItalic || undefined
+        }));
+      }
+    }
+
+    return runs.length > 0 ? runs : [new TextRun({ text: '', font: 'Times New Roman', size: 24 })];
+  }
+
+  /**
+   * Export manuscript as Vellum-ready DOCX.
+   * @param {string|null} languageCode - null for original, 'it'/'es'/etc. for translation
    */
   async _exportFullManuscriptDocx(languageCode = null) {
     try {
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = window.docx;
+      const docx = window.docx;
+      if (!docx) {
+        alert('DOCX library not loaded. Please refresh the page.');
+        return;
+      }
+
+      const { Document, Packer, Paragraph, TextRun, PageBreak, HeadingLevel, AlignmentType } = docx;
 
       // Fetch all chapters for this project
       const allProjectChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
@@ -7529,73 +7550,132 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         return;
       }
 
-      const textToParagraphs = (text) => {
-        return text.split(/\n\n+/).map((para, idx) => {
-          const trimmed = para.replace(/<[^>]+>/g, '').trim();
-          if (!trimmed) return null;
-          return new Paragraph({
-            spacing: { after: 200, line: 360 },
-            indent: { firstLine: idx === 0 ? 0 : 720 },
+      const project = this._currentProject || {};
+      const bookTitle = project.title || 'Untitled';
+      const authorName = project.authorName || project.author || '';
+
+      // Build all chapter content into a single section
+      const children = [];
+
+      for (let i = 0; i < chaptersToExport.length; i++) {
+        const chapter = chaptersToExport[i];
+        const chapterTitle = chapter.title || `Chapter ${i + 1}`;
+        const chapterContent = chapter.content || '';
+
+        // Page break before each chapter (except the first)
+        if (i > 0) {
+          children.push(new Paragraph({ children: [new PageBreak()] }));
+        }
+
+        // Chapter title as Heading 1 (triggers Vellum chapter detection)
+        children.push(
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            spacing: { after: 400 },
             children: [
-              new TextRun({ text: trimmed, font: 'Georgia', size: 24 })
+              new TextRun({ text: chapterTitle, bold: true, size: 32, font: 'Times New Roman' })
             ]
-          });
-        }).filter(Boolean);
-      };
+          })
+        );
 
-      // Build one section per chapter
-      const sections = chaptersToExport.map((ch, index) => {
-        const chapterContent = ch.content || '';
+        // Check if content has HTML formatting worth preserving
+        const hasFormatting = /<(b|strong|i|em)\b/i.test(chapterContent);
+
+        // Split prose into blocks
         const plainContent = chapterContent.replace(/<[^>]+>/g, '').trim();
+        const blocks = plainContent.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
 
-        return {
+        // If content has bold/italic, process with HTML-aware parser
+        // Otherwise use plain text for cleaner output
+        if (hasFormatting) {
+          // Split HTML content on double-newlines / block-level tags
+          const htmlBlocks = chapterContent.split(/(?:<\/p>\s*<p[^>]*>)|(?:\n\s*\n)/)
+            .map(b => b.trim()).filter(Boolean);
+
+          for (const block of htmlBlocks) {
+            const stripped = block.replace(/<[^>]+>/g, '').trim();
+            if (!stripped) continue;
+
+            // Scene break detection
+            if (/^\*\s*\*\s*\*$/.test(stripped) || stripped === '***' || stripped === '* * *') {
+              children.push(new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 200, after: 200 },
+                children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
+              }));
+              continue;
+            }
+
+            children.push(new Paragraph({
+              spacing: { after: 0, before: 0, line: 276 },
+              children: this._htmlToTextRuns(block)
+            }));
+          }
+        } else {
+          for (const block of blocks) {
+            // Scene break markers
+            if (/^\*\s*\*\s*\*$/.test(block) || block === '***' || block === '* * *' ||
+                /^[-\u2013\u2014]{3,}$/.test(block) || /^#\s*#\s*#$/.test(block)) {
+              children.push(new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 200, after: 200 },
+                children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
+              }));
+              continue;
+            }
+
+            const lines = block.split(/\n/).map(l => l.trim()).filter(Boolean);
+            for (const line of lines) {
+              children.push(new Paragraph({
+                spacing: { after: 0, before: 0, line: 276 },
+                children: [new TextRun({ text: line, font: 'Times New Roman', size: 24 })]
+              }));
+            }
+          }
+        }
+      }
+
+      // Build Vellum-ready document
+      const doc = new Document({
+        title: bookTitle,
+        creator: authorName,
+        description: `${bookTitle} by ${authorName}`,
+        styles: {
+          paragraphStyles: [
+            {
+              id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+              run: { size: 32, bold: true, font: 'Times New Roman' },
+              paragraph: { spacing: { before: 240, after: 240 }, outlineLevel: 0 }
+            },
+            {
+              id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+              run: { size: 28, bold: true, font: 'Times New Roman' },
+              paragraph: { spacing: { before: 180, after: 180 }, outlineLevel: 1 }
+            }
+          ],
+          default: {
+            document: { run: { font: 'Times New Roman', size: 24 } }
+          }
+        },
+        sections: [{
           properties: {
             page: {
               size: { width: 12240, height: 15840 },
               margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
             }
           },
-          children: [
-            new Paragraph({
-              heading: HeadingLevel.HEADING_1,
-              alignment: AlignmentType.CENTER,
-              spacing: { after: 600 },
-              children: [
-                new TextRun({
-                  text: ch.title || `Chapter ${ch.chapterNumber || index + 1}`,
-                  font: 'Georgia',
-                  size: 32,
-                  bold: true
-                })
-              ]
-            }),
-            ...textToParagraphs(plainContent)
-          ]
-        };
+          children: children
+        }]
       });
 
-      const projectTitle = this._currentProject?.title || 'Manuscript';
-      const langSuffix = languageCode ? `_${languageCode}` : '';
-
-      const docxDoc = new Document({
-        creator: 'Genesis 2',
-        title: `${projectTitle}${languageCode ? ` (${languageCode.toUpperCase()})` : ''}`,
-        styles: {
-          default: {
-            document: { run: { font: 'Georgia', size: 24 } }
-          },
-          paragraphStyles: [{
-            id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal',
-            quickFormat: true,
-            run: { size: 32, bold: true, font: 'Georgia' },
-            paragraph: { spacing: { before: 240, after: 240 } }
-          }]
-        },
-        sections: sections
-      });
-
-      const buffer = await Packer.toBlob(docxDoc);
-      const filename = `${projectTitle.replace(/[^a-zA-Z0-9\s-]/g, '').trim()}${langSuffix}.docx`;
+      // Generate and download
+      const buffer = await Packer.toBlob(doc);
+      let filename = bookTitle.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
+      if (languageCode) {
+        const langNames = { es: 'Spanish', fr: 'French', it: 'Italian', de: 'German', pt: 'Portuguese', ja: 'Japanese' };
+        filename += `_${langNames[languageCode] || languageCode}`;
+      }
+      filename += '_Vellum.docx';
 
       const url = URL.createObjectURL(buffer);
       const a = document.createElement('a');
@@ -7605,8 +7685,6 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-
-      console.log(`Full manuscript exported: ${filename}`);
 
     } catch (err) {
       console.error('Manuscript export failed:', err);
