@@ -457,6 +457,147 @@
       </div>
     </div>
 
+    <div class="analysis-section">
+      <h3>&#127760; Translation</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Select languages for translation. When enabled, completed prose will be translated and saved as additional manuscript versions.
+      </p>
+      <div class="translation-grid" id="bs-translation-grid">
+        <label class="translation-option">
+          <input type="checkbox" id="bs-translate-spanish" value="spanish">
+          <span>🇪🇸 Spanish</span>
+        </label>
+        <label class="translation-option">
+          <input type="checkbox" id="bs-translate-french" value="french">
+          <span>🇫🇷 French</span>
+        </label>
+        <label class="translation-option">
+          <input type="checkbox" id="bs-translate-italian" value="italian">
+          <span>🇮🇹 Italian</span>
+        </label>
+        <label class="translation-option">
+          <input type="checkbox" id="bs-translate-german" value="german">
+          <span>🇩🇪 German</span>
+        </label>
+        <label class="translation-option">
+          <input type="checkbox" id="bs-translate-portuguese" value="portuguese">
+          <span>🇧🇷 Portuguese</span>
+        </label>
+        <label class="translation-option">
+          <input type="checkbox" id="bs-translate-japanese" value="japanese">
+          <span>🇯🇵 Japanese</span>
+        </label>
+      </div>
+      <button class="btn" id="btn-perform-translation" style="width:100%;margin-top:12px;" disabled>
+        Perform Translation
+      </button>
+      <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+        Select at least one language, then click to translate the current chapter's prose. Translation uses Claude AI and preserves narrative voice.
+      </p>
+    </div>
+
+    <div class="analysis-section">
+      <h3>&#128214; Front Matter</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Select pages to include before Chapter 1. These will be AI-generated based on your book details.
+      </p>
+      <div class="matter-grid" id="bs-front-matter-grid">
+        <label class="matter-option">
+          <input type="checkbox" id="bs-fm-title-page" value="title-page" checked>
+          <div class="matter-info">
+            <span class="matter-name">Title Page</span>
+            <span class="matter-desc">Title, subtitle, and author name</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-fm-copyright" value="copyright" checked>
+          <div class="matter-info">
+            <span class="matter-name">Copyright Page</span>
+            <span class="matter-desc">Copyright notice, ISBN, publisher info</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-fm-dedication" value="dedication">
+          <div class="matter-info">
+            <span class="matter-name">Dedication</span>
+            <span class="matter-desc">Personal dedication page</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-fm-epigraph" value="epigraph">
+          <div class="matter-info">
+            <span class="matter-name">Epigraph</span>
+            <span class="matter-desc">Opening quotation or excerpt</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-fm-table-of-contents" value="table-of-contents" checked>
+          <div class="matter-info">
+            <span class="matter-name">Table of Contents</span>
+            <span class="matter-desc">Auto-generated from chapter titles</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-fm-prologue" value="prologue">
+          <div class="matter-info">
+            <span class="matter-name">Prologue</span>
+            <span class="matter-desc">Story preface or prologue chapter</span>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div class="analysis-section">
+      <h3>&#128218; Back Matter</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Select pages to include after the final chapter.
+      </p>
+      <div class="matter-grid" id="bs-back-matter-grid">
+        <label class="matter-option">
+          <input type="checkbox" id="bs-bm-epilogue" value="epilogue">
+          <div class="matter-info">
+            <span class="matter-name">Epilogue</span>
+            <span class="matter-desc">Story closing or aftermath</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-bm-acknowledgments" value="acknowledgments">
+          <div class="matter-info">
+            <span class="matter-name">Acknowledgments</span>
+            <span class="matter-desc">Thank-you page for contributors</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-bm-about-author" value="about-author" checked>
+          <div class="matter-info">
+            <span class="matter-name">About the Author</span>
+            <span class="matter-desc">Author bio and background</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-bm-also-by" value="also-by">
+          <div class="matter-info">
+            <span class="matter-name">Also By This Author</span>
+            <span class="matter-desc">List of other published works</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-bm-glossary" value="glossary">
+          <div class="matter-info">
+            <span class="matter-name">Glossary</span>
+            <span class="matter-desc">Terms and definitions</span>
+          </div>
+        </label>
+        <label class="matter-option">
+          <input type="checkbox" id="bs-bm-appendix" value="appendix">
+          <div class="matter-info">
+            <span class="matter-name">Appendix</span>
+            <span class="matter-desc">Supplementary material, maps, timelines</span>
+          </div>
+        </label>
+      </div>
+    </div>
+
     <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
 
     <div class="analysis-section">
