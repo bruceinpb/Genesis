@@ -583,14 +583,14 @@
 
     <!-- ═══ Export Section ═══ -->
     <div class="analysis-section">
-      <h3>Export Manuscript</h3>
+      <h3>&#128196; Export Manuscript</h3>
       <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
         Export chapters as a formatted DOCX file for Vellum import.
       </p>
       <button class="btn" id="btn-export-original-docx" style="width:100%;margin-bottom:8px;">
-        Export Original (English)
+        &#128196; Export Original (English)
       </button>
-      <div id="export-translation-buttons" style="display:flex;flex-wrap:wrap;gap:6px;">
+      <div id="export-translation-buttons" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
         <!-- Populated dynamically when translations exist -->
       </div>
     </div>
@@ -1639,6 +1639,33 @@
     <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--border-color);">
       <button class="btn" data-close="modal-translation">Cancel</button>
       <button class="btn btn-primary" id="btn-start-translation" disabled>Begin Translation</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Localization Review Modal ═══ -->
+<div id="localization-modal" class="localization-overlay" style="display:none;">
+  <div class="localization-container">
+    <div class="localization-header">
+      <h3 id="localization-title">Cultural Localization Review</h3>
+      <p id="localization-subtitle" class="localization-subtitle">
+        Review AI-suggested cultural adaptations before translating
+      </p>
+    </div>
+
+    <div class="localization-progress">
+      <span id="localization-lang-label">Italian</span>
+      <span id="localization-count">0 of 0 items</span>
+    </div>
+
+    <div class="localization-items" id="localization-items-list">
+      <!-- Populated dynamically -->
+    </div>
+
+    <div class="localization-footer">
+      <button class="btn btn-secondary" id="btn-loc-approve-all">Approve All Suggestions</button>
+      <button class="btn btn-secondary" id="btn-loc-skip-all">Skip Localization (Translate As-Is)</button>
+      <button class="btn btn-primary" id="btn-loc-apply">Apply Selections &amp; Translate</button>
     </div>
   </div>
 </div>
