@@ -347,10 +347,10 @@ CRITICAL SCORING RULES:
 
 AI PATTERN DENSITY CAPS (mandatory):
 After identifying all AI patterns, apply these HARD CAPS:
-- 1-2 AI patterns found: No cap. Score dimensions normally.
-- 3-4 AI patterns found: Cap "Originality & Voice" at 8/10. Cap "Technical Execution" at 8/10.
-- 5-7 AI patterns found: Cap "Originality & Voice" at 7/10. Cap "Technical Execution" at 7/10.
-- 8+ AI patterns found: Cap "Originality & Voice" at 6/10. Cap "Technical Execution" at 6/10.
+- 0-1 AI patterns found: No cap. Score dimensions normally.
+- 2-3 AI patterns found: Cap "Originality & Voice" at 8/10. Cap "Technical Execution" at 8/10.
+- 4-5 AI patterns found: Cap "Originality & Voice" at 7/10. Cap "Technical Execution" at 7/10.
+- 6+ AI patterns found: Cap "Originality & Voice" at 6/10. Cap "Technical Execution" at 6/10.
 
 AI patterns include: tricolons, personified abstractions, formulaic paragraph structures, rhetorical parallelism as crutch, explanatory narration, PET phrases, overwrought similes, dramatic kicker paragraphs.
 
@@ -468,9 +468,9 @@ For "estimatedImpact": estimate how many points the score would improve if this 
         const totalAiPatterns = Math.max(aiPatternCount, aiIssueCount);
 
         let cap = Infinity;
-        if (totalAiPatterns >= 8) cap = 6;
-        else if (totalAiPatterns >= 5) cap = 7;
-        else if (totalAiPatterns >= 3) cap = 8;
+        if (totalAiPatterns >= 6) cap = 6;
+        else if (totalAiPatterns >= 4) cap = 7;
+        else if (totalAiPatterns >= 2) cap = 8;
 
         if (cap < Infinity) {
           if (parsed.subscores.originalityVoice > cap) parsed.subscores.originalityVoice = cap;
@@ -740,8 +740,10 @@ Flag EVERY instance of:
 - TELLING EMOTIONS: naming the emotion. Fix: show through action.
 
 === MICRO-FIX RULES ===
+PRIORITY OVERRIDE: If any tricolons remain, fix a tricolon FIRST — even if another issue has higher estimated impact. Tricolons are the #1 factor in the AI pattern density cap that limits your Originality and Technical scores. Removing tricolons lifts the cap.
+
 ${isFinalPass ? 'This is the FINAL scoring pass. Score only — do NOT apply any fix. Set microFixedProse to null.' : `
-1. From all issues found, pick the SINGLE highest-impact issue
+1. From all issues found, pick the SINGLE highest-impact issue (but tricolons always take priority — see PRIORITY OVERRIDE above)
 2. Change the ABSOLUTE MINIMUM words to fix it (1-3 sentences max)
 3. Copy ALL other text VERBATIM — character for character, including punctuation
 4. Your fix must NOT introduce ANY new issues (no new AI patterns, tricolons, PET phrases, personification)
@@ -1018,7 +1020,14 @@ TRICOLONS (lists of three) — THE #1 AI TELL:
   PASS: "He could remake himself in American soil. He could feed children who would never know hunger." (two items, separate sentences)
   FAIL: "silently, completely, and with a retention that would surprise even his father"
   PASS: "silently and completely, in a way that would surprise even his father" (two items + clause)
-  RULE: Maximum ONE tricolon per 1000 words. When in doubt, use two items.
+  RULE: ZERO tricolons. Do not write any list of three items, three adjectives, three clauses, or three parallel phrases. This is the single most common AI writing pattern. If you find yourself writing X, Y, and Z — stop. Use two items, or restructure as separate sentences. This is non-negotiable.
+
+  ALSO BANNED — subtle tricolons the model often produces:
+  FAIL: "He was [adj], [adj], [adj]." (three adjectives)
+  FAIL: "[noun], [noun], and [noun]" in a sensory list (e.g., "manure, hay, and copper")
+  FAIL: "She was [X] by [Y], [X] by [Y], and [X] by [Y]" (three parallel phrases)
+  FAIL: Three consecutive short sentences about the same subject (acts as a tricolon of sentences)
+  PASS: Use two items. Always two. If you need three things, make the third its own sentence.
 
 PERSONIFIED ABSTRACTIONS — THE #2 AI TELL:
   FAIL: "where language had weight and color" (language cannot have weight)
@@ -1049,7 +1058,7 @@ EXPLANATORY NARRATOR:
 - ZERO em dashes (\u2014, \u2013, ---). Use commas, semicolons, colons, periods, or parentheses
 - ZERO PET phrases: throat tightened, chest constricted, breath caught, heart pounded, stomach churned, eyes widened, jaw clenched, fists clenched, bile rose, pulse quickened, hands trembled, voice wavered
 - ZERO filter words: felt, noticed, seemed, realized, watched, wondered
-- Maximum 1 tricolon per 1000 words
+- ZERO tricolons. Do not write any list of three items, three adjectives, three clauses, or three parallel phrases. If you find yourself writing X, Y, and Z — stop. Use two items, or restructure as separate sentences. This is non-negotiable
 - Maximum 1 standalone dramatic-kicker paragraph per 500 words
 - No "X would... Y would..." parallel constructions
 - No sentences explaining what a scene has already shown`;

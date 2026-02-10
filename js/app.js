@@ -920,7 +920,7 @@ class App {
       // === MICRO-FIX ITERATION PIPELINE (v2 — with internal validation) ===
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_MICRO_ITERATIONS = 5;
+        const MAX_MICRO_ITERATIONS = 6;
         const SCORE_NOISE_FLOOR = 2;  // Don't reject a fix for a 1-2 point score difference
         let currentText = streamedText;
         let bestScore = 0;
@@ -2270,6 +2270,29 @@ class App {
     const numCh = project.numChapters || chapters.length || 20;
     if (numChaptersEl) numChaptersEl.value = numCh;
 
+    // Populate translation checkboxes
+    const translations = project.translations || [];
+    const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
+    for (const lang of translationLangs) {
+      const cb = document.getElementById(`bs-translate-${lang}`);
+      if (cb) cb.checked = translations.includes(lang);
+    }
+    this._updateTranslateButton();
+
+    // Populate front/back matter checkboxes
+    const frontMatter = project.frontMatter || [];
+    const backMatter = project.backMatter || [];
+    const fmTypes = ['title-page', 'copyright', 'dedication', 'epigraph', 'table-of-contents', 'prologue'];
+    const bmTypes = ['epilogue', 'acknowledgments', 'about-author', 'also-by', 'glossary', 'appendix'];
+    for (const fm of fmTypes) {
+      const cb = document.getElementById(`bs-fm-${fm}`);
+      if (cb) cb.checked = frontMatter.includes(fm);
+    }
+    for (const bm of bmTypes) {
+      const cb = document.getElementById(`bs-bm-${bm}`);
+      if (cb) cb.checked = backMatter.includes(bm);
+    }
+
     this._updateWordsPerChapter();
     this._showPanel('book-structure');
   }
@@ -2293,18 +2316,69 @@ class App {
     const poetryLevel = parseInt(document.getElementById('bs-poetry-level')?.value) || 3;
     const authorPalette = document.getElementById('bs-author-palette')?.value?.trim() || '';
 
+    // Gather translation languages
+    const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
+    const translations = translationLangs.filter(lang =>
+      document.getElementById(`bs-translate-${lang}`)?.checked
+    );
+
+    // Gather front/back matter selections
+    const fmTypes = ['title-page', 'copyright', 'dedication', 'epigraph', 'table-of-contents', 'prologue'];
+    const bmTypes = ['epilogue', 'acknowledgments', 'about-author', 'also-by', 'glossary', 'appendix'];
+    const frontMatter = fmTypes.filter(fm => document.getElementById(`bs-fm-${fm}`)?.checked);
+    const backMatter = bmTypes.filter(bm => document.getElementById(`bs-bm-${bm}`)?.checked);
+
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
-        title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette
+        title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette,
+        translations, frontMatter, backMatter
       });
 
-      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette };
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, translations, frontMatter, backMatter };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       alert('Book structure saved.');
     } catch (err) {
       console.error('Failed to save book structure:', err);
       alert('Failed to save book structure.');
+    }
+  }
+
+  _updateTranslateButton() {
+    const langs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
+    const anyChecked = langs.some(lang => document.getElementById(`bs-translate-${lang}`)?.checked);
+    const btn = document.getElementById('btn-perform-translation');
+    if (btn) {
+      btn.disabled = !anyChecked;
+      const count = langs.filter(lang => document.getElementById(`bs-translate-${lang}`)?.checked).length;
+      btn.textContent = anyChecked ? `Perform Translation (${count} language${count > 1 ? 's' : ''})` : 'Perform Translation';
+    }
+  }
+
+  async _performTranslation(languages) {
+    const btn = document.getElementById('btn-perform-translation');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Translating…';
+
+    try {
+      const content = this.editor?.getContent();
+      if (!content || content.trim().length < 50) {
+        alert('No prose in the current chapter to translate. Write or generate prose first.');
+        return;
+      }
+
+      // TODO: Implement actual translation via Claude API
+      // For each language, call the API and save the translation
+      // as a parallel chapter version or as a separate export
+      alert(`Translation to ${languages.join(', ')} will be implemented. ${languages.length} language(s) queued for the current chapter.`);
+
+    } catch (err) {
+      console.error('Translation failed:', err);
+      alert('Translation failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
     }
   }
 
@@ -4205,6 +4279,14 @@ class App {
     document.getElementById('btn-error-database')?.addEventListener('click', () => this.openErrorDatabasePanel());
     document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openBookStructurePanel());
 
+    // Translation checkbox listeners — enable/disable the Perform Translation button
+    const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
+    for (const lang of translationLangs) {
+      document.getElementById(`bs-translate-${lang}`)?.addEventListener('change', () => {
+        this._updateTranslateButton();
+      });
+    }
+
     // --- Panel overlay close ---
     document.getElementById('panel-overlay')?.addEventListener('click', () => this._closeAllPanels());
     document.querySelectorAll('.panel-close').forEach(btn => {
@@ -4390,6 +4472,15 @@ class App {
       // --- Book Structure events ---
       if (e.target.id === 'btn-save-book-structure') {
         await this._saveBookStructure();
+      }
+      if (e.target.id === 'btn-perform-translation') {
+        const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
+        const selected = translationLangs.filter(lang =>
+          document.getElementById(`bs-translate-${lang}`)?.checked
+        );
+        if (selected.length > 0) {
+          await this._performTranslation(selected);
+        }
       }
       // --- New Project Help modal ---
       if (e.target.id === 'btn-help-create-project') {

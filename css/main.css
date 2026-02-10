@@ -2151,3 +2151,92 @@ select.form-input {
   color: var(--text-secondary);
   line-height: 1.6;
 }
+
+/* === Translation Grid === */
+.translation-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.translation-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.translation-option:hover {
+  border-color: var(--accent-primary);
+}
+
+.translation-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.translation-option input[type="checkbox"]:checked + span {
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+/* === Front/Back Matter Grid === */
+.matter-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.matter-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.matter-option:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-tertiary, var(--bg-secondary));
+}
+
+.matter-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.matter-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.matter-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.matter-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.matter-option input[type="checkbox"]:checked ~ .matter-info .matter-name {
+  color: var(--accent-primary);
+}
