@@ -344,6 +344,19 @@ CRITICAL SCORING RULES:
   * 78-88: Strong human-quality writing with good variety, specific details, authentic voice
   * 88-95: Excellent prose with deliberate rhythm, vivid specificity, genuine emotional resonance, distinctive voice
   * 96-100: Truly masterful, rare even in published fiction
+
+AI PATTERN DENSITY CAPS (mandatory):
+After identifying all AI patterns, apply these HARD CAPS:
+- 1-2 AI patterns found: No cap. Score dimensions normally.
+- 3-4 AI patterns found: Cap "Originality & Voice" at 8/10. Cap "Technical Execution" at 8/10.
+- 5-7 AI patterns found: Cap "Originality & Voice" at 7/10. Cap "Technical Execution" at 7/10.
+- 8+ AI patterns found: Cap "Originality & Voice" at 6/10. Cap "Technical Execution" at 6/10.
+
+AI patterns include: tricolons, personified abstractions, formulaic paragraph structures, rhetorical parallelism as crutch, explanatory narration, PET phrases, overwrought similes, dramatic kicker paragraphs.
+
+Count each INSTANCE, not each type. Two separate tricolons = 2 patterns. One tricolon + one personification = 2 patterns.
+
+This is NOT optional. These caps exist because prose with many AI patterns cannot be considered "original" or "technically excellent" regardless of how strong the other dimensions are.
 - A score of 88-95 is achievable for well-crafted prose with deliberate sentence variety, concrete sensory details, and authentic voice. Do not artificially cap scores
 - Be specific: cite exact passages as evidence for each sub-score. When a dimension is strong, give it a high score — do not look for problems where none exist
 
@@ -397,7 +410,7 @@ Output valid JSON only:
     "originalityVoice": number,
     "technicalExecution": number
   },
-  "issues": [{"text": "quoted problematic passage", "problem": "description", "severity": "high|medium|low", "category": "pet-phrase|telling|cliche|weak-words|passive|structure|pacing|other", "estimatedImpact": number}],
+  "issues": [{"text": "quoted problematic passage", "problem": "description", "severity": "high|medium|low", "category": "ai-pattern|tricolon|formulaic|parallelism|simile|pet-phrase|telling|cliche|weak-words|passive|structure|pacing|other", "estimatedImpact": number}],
   "aiPatterns": [{"pattern": "pattern name", "examples": ["example from text"], "estimatedImpact": number}],
   "summary": "2-3 sentence overall assessment"
 }
@@ -441,6 +454,30 @@ For "estimatedImpact": estimate how many points the score would improve if this 
       if (parsed.subscores) {
         const sum = Object.values(parsed.subscores).reduce((a, b) => a + (Number(b) || 0), 0);
         parsed.score = Math.round(sum);
+      }
+      // Enforce AI pattern density caps
+      if (parsed.subscores && parsed.aiPatterns) {
+        const aiPatternCount = (parsed.aiPatterns || []).reduce((sum, p) =>
+          sum + (p.examples?.length || 1), 0
+        );
+        // Also count issues categorized as AI patterns
+        const aiIssueCount = (parsed.issues || []).filter(i =>
+          ['ai-pattern', 'tricolon', 'formulaic', 'parallelism', 'simile', 'pet-phrase'].includes(i.category)
+        ).length;
+        const totalAiPatterns = Math.max(aiPatternCount, aiIssueCount);
+
+        let cap = Infinity;
+        if (totalAiPatterns >= 8) cap = 6;
+        else if (totalAiPatterns >= 5) cap = 7;
+        else if (totalAiPatterns >= 3) cap = 8;
+
+        if (cap < Infinity) {
+          if (parsed.subscores.originalityVoice > cap) parsed.subscores.originalityVoice = cap;
+          if (parsed.subscores.technicalExecution > cap) parsed.subscores.technicalExecution = cap;
+          // Recalculate total
+          const sum = Object.values(parsed.subscores).reduce((a, b) => a + (Number(b) || 0), 0);
+          parsed.score = Math.round(sum);
+        }
       }
       // Assign label based on actual score
       if (parsed.score >= 88) parsed.label = 'Exceptional';
@@ -825,6 +862,36 @@ CRITICAL RULES:
         const sum = Object.values(parsed.afterSubscores).reduce((a, b) => a + (Number(b) || 0), 0);
         parsed.afterScore = Math.round(sum);
       }
+
+      // Enforce AI pattern density caps on both before and after scores
+      const aiRelatedCategories = ['ai-pattern', 'tricolon', 'formulaic', 'parallelism', 'simile', 'pet-phrase'];
+      const aiPatternCount = (parsed.issues || []).filter(i =>
+        aiRelatedCategories.includes(i.category)
+      ).length;
+
+      let cap = Infinity;
+      if (aiPatternCount >= 8) cap = 6;
+      else if (aiPatternCount >= 5) cap = 7;
+      else if (aiPatternCount >= 3) cap = 8;
+
+      if (cap < Infinity) {
+        // Cap before scores
+        if (parsed.beforeSubscores) {
+          if (parsed.beforeSubscores.originalityVoice > cap) parsed.beforeSubscores.originalityVoice = cap;
+          if (parsed.beforeSubscores.technicalExecution > cap) parsed.beforeSubscores.technicalExecution = cap;
+          parsed.beforeScore = Math.round(Object.values(parsed.beforeSubscores).reduce((a, b) => a + (Number(b) || 0), 0));
+        }
+        // For after scores, reduce cap by number of AI patterns fixed
+        // (If 1 AI pattern was fixed, allow +1 to the cap)
+        const fixedAi = aiRelatedCategories.includes(parsed.fixCategory) ? 1 : 0;
+        const afterCap = Math.min(10, cap + fixedAi);
+        if (parsed.afterSubscores) {
+          if (parsed.afterSubscores.originalityVoice > afterCap) parsed.afterSubscores.originalityVoice = afterCap;
+          if (parsed.afterSubscores.technicalExecution > afterCap) parsed.afterSubscores.technicalExecution = afterCap;
+          parsed.afterScore = Math.round(Object.values(parsed.afterSubscores).reduce((a, b) => a + (Number(b) || 0), 0));
+        }
+      }
+
       // Use the beforeScore as the primary score for tracking
       parsed.score = parsed.beforeScore;
       parsed.subscores = parsed.beforeSubscores;
@@ -942,38 +1009,49 @@ Show emotion through character-specific action:
 - Convey interiority through behavior, not narration
 - Write ONLY the prose. No meta-commentary, no scene labels, no author notes
 
-=== AI WRITING PATTERNS — ZERO TOLERANCE ===
-These patterns instantly mark prose as AI-generated. A human editor will reject any manuscript containing them. You MUST avoid all of these:
+=== CRITICAL: AI PATTERN AVOIDANCE ===
+The prose you write will be analyzed for AI writing patterns. The following patterns will FAIL the quality gate. Study these BEFORE/AFTER examples:
 
-TRICOLONS (lists of three): The single most common AI tell. NEVER write "X, Y, and Z" constructions.
-- BANNED: "strength, courage, and wisdom"
-- BANNED: "the wind, the rain, and the cold"
-- INSTEAD: Use two items ("strength and courage"), or restructure ("she was strong, and more courageous than anyone knew")
+TRICOLONS (lists of three) — THE #1 AI TELL:
+  FAIL: "He could remake himself in American soil, could own what had owned his father, could feed children who would never know hunger"
+  PASS: "He could remake himself in American soil. He could feed children who would never know hunger." (two items, separate sentences)
+  FAIL: "silently, completely, and with a retention that would surprise even his father"
+  PASS: "silently and completely, in a way that would surprise even his father" (two items + clause)
+  RULE: Maximum ONE tricolon per 1000 words. When in doubt, use two items.
 
-OVERWROUGHT SIMILES: Similes must come from the CHARACTER'S experience, not from a writer trying to sound literary.
-- BANNED: Any "like a [unusual noun] on a [surface]" construction
-- BANNED: "opened like a mussel shell" / "spread like a surgical table"
-- INSTEAD: Use the character's own vocabulary. A farmer's simile involves crops. A mechanic's involves engines. If no simile feels natural, use plain description.
+PERSONIFIED ABSTRACTIONS — THE #2 AI TELL:
+  FAIL: "where language had weight and color" (language cannot have weight)
+  PASS: "where the children went quiet and listened" (observable behavior)
+  FAIL: "silence settled between them" (silence cannot settle)
+  PASS: "Neither of them spoke." (plain, direct)
+  FAIL: "grief singed at the edges" (grief cannot singe)
+  PASS: "The newspaper was weeks old, creased where someone had gripped it too hard" (physical detail implying emotion)
+  RULE: Non-physical things (silence, grief, language, knowledge, patience) must NEVER be given physical verbs.
 
-PERSONIFIED ABSTRACTIONS: Non-physical things must not "live," "breathe," "dance," "settle," "creep," "wash over," "hang in the air," or "echo through."
-- BANNED: "silence settled between them" / "knowledge living inside"
-- BANNED: "a wave of emotion washed over" / "tension crept into"
-- INSTEAD: "Neither of them spoke" / "She couldn't stop thinking about it"
+FORMULAIC PARAGRAPH ENDINGS:
+  FAIL: "William Ford had no time for arguments. He had eighty acres." (punchy one-liner paragraph for dramatic effect)
+  FAIL: "They named him Henry." (dramatic kicker sentence as its own paragraph)
+  PASS: Fold these into the preceding paragraph. Let the prose breathe without demanding attention.
+  RULE: No more than ONE standalone short-sentence paragraph per 500 words.
 
-HEDGING CONSTRUCTIONS: Commit to observations. Do not hedge.
-- BANNED: "seemed to" / "appeared to" / "as if" (more than once per 500 words)
-- BANNED: "something shifted" / "somehow" / "in a way that"
-- INSTEAD: State what happened. "She stepped back." Not "She seemed to step back."
+RHETORICAL PARALLELISM:
+  FAIL: "William would answer with practicality... Mary would answer with..." (parallel structure as crutch)
+  PASS: Vary the construction. Let one character's response be shown, the other implied.
+  RULE: Never use "X would... Y would..." as a structural device.
 
-ABSTRACT EMOTION LABELS: NEVER name the emotion. Show it through action.
-- BANNED: "a profound sense of loss" / "overwhelming grief" / "a mixture of joy and sadness"
-- INSTEAD: Show the character doing something that implies the emotion. "She folded his shirts one more time before putting them in the box."
+EXPLANATORY NARRATOR:
+  FAIL: "He drew them because they were what he saw when he looked at the world" (over-explains motivation)
+  PASS: "He drew them." (trust the reader to infer why from context)
+  RULE: If the scene has already SHOWN something, do not EXPLAIN it in the next sentence.
 
-FORMULAIC STRUCTURES:
-- BANNED: Opening more than 1 paragraph with "The" per 500 words
-- BANNED: "As [character] [verbed], [consequence]" — more than once per passage
-- BANNED: "[Character] [verbed], [gerund phrase]" — "She walked, thinking about..."
-- BANNED: Ending paragraphs with a one-sentence philosophical reflection`;
+=== HARD CONSTRAINTS (will cause automatic failure) ===
+- ZERO em dashes (\u2014, \u2013, ---). Use commas, semicolons, colons, periods, or parentheses
+- ZERO PET phrases: throat tightened, chest constricted, breath caught, heart pounded, stomach churned, eyes widened, jaw clenched, fists clenched, bile rose, pulse quickened, hands trembled, voice wavered
+- ZERO filter words: felt, noticed, seemed, realized, watched, wondered
+- Maximum 1 tricolon per 1000 words
+- Maximum 1 standalone dramatic-kicker paragraph per 500 words
+- No "X would... Y would..." parallel constructions
+- No sentences explaining what a scene has already shown`;
 
     // Voice / POV instruction
     if (voice && voice !== 'auto') {
