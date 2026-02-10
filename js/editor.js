@@ -96,6 +96,58 @@ class Editor {
     this.element.focus();
   }
 
+  /**
+   * Cycle heading: H1 → H2 → H3 → P (paragraph)
+   */
+  toggleHeading() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) {
+      this.insertHeading(1);
+      return;
+    }
+    const block = sel.anchorNode?.nodeType === 1
+      ? sel.anchorNode
+      : sel.anchorNode?.parentElement;
+    const tag = block?.closest?.('h1, h2, h3, p, div')?.tagName;
+
+    if (tag === 'H1') {
+      document.execCommand('formatBlock', false, '<h2>');
+    } else if (tag === 'H2') {
+      document.execCommand('formatBlock', false, '<h3>');
+    } else if (tag === 'H3') {
+      document.execCommand('formatBlock', false, '<p>');
+    } else {
+      document.execCommand('formatBlock', false, '<h1>');
+    }
+    this.element.focus();
+  }
+
+  /**
+   * Toggle inline code (monospace) formatting on selection
+   */
+  toggleCode() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+
+    const range = sel.getRangeAt(0);
+    const selectedText = range.toString();
+    if (!selectedText) return;
+
+    // Check if already wrapped in <code>
+    const parent = sel.anchorNode?.parentElement;
+    if (parent?.tagName === 'CODE') {
+      // Unwrap: replace <code> with its text content
+      const text = document.createTextNode(parent.textContent);
+      parent.parentNode.replaceChild(text, parent);
+    } else {
+      // Wrap selection in <code>
+      const code = document.createElement('code');
+      code.style.cssText = 'font-family:monospace;background:rgba(128,128,128,0.15);padding:1px 4px;border-radius:3px;';
+      range.surroundContents(code);
+    }
+    this.element.focus();
+  }
+
   insertBlockquote() {
     document.execCommand('formatBlock', false, '<blockquote>');
     this.element.focus();

@@ -2858,13 +2858,9 @@ select.form-input {
   flex: 1;
   overflow-y: auto;
   padding: 24px 32px;
-  font-family: 'Georgia', 'Times New Roman', serif;
-  font-size: 1.05rem;
-  line-height: 1.75;
-  /* FORCE black text on white — both panes identical and readable */
   color: #1a1a1a !important;
   background: #ffffff !important;
-  white-space: pre-wrap;
+  /* No white-space: pre-wrap — we now use <p> tags for formatting */
 }
 
 .translation-pane-original {
