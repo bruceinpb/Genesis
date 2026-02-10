@@ -2864,7 +2864,7 @@ select.form-input {
   /* FORCE black text on white — both panes identical and readable */
   color: #1a1a1a !important;
   background: #ffffff !important;
-  white-space: pre-wrap;
+  /* No white-space: pre-wrap — we now use <p> tags for formatting */
 }
 
 .translation-pane-original {
