@@ -62,6 +62,9 @@ class App {
     await this.generator.init();
     this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
 
+    // One-time cleanup of duplicate error patterns from old problem-based keying
+    this.errorDb.deduplicateExistingPatterns().catch(() => {});
+
     // Pre-load error patterns prompt for immediate availability
     this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 })
       .then(prompt => { this._cachedErrorPatternsPrompt = prompt; })
@@ -1100,11 +1103,43 @@ class App {
           }
 
           // External check 2: No new hard lint defects
-          const newLint = this.analyzer.lintProse(result.microFixedProse);
-          const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
-          if (newHardDefects.length > hardDefects.length) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: Fix REJECTED \u2014 introduced ${newHardDefects.length - hardDefects.length} new hard defects`);
-            continue;
+          // First, auto-fix trivially correctable hard defects (em dashes)
+          let cleanedProse = result.microFixedProse;
+          const preLint = this.analyzer.lintProse(cleanedProse);
+          const preHardDefects = preLint.defects.filter(d => d.severity === 'hard');
+
+          if (preHardDefects.length > hardDefects.length) {
+            // Check if the ONLY new defects are em dashes \u2014 these can be auto-fixed
+            const newDefects = preHardDefects.filter(d =>
+              !hardDefects.some(hd => hd.text === d.text && hd.position === d.position)
+            );
+            const allEmDash = newDefects.every(d => d.type === 'em-dash');
+
+            if (allEmDash && newDefects.length <= 3) {
+              // Auto-fix: replace em dashes with commas
+              cleanedProse = cleanedProse
+                .replace(/\s*[\u2014\u2013]\s*/g, ', ')   // em/en dash \u2192 comma
+                .replace(/\s*---\s*/g, ', ')                // triple hyphen \u2192 comma
+                .replace(/,\s*,/g, ',')                     // cleanup double commas
+                .replace(/\s+/g, ' ')                       // cleanup whitespace
+                .trim();
+
+              // Re-lint after auto-fix
+              const postLint = this.analyzer.lintProse(cleanedProse);
+              const postHardDefects = postLint.defects.filter(d => d.severity === 'hard');
+
+              if (postHardDefects.length <= hardDefects.length) {
+                this._updateIterativeLog(`Chunk ${chunkNum}: Auto-fixed ${newDefects.length} em dash(es) in replacement text`);
+                result.microFixedProse = cleanedProse;
+                // Fall through to acceptance checks below
+              } else {
+                this._updateIterativeLog(`Chunk ${chunkNum}: Fix REJECTED \u2014 introduced ${postHardDefects.length - hardDefects.length} non-em-dash hard defects`);
+                continue;
+              }
+            } else {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Fix REJECTED \u2014 introduced ${newDefects.length} new hard defect(s): ${newDefects.map(d => d.type).join(', ')}`);
+              continue;
+            }
           }
 
           // External check 3: The model's own afterScore should be higher
@@ -2959,11 +2994,43 @@ class App {
       }
 
       // External check 2: No new hard lint defects
-      const newLint = this.analyzer.lintProse(result.microFixedProse);
-      const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
-      if (newHardDefects.length > hardDefects.length) {
-        this._updateIterativeLog(`Fix REJECTED \u2014 introduced ${newHardDefects.length - hardDefects.length} new hard defects`);
-        continue;
+      // First, auto-fix trivially correctable hard defects (em dashes)
+      let cleanedProse = result.microFixedProse;
+      const preLint = this.analyzer.lintProse(cleanedProse);
+      const preHardDefects = preLint.defects.filter(d => d.severity === 'hard');
+
+      if (preHardDefects.length > hardDefects.length) {
+        // Check if the ONLY new defects are em dashes \u2014 these can be auto-fixed
+        const newDefects = preHardDefects.filter(d =>
+          !hardDefects.some(hd => hd.text === d.text && hd.position === d.position)
+        );
+        const allEmDash = newDefects.every(d => d.type === 'em-dash');
+
+        if (allEmDash && newDefects.length <= 3) {
+          // Auto-fix: replace em dashes with commas
+          cleanedProse = cleanedProse
+            .replace(/\s*[\u2014\u2013]\s*/g, ', ')   // em/en dash \u2192 comma
+            .replace(/\s*---\s*/g, ', ')                // triple hyphen \u2192 comma
+            .replace(/,\s*,/g, ',')                     // cleanup double commas
+            .replace(/\s+/g, ' ')                       // cleanup whitespace
+            .trim();
+
+          // Re-lint after auto-fix
+          const postLint = this.analyzer.lintProse(cleanedProse);
+          const postHardDefects = postLint.defects.filter(d => d.severity === 'hard');
+
+          if (postHardDefects.length <= hardDefects.length) {
+            this._updateIterativeLog(`Auto-fixed ${newDefects.length} em dash(es) in replacement text`);
+            result.microFixedProse = cleanedProse;
+            // Fall through to acceptance checks below
+          } else {
+            this._updateIterativeLog(`Fix REJECTED \u2014 introduced ${postHardDefects.length - hardDefects.length} non-em-dash hard defects`);
+            continue;
+          }
+        } else {
+          this._updateIterativeLog(`Fix REJECTED \u2014 introduced ${newDefects.length} new hard defect(s): ${newDefects.map(d => d.type).join(', ')}`);
+          continue;
+        }
       }
 
       // External check 3: The model's own afterScore should be higher
