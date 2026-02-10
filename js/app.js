@@ -4882,61 +4882,110 @@ class App {
     }
   }
 
+  /**
+   * Central chapter deletion handler. ALL delete operations must go through here.
+   * Handles: Firestore removal, editor clearing, word count reset, auto-switch.
+   * @param {string[]} chapterIds - Array of chapter IDs to delete
+   */
+  async _deleteChaptersAndCleanup(chapterIds) {
+    if (!chapterIds || chapterIds.length === 0) return;
+
+    const wasActiveDeleted = chapterIds.includes(this.state.currentChapterId);
+
+    // 1. Delete from Firestore (including any associated translations)
+    for (const id of chapterIds) {
+      try {
+        await this.fs.deleteChapter(id);
+        delete this._chapterWordCounts[id];
+
+        // Also delete any translations of this chapter
+        const langCodes = ['es', 'fr', 'it', 'de', 'pt', 'ja'];
+        for (const code of langCodes) {
+          try {
+            const translationDocId = `${id}_${code}`;
+            await this.fs.deleteChapter(translationDocId);
+          } catch (e) { /* translation chapter may not exist, ignore */ }
+        }
+      } catch (err) {
+        console.error(`Failed to delete chapter ${id}:`, err);
+      }
+    }
+
+    // 2. If the currently-displayed chapter was deleted, CLEAR THE EDITOR
+    if (wasActiveDeleted) {
+      this.state.currentChapterId = null;
+
+      // Cancel any pending auto-save
+      if (this._autoSaveTimer) {
+        clearTimeout(this._autoSaveTimer);
+        this._autoSaveTimer = null;
+      }
+      if (this._saveTimeout) {
+        clearTimeout(this._saveTimeout);
+        this._saveTimeout = null;
+      }
+
+      // Clear editor via API
+      try {
+        if (this.editor) {
+          if (this.editor.clear) this.editor.clear();
+          else if (this.editor.commands?.clearContent) this.editor.commands.clearContent();
+          else if (this.editor.commands?.setContent) this.editor.commands.setContent('');
+        }
+      } catch (e) {
+        console.warn('Editor clear via API failed:', e);
+      }
+
+      // DOM fallback — clear all possible editor elements
+      const editorSelectors = [
+        '.ProseMirror', '.editor-content', '[contenteditable="true"]',
+        '#editor', '.tiptap', '.ql-editor'
+      ];
+      for (const sel of editorSelectors) {
+        const el = document.querySelector(sel);
+        if (el && el.innerHTML) {
+          el.innerHTML = '';
+          break;
+        }
+      }
+
+      // Reset all word count displays
+      const wcEl = document.getElementById('status-words');
+      if (wcEl) wcEl.textContent = '0';
+      const fwcWords = document.getElementById('fwc-words');
+      if (fwcWords) fwcWords.textContent = '0';
+      document.querySelectorAll('.word-count, #word-count, [data-word-count]').forEach(el => {
+        if (el.textContent?.includes('Words:')) el.textContent = 'Words: 0';
+      });
+    }
+
+    // 3. Renumber remaining chapters and refresh UI
+    const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    const originalChapters = chapters.filter(ch => !ch.isTranslation);
+    const orderedIds = originalChapters.map(ch => ch.id);
+    if (orderedIds.length > 0) {
+      await this.fs.reorderChapters(this.state.currentProjectId, orderedIds);
+    }
+
+    await this._renderChapterList();
+    await this.renderChapterNav();
+    this._updateStatusBarLocal();
+
+    // 4. If the deleted chapter was displayed, auto-switch to next remaining
+    if (wasActiveDeleted) {
+      const remaining = chapters.filter(ch => !ch.isTranslation);
+      if (remaining.length > 0) {
+        await this._loadChapter(remaining[0].id);
+      } else {
+        this._showWelcome();
+      }
+    }
+  }
+
   async _deleteChapter(chapterId) {
     if (!confirm('Delete this chapter? This cannot be undone.')) return;
-
-    const wasCurrentChapter = this.state.currentChapterId === chapterId;
-
     try {
-      // If deleting the currently loaded chapter, clear the editor and reset word count
-      if (wasCurrentChapter) {
-        this.state.currentChapterId = null;
-        this.editor.clear();
-
-        // Fallback: clear DOM directly in case editor.clear() missed anything
-        const editorEl = document.querySelector('.ProseMirror')
-          || document.querySelector('[contenteditable="true"]')
-          || document.getElementById('editor');
-        if (editorEl && editorEl.innerHTML) editorEl.innerHTML = '';
-
-        // Cancel any pending auto-save
-        if (this._autoSaveTimer) {
-          clearTimeout(this._autoSaveTimer);
-          this._autoSaveTimer = null;
-        }
-
-        // Reset all word count displays
-        const wcEl = document.getElementById('status-words');
-        if (wcEl) wcEl.textContent = '0';
-        const fwcWords = document.getElementById('fwc-words');
-        if (fwcWords) fwcWords.textContent = '0';
-        document.querySelectorAll('.word-count, #word-count, [data-word-count]').forEach(el => {
-          if (el.textContent.includes('Words:')) el.textContent = 'Words: 0';
-        });
-      }
-
-      await this.fs.deleteChapter(chapterId);
-      delete this._chapterWordCounts[chapterId];
-
-      // Renumber remaining chapters
-      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
-      const orderedIds = chapters.map(ch => ch.id);
-      if (orderedIds.length > 0) {
-        await this.fs.reorderChapters(this.state.currentProjectId, orderedIds);
-      }
-
-      await this._renderChapterList();
-      await this.renderChapterNav();
-      this._updateStatusBarLocal();
-
-      // If the deleted chapter was displayed, auto-switch to next remaining chapter
-      if (wasCurrentChapter) {
-        if (chapters.length > 0) {
-          await this._loadChapter(chapters[0].id);
-        } else {
-          this._showWelcome();
-        }
-      }
+      await this._deleteChaptersAndCleanup([chapterId]);
     } catch (err) {
       console.error('Failed to delete chapter:', err);
       alert('Failed to delete chapter.');
@@ -4975,59 +5024,7 @@ class App {
 
     try {
       const idsToDelete = Array.from(checked).map(cb => cb.dataset.chapterId);
-      const deletedCurrentChapter = idsToDelete.includes(this.state.currentChapterId);
-
-      // If deleting the current chapter, clear editor immediately
-      if (deletedCurrentChapter) {
-        this.state.currentChapterId = null;
-        this.editor.clear();
-
-        // Fallback: clear DOM directly
-        const editorEl = document.querySelector('.ProseMirror')
-          || document.querySelector('[contenteditable="true"]')
-          || document.getElementById('editor');
-        if (editorEl && editorEl.innerHTML) editorEl.innerHTML = '';
-
-        // Cancel any pending auto-save
-        if (this._autoSaveTimer) {
-          clearTimeout(this._autoSaveTimer);
-          this._autoSaveTimer = null;
-        }
-
-        // Reset all word count displays
-        const wcEl = document.getElementById('status-words');
-        if (wcEl) wcEl.textContent = '0';
-        const fwcWords = document.getElementById('fwc-words');
-        if (fwcWords) fwcWords.textContent = '0';
-        document.querySelectorAll('.word-count, #word-count, [data-word-count]').forEach(el => {
-          if (el.textContent.includes('Words:')) el.textContent = 'Words: 0';
-        });
-      }
-
-      for (const chapterId of idsToDelete) {
-        await this.fs.deleteChapter(chapterId);
-        delete this._chapterWordCounts[chapterId];
-      }
-
-      // Renumber remaining chapters
-      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
-      const orderedIds = chapters.map(ch => ch.id);
-      if (orderedIds.length > 0) {
-        await this.fs.reorderChapters(this.state.currentProjectId, orderedIds);
-      }
-
-      await this._renderChapterList();
-      await this.renderChapterNav();
-      this._updateStatusBarLocal();
-
-      // If the deleted chapters included the one displayed, auto-switch to next remaining
-      if (deletedCurrentChapter) {
-        if (chapters.length > 0) {
-          await this._loadChapter(chapters[0].id);
-        } else {
-          this._showWelcome();
-        }
-      }
+      await this._deleteChaptersAndCleanup(idsToDelete);
     } catch (err) {
       console.error('Failed to delete selected chapters:', err);
       alert('Failed to delete selected chapters.');
@@ -5360,21 +5357,19 @@ class App {
       const count = this._navSelectedIds.size;
       if (!confirm(`Delete ${count} selected item${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
 
+      const chapterIds = [];
       for (const id of this._navSelectedIds) {
         if (id.startsWith('fm-') || id.startsWith('bm-')) {
           await this._removeBookMatterItem(id);
         } else {
-          try {
-            await this.fs.deleteChapter(id);
-          } catch (err) {
-            console.error('Failed to delete chapter:', err);
-          }
+          chapterIds.push(id);
         }
+      }
+      if (chapterIds.length > 0) {
+        await this._deleteChaptersAndCleanup(chapterIds);
       }
       this._navSelectedIds.clear();
       this._updateNavDeleteButton();
-      await this.renderChapterNav();
-      await this._renderChapterList();
     });
 
     // --- Toolbar: Select All ---
@@ -6620,6 +6615,233 @@ ${adaptationRules}
     }
   }
 
+  // ========================================
+  //  Localization Engine
+  // ========================================
+
+  /**
+   * Phase 1: Use Claude to analyze prose for culture-specific elements.
+   * Returns an array of localization items with suggestions.
+   */
+  async _analyzeForLocalization(proseText, targetLang, langConfig) {
+    const apiKey = this.generator?.apiKey;
+    if (!apiKey) return [];
+
+    const analysisPrompt = `You are a cultural localization expert preparing an American English novel for publication in ${langConfig.name}-speaking markets.
+
+Analyze the following prose and identify ALL elements that should be culturally adapted for a ${langConfig.name} audience. For each element, provide a suggested replacement.
+
+CATEGORIES TO CHECK:
+1. VEHICLES — American car brands/models → popular local equivalents
+2. FOOD & DRINK — American brands, dishes, restaurants → local equivalents
+3. CURRENCY — Dollar amounts → local currency with equivalent purchasing power
+4. MEASUREMENTS — Imperial → metric (feet, miles, Fahrenheit, etc.)
+5. HOLIDAYS & EVENTS — American holidays → local equivalents or explanations
+6. GEOGRAPHY — American locations, stores, landmarks → local equivalents where they serve as generic references
+7. SPORTS — American sports references → popular local sport equivalents
+8. POP CULTURE — American TV shows, music, celebrities → local or global equivalents
+9. EMERGENCY/GOVERNMENT — 911, legal terms, government agencies → local equivalents
+10. EDUCATION — School system terms (high school, college, GPA) → local system terms
+11. SOCIAL CUSTOMS — Tipping, dating customs, workplace norms → local norms
+12. IDIOMS & EXPRESSIONS — American idioms → natural ${langConfig.name} equivalents
+13. BRAND NAMES — American-specific brands → local or globally recognized alternatives
+
+IMPORTANT RULES:
+- Do NOT flag proper nouns that are character names
+- Do NOT flag things that are universal/global (internet, smartphones, etc.)
+- Do NOT flag historical references that are central to the plot
+- DO flag things where a ${langConfig.name} reader would think "that's very American"
+- Each suggestion should feel NATURAL to a ${langConfig.name} reader
+- Include a brief reasoning for each suggestion
+
+Respond ONLY with a JSON array. No other text. Each item:
+{
+  "category": "VEHICLES",
+  "original_text": "the exact phrase from the source text",
+  "context": "brief surrounding context so user knows where this appears",
+  "suggestion": "the suggested replacement in ${langConfig.name}",
+  "suggestion_english": "English translation of your suggestion for the author's reference",
+  "reasoning": "Why this change helps the ${langConfig.name} reader"
+}
+
+If there are NO items to localize, return an empty array: []`;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: this.generator.model || 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          messages: [{
+            role: 'user',
+            content: `${analysisPrompt}\n\nPROSE TO ANALYZE:\n\n${proseText}`
+          }]
+        })
+      });
+
+      if (!response.ok) throw new Error(`API error ${response.status}`);
+
+      const data = await response.json();
+      const rawText = data.content
+        ?.filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('') || '[]';
+
+      // Parse JSON — handle markdown code fences
+      const cleaned = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const items = JSON.parse(cleaned);
+      return Array.isArray(items) ? items : [];
+
+    } catch (err) {
+      console.error('Localization analysis failed:', err);
+      return []; // Graceful fallback — skip localization, proceed to translate
+    }
+  }
+
+  /**
+   * Phase 2: Show the localization review modal to the user.
+   * Returns a promise that resolves with the user's decisions.
+   */
+  _showLocalizationReview(items, langConfig) {
+    return new Promise((resolve) => {
+      const modal = document.getElementById('localization-modal');
+      if (!modal || items.length === 0) {
+        resolve({ approved: [], skipped: true });
+        return;
+      }
+
+      // Update header
+      document.getElementById('localization-title').textContent =
+        `${langConfig.flag} Cultural Localization: ${langConfig.name}`;
+      document.getElementById('localization-subtitle').textContent =
+        `Review ${items.length} AI-suggested cultural adaptation${items.length !== 1 ? 's' : ''} before translating`;
+      document.getElementById('localization-lang-label').textContent = langConfig.name;
+      document.getElementById('localization-count').textContent =
+        `${items.length} item${items.length !== 1 ? 's' : ''} found`;
+
+      // Build items list
+      const listEl = document.getElementById('localization-items-list');
+      listEl.innerHTML = '';
+
+      const decisions = items.map((item, idx) => ({
+        ...item,
+        index: idx,
+        status: 'pending', // pending | approved | rejected | custom
+        customValue: null
+      }));
+
+      for (const dec of decisions) {
+        const div = document.createElement('div');
+        div.className = 'loc-item';
+        div.id = `loc-item-${dec.index}`;
+        div.innerHTML = `
+          <div class="loc-item-category">${dec.category || ''}</div>
+          <div class="loc-item-original">
+            ...${dec.context || ''}... <strong>"${dec.original_text || ''}"</strong>
+          </div>
+          <div class="loc-item-suggestion">
+            <span class="loc-item-arrow">&rarr;</span>
+            <span class="loc-item-replacement">${dec.suggestion || ''}</span>
+          </div>
+          ${dec.suggestion_english ? `<div class="loc-item-reasoning">(${dec.suggestion_english})</div>` : ''}
+          <div class="loc-item-reasoning">${dec.reasoning || ''}</div>
+          <div class="loc-item-actions">
+            <button class="loc-btn loc-btn-approve" data-idx="${dec.index}">Approve</button>
+            <button class="loc-btn loc-btn-reject" data-idx="${dec.index}">Keep Original</button>
+            <button class="loc-btn loc-btn-custom" data-idx="${dec.index}">Custom</button>
+          </div>
+          <input type="text" class="loc-custom-input" data-idx="${dec.index}"
+                 placeholder="Type your preferred replacement...">
+        `;
+        listEl.appendChild(div);
+      }
+
+      // Wire up item buttons
+      listEl.querySelectorAll('.loc-btn-approve').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx);
+          decisions[idx].status = 'approved';
+          const item = document.getElementById(`loc-item-${idx}`);
+          item.className = 'loc-item approved';
+          item.querySelector('.loc-custom-input').classList.remove('visible');
+        });
+      });
+
+      listEl.querySelectorAll('.loc-btn-reject').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx);
+          decisions[idx].status = 'rejected';
+          const item = document.getElementById(`loc-item-${idx}`);
+          item.className = 'loc-item rejected';
+          item.querySelector('.loc-custom-input').classList.remove('visible');
+        });
+      });
+
+      listEl.querySelectorAll('.loc-btn-custom').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx);
+          decisions[idx].status = 'custom';
+          const item = document.getElementById(`loc-item-${idx}`);
+          item.className = 'loc-item approved';
+          const input = item.querySelector('.loc-custom-input');
+          input.classList.add('visible');
+          input.focus();
+          input.addEventListener('input', () => {
+            decisions[idx].customValue = input.value;
+          });
+        });
+      });
+
+      // Footer buttons — clone to remove any prior event listeners
+      const cloneBtn = (id) => {
+        const el = document.getElementById(id);
+        if (el) { const clone = el.cloneNode(true); el.replaceWith(clone); return clone; }
+        return null;
+      };
+
+      const approveAllBtn = cloneBtn('btn-loc-approve-all');
+      const skipAllBtn = cloneBtn('btn-loc-skip-all');
+      const applyBtn = cloneBtn('btn-loc-apply');
+
+      const cleanup = () => { modal.style.display = 'none'; };
+
+      approveAllBtn?.addEventListener('click', () => {
+        decisions.forEach(d => { if (d.status === 'pending') d.status = 'approved'; });
+        listEl.querySelectorAll('.loc-item').forEach(el => {
+          if (!el.classList.contains('rejected')) el.className = 'loc-item approved';
+        });
+      });
+
+      skipAllBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve({ approved: [], skipped: true });
+      });
+
+      applyBtn?.addEventListener('click', () => {
+        const approved = decisions
+          .filter(d => d.status === 'approved' || d.status === 'custom')
+          .map(d => ({
+            original: d.original_text,
+            replacement: d.status === 'custom' && d.customValue
+              ? d.customValue
+              : d.suggestion,
+            category: d.category
+          }));
+        cleanup();
+        resolve({ approved, skipped: false });
+      });
+
+      // Show modal
+      modal.style.display = 'flex';
+    });
+  }
+
   async _performTranslation(languages) {
     const btn = document.getElementById('btn-perform-translation');
     const originalBtnText = btn.textContent;
@@ -6667,10 +6889,29 @@ ${adaptationRules}
       const results = {};
       let completed = 0;
 
-      // ── 3. Translate each language ──
+      // ── 3. Translate each language (with localization analysis) ──
       for (const lang of languages) {
         completed++;
         const lc = langConfig[lang];
+
+        // ═══ PHASE 1: LOCALIZATION ANALYSIS ═══
+        btn.textContent = `Analyzing for ${lc.flag} ${lc.name} localization\u2026`;
+        const locItems = await this._analyzeForLocalization(plainText, lang, lc);
+
+        // ═══ PHASE 2: HUMAN REVIEW (if items found) ═══
+        let localizationInstructions = '';
+        if (locItems.length > 0) {
+          const review = await this._showLocalizationReview(locItems, lc);
+
+          if (!review.skipped && review.approved.length > 0) {
+            localizationInstructions = `\n\nCULTURAL LOCALIZATIONS (approved by author \u2014 apply these changes during translation):\n`;
+            for (const item of review.approved) {
+              localizationInstructions += `- Replace "${item.original}" with "${item.replacement}" [${item.category}]\n`;
+            }
+          }
+        }
+
+        // ═══ PHASE 3: TRANSLATE WITH LOCALIZATIONS ═══
         btn.textContent = `Translating ${completed}/${languages.length}: ${lc.flag} ${lc.name}\u2026`;
 
         const systemPrompt = `You are an expert literary translator specializing in ${lc.name} (${lc.native}). Your translations read as if originally written by a skilled native-speaker novelist.
@@ -6686,7 +6927,7 @@ RULES:
 - Do NOT change content, plot, character actions, or proper nouns (character names stay in English unless they have established translations)
 ${lang === 'japanese' ? '\nUse standard modern Japanese (\u6A19\u6E96\u8A9E). Appropriate keigo for character relationships. Use Japanese quotation marks \u300C\u300D.' : ''}
 ${lang === 'spanish' ? '\nUse neutral Latin American Spanish.' : ''}
-${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}`;
+${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstructions}`;
 
         try {
           // ── 3a. Translate the prose ──
@@ -6750,7 +6991,6 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}`;
               ?.filter(b => b.type === 'text')
               .map(b => b.text)
               .join('') || '';
-            // Clean up any quotes the model might add
             const cleanedTitle = rawTitle.replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, '').trim();
             if (cleanedTitle) translatedTitle = cleanedTitle;
           }
@@ -6759,7 +6999,6 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}`;
           const translatedChapterName = `${lc.flag} ${translatedTitle}`;
 
           // ── 3d. Create a new chapter in Firestore for the translation ──
-          const translatedWordCount = translatedProse.split(/\s+/).filter(w => w.length > 0).length;
           const translationChapterData = await this.fs.createChapter({
             projectId: projectId,
             chapterNumber: chapterNumber,
@@ -6778,6 +7017,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}`;
             languageCode: lc.code,
             languageName: lc.name,
             languageFlag: lc.flag,
+            localizations: localizationInstructions || null,
             translatedAt: new Date().toISOString()
           });
 
@@ -7212,9 +7452,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}`;
 
     for (const [code, info] of translatedLangs) {
       const btn = document.createElement('button');
-      btn.className = 'btn btn-sm';
-      btn.style.cssText = 'flex:1;min-width:120px;';
-      btn.textContent = `${info.flag} Export ${info.name}`;
+      btn.className = 'btn';
+      btn.style.cssText = 'width:100%;';
+      btn.textContent = `${info.flag} Export ${info.name} Translation`;
       btn.addEventListener('click', async () => {
         await this._exportFullManuscriptDocx(code);
       });
