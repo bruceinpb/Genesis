@@ -1115,16 +1115,22 @@ class App {
             continue;
           }
 
-          // All checks passed \u2014 accept the fix
+          // All checks passed \u2014 but only update text if afterScore >= bestScore
+          // Otherwise the fix is internally valid but globally regressive
           consecutiveNoFix = 0;
-          currentText = result.microFixedProse;
-          bestText = result.microFixedProse;
-          // Use the after-score as the new best (from the model's internal evaluation)
-          // But also compare with external best to handle variance
-          bestScore = Math.max(bestScore, afterScore);
-          bestReview = result;
-          previousFixes.push(result.fixApplied || 'Unknown fix');
-          this._updateIterativeLog(`Chunk ${chunkNum}: Fix ACCEPTED. Before: ${beforeScore} \u2192 After: ${afterScore}. Best: ${bestScore}/100`);
+          if (afterScore >= bestScore) {
+            currentText = result.microFixedProse;
+            bestText = result.microFixedProse;
+            bestScore = afterScore;
+            bestReview = result;
+            previousFixes.push(result.fixApplied || 'Unknown fix');
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix ACCEPTED. Before: ${beforeScore} \u2192 After: ${afterScore}. Best: ${bestScore}/100`);
+          } else {
+            // Fix improved from before but didn't reach the previous best
+            // This means scoring variance \u2014 don't change text
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix improved (${beforeScore}\u2192${afterScore}) but below best (${bestScore}). Text NOT changed to avoid regression.`);
+            // Still record as attempted so we don't retry the same fix
+          }
 
           // Check if we passed threshold
           if (afterScore >= qualityThreshold) {
@@ -2966,26 +2972,33 @@ class App {
         continue;
       }
 
-      // All checks passed \u2014 accept the fix
+      // All checks passed \u2014 but only update text if afterScore >= bestScore
+      // Otherwise the fix is internally valid but globally regressive
       consecutiveNoFix = 0;
-      workingText = result.microFixedProse;
-      this._lastGeneratedText = workingText;
-      bestScore = Math.max(bestScore, afterScore);
-      this._iterativeBestText = workingText;
-      this._iterativeBestReview = result;
-      previousFixes.push(result.fixApplied || 'Unknown fix');
+      if (afterScore >= bestScore) {
+        workingText = result.microFixedProse;
+        this._lastGeneratedText = workingText;
+        bestScore = afterScore;
+        this._iterativeBestText = workingText;
+        this._iterativeBestReview = result;
+        previousFixes.push(result.fixApplied || 'Unknown fix');
 
-      // Update editor
-      const baseContent = this._preGenerationContent || '';
-      const editorEl = this.editor.element;
-      const paragraphs = workingText.split('\n\n');
-      const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
-      editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
-      if (this.state.currentChapterId) {
-        this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
-        this._updateLocalWordCounts(this.editor.getContent());
+        // Update editor
+        const baseContent = this._preGenerationContent || '';
+        const editorEl = this.editor.element;
+        const paragraphs = workingText.split('\n\n');
+        const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+        editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
+        if (this.state.currentChapterId) {
+          this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+          this._updateLocalWordCounts(this.editor.getContent());
+        }
+        this._updateIterativeLog(`Fix ACCEPTED. Before: ${beforeScore} \u2192 After: ${afterScore}. Best: ${bestScore}/100`);
+      } else {
+        // Fix improved from before but didn't reach the previous best
+        // This means scoring variance \u2014 don't change text
+        this._updateIterativeLog(`Fix improved (${beforeScore}\u2192${afterScore}) but below best (${bestScore}). Text NOT changed to avoid regression.`);
       }
-      this._updateIterativeLog(`Fix ACCEPTED. Before: ${beforeScore} \u2192 After: ${afterScore}. Best: ${bestScore}/100`);
 
       // === THRESHOLD CHECK ===
       if (afterScore >= qualityThreshold) {
