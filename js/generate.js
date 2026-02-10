@@ -1692,7 +1692,7 @@ Output valid JSON only:
     }
   }
 
-  /**
+  /** Generate an image prompt for a book cover using Claude. */
   async generateCoverPrompt({ title, genre, proseExcerpt, characters }) {
     if (!this.apiKey) {
       throw new Error('No API key set. Go to Settings to add your Anthropic API key.');
