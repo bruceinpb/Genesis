@@ -917,7 +917,7 @@ class App {
       // === MICRO-FIX ITERATION PIPELINE (v2 — with internal validation) ===
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_MICRO_ITERATIONS = 3;
+        const MAX_MICRO_ITERATIONS = 5;
         const SCORE_NOISE_FLOOR = 2;  // Don't reject a fix for a 1-2 point score difference
         let currentText = streamedText;
         let bestScore = 0;
@@ -925,6 +925,7 @@ class App {
         let bestReview = null;
         let previousFixes = [];    // Accepted fixes (descriptions)
         let attemptedFixes = [];   // ALL attempted fixes — including rejected ones
+        let consecutiveNoFix = 0;  // Track consecutive passes with no viable fix
 
         // Reset iteration display for this chunk
         this._updateIterativeScore(null);
@@ -1052,6 +1053,13 @@ class App {
 
           // Case 1: No fix was produced (model self-rejected, or score >= threshold, or final pass)
           if (!result.microFixedProse) {
+            // Smart early exit: track consecutive passes with no viable fix
+            consecutiveNoFix++;
+            if (consecutiveNoFix >= 2 && !isFinalPass) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Two consecutive passes with no viable fix. Best: ${bestScore}/100`);
+              break;
+            }
+
             // Update best score if this scoring was higher (reduces variance drift)
             if (beforeScore > bestScore) {
               bestScore = beforeScore;
@@ -1108,6 +1116,7 @@ class App {
           }
 
           // All checks passed \u2014 accept the fix
+          consecutiveNoFix = 0;
           currentText = result.microFixedProse;
           bestText = result.microFixedProse;
           // Use the after-score as the new best (from the model's internal evaluation)
@@ -2745,7 +2754,7 @@ class App {
   /**
    * Score the current paragraph and refine it using the micro-fix pipeline.
    * Phase 2: Deterministic lint (free, instant)
-   * Phase 3: Micro-fix iterations (up to 3 passes, each fixing exactly 1 issue)
+   * Phase 3: Micro-fix iterations (up to 5 passes, each fixing exactly 1 issue)
    * Each pass targets the single highest-impact defect with internal before/after validation.
    */
   async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
@@ -2754,12 +2763,13 @@ class App {
       return;
     }
 
-    const MAX_MICRO_ITERATIONS = 3;
+    const MAX_MICRO_ITERATIONS = 5;
     const qualityThreshold = this._currentProject?.qualityThreshold || 90;
     let workingText = currentText;
     let iterationHistory = [];
     let previousFixes = [];    // Accepted fixes (descriptions)
     let attemptedFixes = [];   // ALL attempted fixes — including rejected ones
+    let consecutiveNoFix = 0;  // Track consecutive passes with no viable fix
 
     // --- Deterministic lint ---
     let lintResult = this.analyzer.lintProse(workingText);
@@ -2887,6 +2897,13 @@ class App {
 
       // Case 1: No fix was produced (model self-rejected, or score >= threshold, or final pass)
       if (!result.microFixedProse) {
+        // Smart early exit: track consecutive passes with no viable fix
+        consecutiveNoFix++;
+        if (consecutiveNoFix >= 2 && !isFinalPass) {
+          this._updateIterativeLog(`Two consecutive passes with no viable fix. Best: ${bestScore}/100`);
+          break;
+        }
+
         // Update best score if this scoring was higher (reduces variance drift)
         if (beforeScore > bestScore) {
           bestScore = beforeScore;
@@ -2950,6 +2967,7 @@ class App {
       }
 
       // All checks passed \u2014 accept the fix
+      consecutiveNoFix = 0;
       workingText = result.microFixedProse;
       this._lastGeneratedText = workingText;
       bestScore = Math.max(bestScore, afterScore);
