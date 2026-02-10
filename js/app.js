@@ -917,12 +917,15 @@ class App {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
         const MAX_CICD_ITERATIONS = 6;
         const MAX_SCORE_RETRIES = 2;
+        const MAX_CONSECUTIVE_NO_IMPROVEMENT = 3;
+        const NEAR_THRESHOLD_TOLERANCE = 2;  // Accept if within this many points of threshold
         let currentChunkText = streamedText;
         let chunkBestScore = 0;
         let chunkBestText = streamedText;
         let chunkIteration = 0;
         let chunkBestReview = null;
         let consecutiveNoImprovement = 0;
+        let scoreHistory = [];  // Track scores to detect stability
 
         // Reset iteration display for this chunk
         this._updateIterativeScore(null);
@@ -972,7 +975,8 @@ class App {
             try {
               review = await this.generator.scoreProse(currentChunkText, chunkIteration > 1 ? {
                 isRewrite: true,
-                previousIssueCount: (chunkBestReview?.issues?.length || 0) + (chunkBestReview?.aiPatterns?.length || 0)
+                previousIssueCount: (chunkBestReview?.issues?.length || 0) + (chunkBestReview?.aiPatterns?.length || 0),
+                previousSubscores: chunkBestReview?.subscores || undefined
               } : undefined);
             } catch (err) {
               this._updateIterativeLog(`Chunk ${chunkNum}: Scoring error: ${err.message}`);
@@ -1048,10 +1052,38 @@ class App {
           this._updateIterativeIteration(chunkIteration, chunkBestScore);
           this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${displayScore}/100 (${review.label || ''}) [threshold: ${qualityThreshold}] | Lint: ${hardDefects.length} hard defects`);
 
+          // Track score history for stability detection
+          scoreHistory.push(score);
+
           // Check pass condition
           if (chunkBestScore >= qualityThreshold && hardDefects.length === 0) {
             this._updateIterativeLog(`Chunk ${chunkNum}: PASSED threshold (${qualityThreshold}%) with zero hard defects.`);
             await new Promise(r => setTimeout(r, 1000));
+            break;
+          }
+
+          // Near-threshold acceptance: if score is close enough AND we've tried enough
+          if (chunkIteration >= 2 && consecutiveNoImprovement >= MAX_CONSECUTIVE_NO_IMPROVEMENT &&
+              chunkBestScore >= qualityThreshold - NEAR_THRESHOLD_TOLERANCE && hardDefects.length === 0) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Score ${chunkBestScore} is within ${NEAR_THRESHOLD_TOLERANCE} pts of threshold ${qualityThreshold} after ${consecutiveNoImprovement} consecutive non-improvements. Accepting.`);
+            await new Promise(r => setTimeout(r, 500));
+            break;
+          }
+
+          // Score stability detection: if last 3+ scores for the best text are identical, the score is stable
+          if (scoreHistory.length >= 3) {
+            const lastThree = scoreHistory.slice(-3);
+            const stableAtBest = lastThree.every(s => s === chunkBestScore);
+            if (stableAtBest && chunkBestScore >= qualityThreshold - NEAR_THRESHOLD_TOLERANCE && hardDefects.length === 0) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Score stable at ${chunkBestScore}/100 across ${lastThree.length} iterations. Accepting.`);
+              await new Promise(r => setTimeout(r, 500));
+              break;
+            }
+          }
+
+          // Consecutive no-improvement breaker
+          if (consecutiveNoImprovement >= MAX_CONSECUTIVE_NO_IMPROVEMENT) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: No improvement after ${consecutiveNoImprovement} consecutive iterations. Best: ${chunkBestScore}/100`);
             break;
           }
 
@@ -1107,9 +1139,26 @@ class App {
             });
             this._updateIterativeLog(`Chunk ${chunkNum}: Pre-validation predicts ${cicdValidation.predictedScore} (${cicdValidation.confidence})`);
 
-            if (cicdValidation.predictedScore <= (chunkBestScore || score)) {
+            const currentBest = chunkBestScore || score;
+            const scoreGap = qualityThreshold - currentBest;
+
+            if (cicdValidation.predictedScore <= currentBest) {
               this._updateIterativeLog(`Chunk ${chunkNum}: Fixes predicted to not improve score. Skipping this iteration.`);
               skipFixes = true;
+            }
+            // For small gaps (<=3 pts), require high confidence — medium confidence predictions
+            // are systematically optimistic for marginal improvements
+            else if (scoreGap <= 3 && cicdValidation.confidence !== 'high') {
+              this._updateIterativeLog(`Chunk ${chunkNum}: Gap is only ${scoreGap} pts but confidence is ${cicdValidation.confidence} (need high). Skipping to avoid regression.`);
+              skipFixes = true;
+              consecutiveNoImprovement++;
+            }
+            // For any gap, if we've already had consecutive failures, require predicted score
+            // to meaningfully exceed current (not just +1 which is within noise margin)
+            else if (consecutiveNoImprovement >= 2 && cicdValidation.predictedScore <= currentBest + 1) {
+              this._updateIterativeLog(`Chunk ${chunkNum}: After ${consecutiveNoImprovement} failures, predicted improvement of only ${cicdValidation.predictedScore - currentBest} pts is insufficient. Skipping.`);
+              skipFixes = true;
+              consecutiveNoImprovement++;
             }
           } catch (err) {
             this._updateIterativeLog(`Chunk ${chunkNum}: Pre-validation failed: ${err.message}. Proceeding.`);
@@ -2833,7 +2882,8 @@ class App {
         try {
           review = await this.generator.scoreProse(workingText, iter > 1 ? {
             isRewrite: true,
-            previousIssueCount: this._iterPrevIssueCount || 0
+            previousIssueCount: this._iterPrevIssueCount || 0,
+            previousSubscores: this._iterPrevSubscores || undefined
           } : undefined);
         } catch (err) {
           this._updateIterativeLog(`Scoring error: ${err.message}`);
@@ -2962,6 +3012,24 @@ class App {
         return;
       }
 
+      // === NEAR-THRESHOLD ACCEPTANCE: Accept if score is close enough and stuck ===
+      const NEAR_THRESHOLD_TOLERANCE = 2;
+      if (iter >= 2 && consecutiveNoImprovement >= 2 &&
+          bestScore >= qualityThreshold - NEAR_THRESHOLD_TOLERANCE) {
+        this._updateIterativeLog(`Score ${bestScore} is within ${NEAR_THRESHOLD_TOLERANCE} pts of threshold ${qualityThreshold} after ${consecutiveNoImprovement} non-improvements. Accepting as close enough.`);
+        await new Promise(r => setTimeout(r, 800));
+        this._showIterativeOverlay(false);
+        this._showFinalFixScreen(
+          this._iterativeBestText || workingText,
+          bestScore,
+          this._iterativeBestReview,
+          iterationHistory,
+          qualityThreshold,
+          true // treat as threshold met for near-threshold acceptance
+        );
+        return;
+      }
+
       // === STAGNATION CHECK: Stop if no improvement after several attempts ===
       if (consecutiveNoImprovement >= MAX_CONSECUTIVE_NO_IMPROVEMENT) {
         this._updateIterativeLog(`No improvement after ${consecutiveNoImprovement} consecutive iterations. Moving to final review.`);
@@ -3032,6 +3100,25 @@ class App {
       if (this._iterativeCancelled) {
         this._showIterativeOverlay(false);
         return;
+      }
+
+      // For small gaps, require high confidence to avoid systematic over-optimism
+      const iterScoreGap = qualityThreshold - (bestScore || score);
+      let skipDueToLowConfidence = false;
+      if (validation && iterScoreGap <= 3 && validation.confidence !== 'high' && validation.predictedScore > (bestScore || score)) {
+        this._updateIterativeLog(`Gap is only ${iterScoreGap} pts but confidence is ${validation.confidence} (need high for small gaps). Skipping to avoid likely regression.`);
+        skipDueToLowConfidence = true;
+        consecutiveNoImprovement++;
+        previousFixLists.push(fixList);
+        continue;
+      }
+
+      // After repeated failures, require meaningful predicted improvement
+      if (validation && consecutiveNoImprovement >= 2 && validation.predictedScore <= (bestScore || score) + 1) {
+        this._updateIterativeLog(`After ${consecutiveNoImprovement} failures, predicted improvement of only ${validation.predictedScore - (bestScore || score)} pts is insufficient. Skipping.`);
+        consecutiveNoImprovement++;
+        previousFixLists.push(fixList);
+        continue;
       }
 
       // If pre-validation predicts no improvement, refine the fix strategy
