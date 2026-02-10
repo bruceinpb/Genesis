@@ -32,6 +32,7 @@ class App {
       currentUser: null,
       currentProjectId: null,
       currentChapterId: null,
+      currentMatterId: null,
       sidebarTab: 'chapters',
       focusMode: false,
       sidebarOpen: true,
@@ -40,6 +41,11 @@ class App {
       wordsToday: 0,
       sessionStart: Date.now()
     };
+
+    // Chapter Navigator state
+    this._navSelectedIds = new Set();
+    this._navDragItem = null;
+    this._navResizing = false;
 
     // Cached project data to avoid extra Firestore reads
     this._currentProject = null;
@@ -87,6 +93,9 @@ class App {
 
     // Bind UI events
     this._bindEvents();
+
+    // Initialize Chapter Navigator
+    this._initChapterNav();
 
     // Check for saved user
     this.state.currentUser = window.localStorage.getItem('genesis2_userName') || null;
@@ -353,8 +362,9 @@ class App {
       // Update toolbar title
       document.getElementById('project-title').textContent = project.title;
 
-      // Render chapter list
+      // Render chapter list and navigator
       await this._renderChapterList();
+      await this.renderChapterNav();
 
       // Load first chapter
       const chapters = await this.fs.getProjectChapters(projectId);
@@ -403,6 +413,7 @@ class App {
       this._hideWelcome();
 
       this.state.currentChapterId = chapterId;
+      this.state.currentMatterId = null; // Clear matter page when loading a chapter
       this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
@@ -432,6 +443,11 @@ class App {
   }
 
   async _saveCurrentChapter() {
+    // Save matter page if one is active
+    if (this.state.currentMatterId) {
+      await this._saveMatterPage();
+      return;
+    }
     if (!this.state.currentChapterId) return;
     const content = this.editor.getContent();
     try {
@@ -446,6 +462,12 @@ class App {
   // ========================================
 
   async _onEditorChange(content) {
+    // Save matter page if one is active
+    if (this.state.currentMatterId) {
+      await this._saveMatterPage();
+      return;
+    }
+
     if (!this.state.currentChapterId) return;
 
     // Save to Firestore
@@ -1008,6 +1030,16 @@ class App {
             bestScore = beforeScore;
           }
 
+          // Skip fix if scoring variance has pushed us too far below best
+          // (the fix can only gain ~2 points, so if we're 4+ below, it's hopeless)
+          if (iteration > 1 && beforeScore < bestScore - 3) {
+            this._updateIterativeLog(
+              `Chunk ${chunkNum}: Before-score ${beforeScore} is ${bestScore - beforeScore} below best (${bestScore}). ` +
+              `Skipping fix (variance too large to recover). Keeping best text.`
+            );
+            break; // Exit loop — further passes will also suffer variance
+          }
+
           this._updateIterativeScore(beforeScore, true);
           this._recordIterationScore(iteration, beforeScore);
           this._updateIterativeIteration(iteration, bestScore);
@@ -1264,8 +1296,17 @@ class App {
       this._showIterativeScoringNotice(true);
 
       try {
-        const finalReview = await this.generator.scoreProse(allStreamedText);
-        this._showIterativeScoringNotice(false);
+        // Use iteration's best scores if weighted average already >= threshold
+        // This avoids scoring variance between scoreAndMicroFix and scoreProse
+        let finalReview;
+        if (weightedAvg >= finalThreshold && chunkScores.length > 0) {
+          finalReview = { score: weightedAvg, label: 'Strong - Distinctive Human Voice', issues: [], aiPatterns: [], subscores: {}, summary: 'Passed threshold during iteration scoring.' };
+          this._updateIterativeLog(`Chunk iteration average (${weightedAvg}) already meets threshold (${finalThreshold}). Skipping full-text rescore to avoid variance.`);
+          this._showIterativeScoringNotice(false);
+        } else {
+          finalReview = await this.generator.scoreProse(allStreamedText);
+          this._showIterativeScoringNotice(false);
+        }
 
         if (finalReview && finalReview.score > 0) {
           let finalScore = finalReview.score;
@@ -1279,14 +1320,23 @@ class App {
             finalReview.score = adjustedScore;
           }
 
-          this._updateIterativeScore(finalScore);
-          this._updateIterativeLog(`Final score: ${finalScore}/100 (threshold: ${finalThreshold})`);
-
-          if (finalScore >= finalThreshold) {
-            this._updateIterativeLog(`Full text passed threshold! Score: ${finalScore}/${finalThreshold}`);
-          } else {
-            this._updateIterativeLog(`Full text below threshold: ${finalScore}/${finalThreshold}. Review and fix options will be shown.`);
+          // Display the higher of chunk average vs final score to avoid variance confusion
+          const displayScore = Math.max(weightedAvg || 0, finalScore);
+          if (displayScore > finalScore) {
+            this._updateIterativeLog(`Using chunk average (${weightedAvg}) for display (higher than final score ${finalScore}).`);
           }
+
+          this._updateIterativeScore(displayScore);
+          this._updateIterativeLog(`Final score: ${displayScore}/100 (threshold: ${finalThreshold})`);
+
+          if (displayScore >= finalThreshold) {
+            this._updateIterativeLog(`Full text passed threshold! Score: ${displayScore}/${finalThreshold}`);
+          } else {
+            this._updateIterativeLog(`Full text below threshold: ${displayScore}/${finalThreshold}. Review and fix options will be shown.`);
+          }
+
+          // Update finalReview.score to display score for the review modal
+          finalReview.score = displayScore;
 
           // Brief pause for user to see the final score
           await new Promise(r => setTimeout(r, 1500));
@@ -2337,6 +2387,7 @@ class App {
       this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, translations, frontMatter, backMatter };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
+      await this.renderChapterNav();
       alert('Book structure saved.');
     } catch (err) {
       console.error('Failed to save book structure:', err);
@@ -2459,6 +2510,7 @@ class App {
 
       // Refresh chapter list and load first chapter
       await this._renderChapterList();
+      await this.renderChapterNav();
       const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
       if (chapters.length > 0) {
         await this._loadChapter(chapters[0].id);
@@ -4231,6 +4283,7 @@ class App {
               });
               this._chapterWordCounts[ch.id] = 0;
               await this._renderChapterList();
+              await this.renderChapterNav();
               await this._loadChapter(ch.id);
             } catch (err) {
               console.error('Failed to create chapter:', err);
@@ -4830,6 +4883,7 @@ class App {
       }
 
       await this._renderChapterList();
+      await this.renderChapterNav();
       this._updateStatusBarLocal();
     } catch (err) {
       console.error('Failed to delete chapter:', err);
@@ -4893,6 +4947,7 @@ class App {
       }
 
       await this._renderChapterList();
+      await this.renderChapterNav();
       this._updateStatusBarLocal();
     } catch (err) {
       console.error('Failed to delete selected chapters:', err);
@@ -5126,6 +5181,549 @@ class App {
     text = text.replace(/,\s*!/g, '!');
     text = text.replace(/,\s*\?/g, '?');
     return text;
+  }
+
+  // ======================================================
+  // CHAPTER NAVIGATOR
+  // ======================================================
+
+  _initChapterNav() {
+    // --- Resize Handle ---
+    const resizeHandle = document.getElementById('chapter-nav-resize');
+    if (resizeHandle) {
+      let startX, startWidth;
+
+      const onMouseMove = (e) => {
+        if (!this._navResizing) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const diff = clientX - startX;
+        const newWidth = Math.max(
+          parseInt(getComputedStyle(document.documentElement).getPropertyValue('--chapter-nav-min-width')) || 160,
+          Math.min(
+            parseInt(getComputedStyle(document.documentElement).getPropertyValue('--chapter-nav-max-width')) || 400,
+            startWidth + diff
+          )
+        );
+        document.documentElement.style.setProperty('--chapter-nav-width', newWidth + 'px');
+      };
+
+      const onMouseUp = () => {
+        this._navResizing = false;
+        resizeHandle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('touchmove', onMouseMove);
+        document.removeEventListener('touchend', onMouseUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+
+      resizeHandle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this._navResizing = true;
+        startX = e.clientX;
+        startWidth = document.getElementById('chapter-nav')?.offsetWidth || 220;
+        resizeHandle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+
+      resizeHandle.addEventListener('touchstart', (e) => {
+        this._navResizing = true;
+        startX = e.touches[0].clientX;
+        startWidth = document.getElementById('chapter-nav')?.offsetWidth || 220;
+        resizeHandle.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        document.addEventListener('touchmove', onMouseMove, { passive: false });
+        document.addEventListener('touchend', onMouseUp);
+      }, { passive: true });
+    }
+
+    // --- Section Collapse ---
+    document.getElementById('chapter-nav-body')?.addEventListener('click', (e) => {
+      const header = e.target.closest('.nav-section-header');
+      if (header) {
+        const section = header.closest('.nav-section');
+        if (section) section.classList.toggle('collapsed');
+        return;
+      }
+    });
+
+    // --- Collapse Navigator ---
+    document.getElementById('btn-nav-collapse')?.addEventListener('click', () => {
+      document.getElementById('app')?.classList.toggle('chapnav-collapsed');
+    });
+
+    // --- Select All ---
+    document.getElementById('btn-nav-select-all')?.addEventListener('click', () => {
+      const allItems = document.querySelectorAll('.nav-item-checkbox');
+      const allChecked = [...allItems].every(cb => cb.checked);
+      allItems.forEach(cb => {
+        cb.checked = !allChecked;
+        const item = cb.closest('.nav-item');
+        if (item) {
+          const id = item.dataset.navId;
+          if (!allChecked) this._navSelectedIds.add(id);
+          else this._navSelectedIds.delete(id);
+          item.classList.toggle('selected', !allChecked);
+        }
+      });
+      this._updateNavDeleteButton();
+      const btn = document.getElementById('btn-nav-select-all');
+      if (btn) btn.textContent = allChecked ? '\u2610' : '\u2611';
+    });
+
+    // --- Delete Selected ---
+    document.getElementById('btn-nav-delete-selected')?.addEventListener('click', async () => {
+      if (this._navSelectedIds.size === 0) return;
+      const count = this._navSelectedIds.size;
+      if (!confirm(`Delete ${count} selected item${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+      for (const id of this._navSelectedIds) {
+        if (id.startsWith('fm-') || id.startsWith('bm-')) {
+          await this._removeBookMatterItem(id);
+        } else {
+          try {
+            await this.fs.deleteChapter(id);
+          } catch (err) {
+            console.error('Failed to delete chapter:', err);
+          }
+        }
+      }
+      this._navSelectedIds.clear();
+      this._updateNavDeleteButton();
+      await this.renderChapterNav();
+      await this._renderChapterList();
+    });
+
+    // --- Add Chapter ---
+    document.getElementById('btn-nav-add-chapter')?.addEventListener('click', async () => {
+      if (!this.state.currentProjectId) return;
+      try {
+        const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+        const nextNum = chapters.length + 1;
+        const ch = await this.fs.createChapter({
+          projectId: this.state.currentProjectId,
+          chapterNumber: nextNum,
+          title: `Chapter ${nextNum}`,
+          content: '',
+          outline: ''
+        });
+        this._chapterWordCounts[ch.id] = 0;
+        await this._renderChapterList();
+        await this.renderChapterNav();
+        await this._loadChapter(ch.id);
+      } catch (err) {
+        console.error('Failed to add chapter:', err);
+      }
+    });
+
+    // --- Click/double-click handlers on items (delegated) ---
+    const navBody = document.getElementById('chapter-nav-body');
+    if (navBody) {
+      // Single click
+      navBody.addEventListener('click', async (e) => {
+        // Checkbox click
+        const checkbox = e.target.closest('.nav-item-checkbox');
+        if (checkbox) {
+          const item = checkbox.closest('.nav-item');
+          const id = item?.dataset.navId;
+          if (id) {
+            if (checkbox.checked) this._navSelectedIds.add(id);
+            else this._navSelectedIds.delete(id);
+            item?.classList.toggle('selected', checkbox.checked);
+          }
+          this._updateNavDeleteButton();
+          return;
+        }
+
+        // Item click (not on checkbox or drag handle)
+        const item = e.target.closest('.nav-item');
+        if (item && !e.target.closest('.drag-handle') && !e.target.closest('.nav-item-name-input')) {
+          const id = item.dataset.navId;
+          const type = item.dataset.navType;
+
+          if (type === 'chapter') {
+            await this._loadChapter(id);
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
+            document.querySelectorAll('.tree-item.chapter').forEach(el => el.classList.remove('active'));
+            const oldItem = document.querySelector(`.tree-item.chapter[data-id="${id}"]`);
+            if (oldItem) oldItem.classList.add('active');
+          } else if (type === 'front-matter' || type === 'back-matter') {
+            await this._loadMatterPage(id, type);
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
+          }
+        }
+      });
+
+      // Double-click — rename
+      navBody.addEventListener('dblclick', (e) => {
+        const nameSpan = e.target.closest('.nav-item-name');
+        if (!nameSpan) return;
+        const item = nameSpan.closest('.nav-item');
+        if (!item) return;
+
+        const currentName = nameSpan.textContent;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'nav-item-name-input';
+        input.value = currentName;
+
+        nameSpan.replaceWith(input);
+        input.focus();
+        input.select();
+
+        const commit = async () => {
+          const newName = input.value.trim() || currentName;
+          const span = document.createElement('span');
+          span.className = 'nav-item-name';
+          span.textContent = newName;
+          input.replaceWith(span);
+
+          if (newName !== currentName) {
+            const id = item.dataset.navId;
+            const type = item.dataset.navType;
+            if (type === 'chapter') {
+              await this.fs.updateChapter(id, { title: newName });
+              await this._renderChapterList();
+            } else {
+              await this._renameMatterPage(id, newName);
+            }
+          }
+        };
+
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+          if (ev.key === 'Escape') { input.value = currentName; input.blur(); }
+        });
+      });
+
+      // --- Drag and Drop for Reordering ---
+      navBody.addEventListener('dragstart', (e) => {
+        const item = e.target.closest('.nav-item[draggable="true"]');
+        if (!item) return;
+        this._navDragItem = item;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.dataset.navId);
+      });
+
+      navBody.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const item = e.target.closest('.nav-item[draggable="true"]');
+        if (!item || item === this._navDragItem) return;
+        navBody.querySelectorAll('.drag-over, .drag-over-bottom').forEach(el => {
+          el.classList.remove('drag-over', 'drag-over-bottom');
+        });
+        const rect = item.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        if (clientY < midY) {
+          item.classList.add('drag-over');
+        } else {
+          item.classList.add('drag-over-bottom');
+        }
+      });
+
+      navBody.addEventListener('dragleave', (e) => {
+        const item = e.target.closest('.nav-item');
+        if (item) {
+          item.classList.remove('drag-over', 'drag-over-bottom');
+        }
+      });
+
+      navBody.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        navBody.querySelectorAll('.drag-over, .drag-over-bottom').forEach(el => {
+          el.classList.remove('drag-over', 'drag-over-bottom');
+        });
+
+        if (!this._navDragItem) return;
+        const dragId = this._navDragItem.dataset.navId;
+        const dragType = this._navDragItem.dataset.navType;
+
+        const dropTarget = e.target.closest('.nav-item[draggable="true"]');
+        if (!dropTarget || dropTarget === this._navDragItem) {
+          this._navDragItem.classList.remove('dragging');
+          this._navDragItem = null;
+          return;
+        }
+
+        if (dropTarget.dataset.navType !== dragType) {
+          this._navDragItem.classList.remove('dragging');
+          this._navDragItem = null;
+          return;
+        }
+
+        const rect = dropTarget.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const clientY = e.clientY;
+        const insertBefore = clientY < midY;
+
+        const sectionItems = [...dropTarget.parentElement.querySelectorAll(`.nav-item[data-nav-type="${dragType}"]`)];
+        const dragIndex = sectionItems.findIndex(el => el.dataset.navId === dragId);
+        let dropIndex = sectionItems.findIndex(el => el.dataset.navId === dropTarget.dataset.navId);
+        if (!insertBefore) dropIndex++;
+        if (dragIndex < dropIndex) dropIndex--;
+
+        if (dragType === 'chapter') {
+          await this._reorderChapters(dragId, dropIndex);
+        }
+
+        this._navDragItem.classList.remove('dragging');
+        this._navDragItem = null;
+        await this.renderChapterNav();
+        await this._renderChapterList();
+      });
+
+      navBody.addEventListener('dragend', () => {
+        if (this._navDragItem) {
+          this._navDragItem.classList.remove('dragging');
+          this._navDragItem = null;
+        }
+        navBody.querySelectorAll('.drag-over, .drag-over-bottom').forEach(el => {
+          el.classList.remove('drag-over', 'drag-over-bottom');
+        });
+      });
+    }
+  }
+
+  _updateNavDeleteButton() {
+    const btn = document.getElementById('btn-nav-delete-selected');
+    if (btn) {
+      btn.disabled = this._navSelectedIds.size === 0;
+      btn.title = this._navSelectedIds.size > 0
+        ? `Delete ${this._navSelectedIds.size} selected`
+        : 'Delete Selected';
+    }
+  }
+
+  /**
+   * Render the full Chapter Navigator from project data.
+   * Call this whenever chapters change, front/back matter changes, or project loads.
+   */
+  async renderChapterNav() {
+    const project = this._currentProject;
+    if (!project) return;
+
+    const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    const frontMatter = project.frontMatter || [];
+    const backMatter = project.backMatter || [];
+    const matterNames = project.matterPageNames || {};
+
+    // --- Front Matter Items ---
+    const frontContainer = document.getElementById('nav-front-items');
+    const frontCount = document.getElementById('nav-front-count');
+    if (frontContainer) {
+      const matterLabels = {
+        'title-page': { icon: '\uD83D\uDCD6', name: 'Title Page' },
+        'copyright': { icon: '\u00A9', name: 'Copyright Page' },
+        'dedication': { icon: '\uD83D\uDC9D', name: 'Dedication' },
+        'epigraph': { icon: '\u2726', name: 'Epigraph' },
+        'table-of-contents': { icon: '\uD83D\uDCCB', name: 'Table of Contents' },
+        'prologue': { icon: '\u25B6', name: 'Prologue' }
+      };
+
+      let html = '';
+      for (const fm of frontMatter) {
+        const info = matterLabels[fm] || { icon: '\uD83D\uDCC4', name: fm };
+        const customName = matterNames[`fm-${fm}`] || info.name;
+        const id = `fm-${fm}`;
+        const isActive = this.state.currentMatterId === id;
+        const hasContent = !!(project.matterContent?.[id]);
+        html += `
+          <div class="nav-item matter-item ${isActive ? 'active' : ''} ${!hasContent ? 'empty' : ''}"
+               data-nav-id="${id}" data-nav-type="front-matter" draggable="true">
+            <input type="checkbox" class="nav-item-checkbox" ${this._navSelectedIds.has(id) ? 'checked' : ''}>
+            <span class="drag-handle">\u2807</span>
+            <span class="nav-item-icon">${info.icon}</span>
+            <span class="nav-item-name">${this._esc(customName)}</span>
+            ${hasContent ? '<span class="nav-item-status done">\u2713</span>' : ''}
+          </div>`;
+      }
+      frontContainer.innerHTML = html;
+      if (frontCount) frontCount.textContent = frontMatter.length;
+    }
+
+    // --- Chapter Items ---
+    const chapContainer = document.getElementById('nav-chapter-items');
+    const chapCount = document.getElementById('nav-chapters-count');
+    if (chapContainer) {
+      let html = '';
+      for (let i = 0; i < chapters.length; i++) {
+        const ch = chapters[i];
+        const isActive = ch.id === this.state.currentChapterId;
+        const statusClass = ch.status === 'complete' ? 'done' : '';
+        const statusLabel = ch.status === 'complete' ? 'Done' : ch.status === 'revision' ? 'Rev' : '';
+        const hasOutline = ch.outline ? '\u270E ' : '';
+        html += `
+          <div class="nav-item ${isActive ? 'active' : ''}"
+               data-nav-id="${ch.id}" data-nav-type="chapter" draggable="true">
+            <input type="checkbox" class="nav-item-checkbox" ${this._navSelectedIds.has(ch.id) ? 'checked' : ''}>
+            <span class="drag-handle">\u2807</span>
+            <span class="nav-item-name">${hasOutline}${this._esc(ch.title)}</span>
+            <span class="nav-item-meta">${(ch.wordCount || 0).toLocaleString()}</span>
+            ${statusLabel ? `<span class="nav-item-status ${statusClass}">${statusLabel}</span>` : ''}
+          </div>`;
+      }
+      chapContainer.innerHTML = html;
+      if (chapCount) chapCount.textContent = chapters.length;
+    }
+
+    // --- Back Matter Items ---
+    const backContainer = document.getElementById('nav-back-items');
+    const backCount = document.getElementById('nav-back-count');
+    if (backContainer) {
+      const matterLabels = {
+        'epilogue': { icon: '\u25C0', name: 'Epilogue' },
+        'acknowledgments': { icon: '\uD83D\uDE4F', name: 'Acknowledgments' },
+        'about-author': { icon: '\uD83D\uDC64', name: 'About the Author' },
+        'also-by': { icon: '\uD83D\uDCDA', name: 'Also By This Author' },
+        'glossary': { icon: '\uD83D\uDCDD', name: 'Glossary' },
+        'appendix': { icon: '\uD83D\uDCCE', name: 'Appendix' }
+      };
+
+      let html = '';
+      for (const bm of backMatter) {
+        const info = matterLabels[bm] || { icon: '\uD83D\uDCC4', name: bm };
+        const customName = matterNames[`bm-${bm}`] || info.name;
+        const id = `bm-${bm}`;
+        const isActive = this.state.currentMatterId === id;
+        const hasContent = !!(project.matterContent?.[id]);
+        html += `
+          <div class="nav-item matter-item ${isActive ? 'active' : ''} ${!hasContent ? 'empty' : ''}"
+               data-nav-id="${id}" data-nav-type="back-matter" draggable="true">
+            <input type="checkbox" class="nav-item-checkbox" ${this._navSelectedIds.has(id) ? 'checked' : ''}>
+            <span class="drag-handle">\u2807</span>
+            <span class="nav-item-icon">${info.icon}</span>
+            <span class="nav-item-name">${this._esc(customName)}</span>
+            ${hasContent ? '<span class="nav-item-status done">\u2713</span>' : ''}
+          </div>`;
+      }
+      backContainer.innerHTML = html;
+      if (backCount) backCount.textContent = backMatter.length;
+    }
+
+    // Hide sections with no items
+    const frontSection = document.getElementById('nav-section-front');
+    const backSection = document.getElementById('nav-section-back');
+    if (frontSection) frontSection.style.display = frontMatter.length ? '' : 'none';
+    if (backSection) backSection.style.display = backMatter.length ? '' : 'none';
+  }
+
+  /**
+   * Load a front/back matter page into the editor
+   */
+  async _loadMatterPage(matterId, type) {
+    const project = this._currentProject;
+    if (!project) return;
+
+    // Store current chapter first
+    if (this.state.currentChapterId) {
+      await this._saveCurrentChapter();
+    }
+
+    // Set state
+    this.state.currentChapterId = null;
+    this.state.currentMatterId = matterId;
+
+    // Load content
+    const matterContent = project.matterContent || {};
+    const content = matterContent[matterId] || '';
+
+    if (this.editor) {
+      this.editor.setContent(content);
+    }
+
+    // Update toolbar title
+    const matterLabels = {
+      'fm-title-page': 'Title Page',
+      'fm-copyright': 'Copyright Page',
+      'fm-dedication': 'Dedication',
+      'fm-epigraph': 'Epigraph',
+      'fm-table-of-contents': 'Table of Contents',
+      'fm-prologue': 'Prologue',
+      'bm-epilogue': 'Epilogue',
+      'bm-acknowledgments': 'Acknowledgments',
+      'bm-about-author': 'About the Author',
+      'bm-also-by': 'Also By This Author',
+      'bm-glossary': 'Glossary',
+      'bm-appendix': 'Appendix'
+    };
+
+    const customNames = project.matterPageNames || {};
+    const label = customNames[matterId] || matterLabels[matterId] || matterId;
+    const sceneTitle = document.getElementById('scene-title');
+    if (sceneTitle) sceneTitle.textContent = label;
+  }
+
+  /**
+   * Save matter page content from editor back to project
+   */
+  async _saveMatterPage() {
+    if (!this.state.currentMatterId || !this._currentProject) return;
+    const content = this.editor?.getContent() || '';
+    const matterContent = this._currentProject.matterContent || {};
+    matterContent[this.state.currentMatterId] = content;
+    await this.fs.updateProject(this.state.currentProjectId, { matterContent });
+    this._currentProject.matterContent = matterContent;
+  }
+
+  async _removeBookMatterItem(id) {
+    const project = this._currentProject;
+    if (!project) return;
+
+    if (id.startsWith('fm-')) {
+      const fmKey = id.replace('fm-', '');
+      const frontMatter = (project.frontMatter || []).filter(fm => fm !== fmKey);
+      await this.fs.updateProject(this.state.currentProjectId, { frontMatter });
+      project.frontMatter = frontMatter;
+    } else if (id.startsWith('bm-')) {
+      const bmKey = id.replace('bm-', '');
+      const backMatter = (project.backMatter || []).filter(bm => bm !== bmKey);
+      await this.fs.updateProject(this.state.currentProjectId, { backMatter });
+      project.backMatter = backMatter;
+    }
+
+    // Also remove content
+    const matterContent = project.matterContent || {};
+    delete matterContent[id];
+    await this.fs.updateProject(this.state.currentProjectId, { matterContent });
+    project.matterContent = matterContent;
+  }
+
+  async _renameMatterPage(id, newName) {
+    const project = this._currentProject;
+    if (!project) return;
+    const matterPageNames = project.matterPageNames || {};
+    matterPageNames[id] = newName;
+    await this.fs.updateProject(this.state.currentProjectId, { matterPageNames });
+    project.matterPageNames = matterPageNames;
+  }
+
+  async _reorderChapters(draggedId, newIndex) {
+    try {
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const currentIndex = chapters.findIndex(ch => ch.id === draggedId);
+      if (currentIndex === -1 || currentIndex === newIndex) return;
+
+      const ordered = [...chapters];
+      const [moved] = ordered.splice(currentIndex, 1);
+      ordered.splice(newIndex, 0, moved);
+
+      for (let i = 0; i < ordered.length; i++) {
+        if (ordered[i].sortOrder !== i) {
+          await this.fs.updateChapter(ordered[i].id, { sortOrder: i });
+        }
+      }
+    } catch (err) {
+      console.error('Reorder failed:', err);
+    }
   }
 
   _esc(str) {

@@ -131,6 +131,56 @@
     </div>
   </aside>
 
+  <!-- ===== Chapter Navigator ===== -->
+  <div class="chapter-nav" id="chapter-nav">
+    <div class="chapter-nav-header">
+      <span class="chapter-nav-title">Manuscript</span>
+      <div class="chapter-nav-actions">
+        <button class="chapter-nav-btn" id="btn-nav-select-all" title="Select All">&#9744;</button>
+        <button class="chapter-nav-btn chapter-nav-btn-danger" id="btn-nav-delete-selected" title="Delete Selected" disabled>&#x2715;</button>
+        <button class="chapter-nav-btn" id="btn-nav-add-chapter" title="Add Chapter">+</button>
+        <button class="chapter-nav-btn" id="btn-nav-collapse" title="Collapse Navigator">&#9666;</button>
+      </div>
+    </div>
+    <div class="chapter-nav-body" id="chapter-nav-body">
+      <!-- Front Matter Section -->
+      <div class="nav-section" id="nav-section-front">
+        <div class="nav-section-header" data-section="front">
+          <span class="nav-section-arrow">&#9662;</span>
+          <span class="nav-section-label">Front Matter</span>
+          <span class="nav-section-count" id="nav-front-count">0</span>
+        </div>
+        <div class="nav-section-items" id="nav-front-items">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+      <!-- Chapters Section -->
+      <div class="nav-section" id="nav-section-chapters">
+        <div class="nav-section-header" data-section="chapters">
+          <span class="nav-section-arrow">&#9662;</span>
+          <span class="nav-section-label">Chapters</span>
+          <span class="nav-section-count" id="nav-chapters-count">0</span>
+        </div>
+        <div class="nav-section-items" id="nav-chapter-items">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+      <!-- Back Matter Section -->
+      <div class="nav-section" id="nav-section-back">
+        <div class="nav-section-header" data-section="back">
+          <span class="nav-section-arrow">&#9662;</span>
+          <span class="nav-section-label">Back Matter</span>
+          <span class="nav-section-count" id="nav-back-count">0</span>
+        </div>
+        <div class="nav-section-items" id="nav-back-items">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+    </div>
+    <!-- Resize Handle -->
+    <div class="chapter-nav-resize" id="chapter-nav-resize"></div>
+  </div>
+
   <!-- ===== Toolbar ===== -->
   <header class="toolbar">
     <button class="toolbar-btn" id="btn-sidebar-toggle-mobile" aria-label="Menu" data-tooltip="Show or hide the sidebar panel containing chapters, characters, notes, and your book cover image.">&#9776;</button>
