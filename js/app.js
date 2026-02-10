@@ -2334,11 +2334,11 @@ class App {
     if (numChaptersEl) numChaptersEl.value = numCh;
 
     // Populate translation checkboxes
-    const translations = project.translations || [];
+    const translationLanguages = project.translationLanguages || (Array.isArray(project.translations) ? project.translations : []);
     const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
     for (const lang of translationLangs) {
       const cb = document.getElementById(`bs-translate-${lang}`);
-      if (cb) cb.checked = translations.includes(lang);
+      if (cb) cb.checked = translationLanguages.includes(lang);
     }
     this._updateTranslateButton();
 
@@ -2379,9 +2379,9 @@ class App {
     const poetryLevel = parseInt(document.getElementById('bs-poetry-level')?.value) || 3;
     const authorPalette = document.getElementById('bs-author-palette')?.value?.trim() || '';
 
-    // Gather translation languages
+    // Gather translation languages (stored separately from translation results)
     const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
-    const translations = translationLangs.filter(lang =>
+    const translationLanguages = translationLangs.filter(lang =>
       document.getElementById(`bs-translate-${lang}`)?.checked
     );
 
@@ -2394,10 +2394,10 @@ class App {
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
         title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette,
-        translations, frontMatter, backMatter
+        translationLanguages, frontMatter, backMatter
       });
 
-      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, translations, frontMatter, backMatter };
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, translationLanguages, frontMatter, backMatter };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       await this.renderChapterNav();
@@ -2419,32 +2419,6 @@ class App {
     }
   }
 
-  async _performTranslation(languages) {
-    const btn = document.getElementById('btn-perform-translation');
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Translating…';
-
-    try {
-      const content = this.editor?.getContent();
-      if (!content || content.trim().length < 50) {
-        alert('No prose in the current chapter to translate. Write or generate prose first.');
-        return;
-      }
-
-      // TODO: Implement actual translation via Claude API
-      // For each language, call the API and save the translation
-      // as a parallel chapter version or as a separate export
-      alert(`Translation to ${languages.join(', ')} will be implemented. ${languages.length} language(s) queued for the current chapter.`);
-
-    } catch (err) {
-      console.error('Translation failed:', err);
-      alert('Translation failed: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }
-  }
 
   async _generateOutlines() {
     if (!this.state.currentProjectId || !this._currentProject) return;
@@ -4540,6 +4514,18 @@ class App {
         await this._saveBookStructure();
       }
       if (e.target.id === 'btn-perform-translation') {
+        // Pre-select first checked language in the translation modal
+        const langToLocale = {
+          'spanish': 'es-ES', 'french': 'fr-FR', 'italian': 'it-IT',
+          'german': 'de-DE', 'portuguese': 'pt-BR', 'japanese': 'ja-JP'
+        };
+        const bsLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
+        const firstChecked = bsLangs.find(lang => document.getElementById(`bs-translate-${lang}`)?.checked);
+        const targetSelect = document.getElementById('trans-target-lang');
+        if (targetSelect && firstChecked && langToLocale[firstChecked]) {
+          targetSelect.value = langToLocale[firstChecked];
+          this._updateTranslationButton();
+        }
         // Open the full translation settings modal
         document.getElementById('modal-translation').style.display = 'flex';
       }
