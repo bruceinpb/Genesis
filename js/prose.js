@@ -480,12 +480,38 @@ class ProseAnalyzer {
       }
     }
 
-    // --- Hard Gate 3: AI cadence clusters ---
+    // --- Hard Gate 3: AI cadence clusters (EXPANDED) ---
     const aiWords = [
+      // Existing
       'delicate', 'intricate', 'testament to', 'tapestry', 'symphony of',
       'dance of', 'nestled', 'whispering', 'pierced the silence',
       'shattered the silence', 'hung in the air', 'palpable',
-      'echoed through', 'weight of .* words', 'a sense of'
+      'echoed through', 'weight of .* words', 'a sense of',
+      // NEW — common AI writing flourishes
+      'couldn\'t help but', 'seemed to .* itself',
+      'the world .* around', 'something .* shifted',
+      'the silence .* between', 'a wave of',
+      'washed over', 'settled over', 'crept into',
+      'the air .* thick', 'the air .* heavy', 'the air .* between',
+      'a flicker of', 'a hint of', 'a ghost of',
+      'the ghost of a smile', 'the hint of a smile',
+      'threatened to', 'dared to', 'refused to .* away',
+      'the weight of', 'the enormity of', 'the gravity of',
+      'unmistakable', 'undeniable', 'unmistakably',
+      'in the depths of', 'in the stillness',
+      'the rhythm of', 'the cadence of', 'the melody of',
+      'a kaleidoscope', 'myriad', 'juxtaposition',
+      'resonated', 'reverberated', 'permeated',
+      'visceral', 'tangible(?!\\s+(?:object|thing|item))', 'ineffable',
+      'profound(?!ly\\s+(?:deaf|different|impact))',
+      'bittersweet', 'bittersweetness',
+      'the irony .* not lost',
+      'a mixture of .* and',  // "a mixture of sadness and relief"
+      'both .* and .* at the same time',  // "both terrified and exhilarated at the same time"
+      'something between .* and',  // "something between a laugh and a sob"
+      'as if the .* itself',  // "as if the house itself knew"
+      'knowledge .* inside',  // "knowledge living inside the binding"
+      'living inside',  // personification AI pattern
     ];
     for (const aw of aiWords) {
       const regex = new RegExp(`\\b${aw}\\b`, 'gi');
@@ -543,6 +569,63 @@ class ProseAnalyzer {
           text: `Mixed POV: ${firstPersonCount} first-person, ${thirdPersonCount} third-person pronouns`,
           position: 0,
           suggestion: 'Possible perspective slip. Verify consistent POV throughout.'
+        });
+      }
+    }
+
+    // --- Hard Gate 7: Tricolons (lists of three) ---
+    // Detect "X, Y, and Z" patterns — more than 1 per 1000 words is an AI tell
+    const tricolonPatterns = [
+      /\b\w+,\s+\w+,\s+and\s+\w+\b/gi,          // "brave, kind, and strong"
+      /\b\w+,\s+\w+,\s+and\s+\w+\s+\w+\b/gi,    // "walked slowly, breathed deeply, and closed her eyes"
+      /\b(?:the|a|his|her|their|its)\s+\w+,\s+(?:the|a|his|her|their|its)\s+\w+,\s+and\s+(?:the|a|his|her|their|its)\s+\w+/gi  // "the sun, the wind, and the rain"
+    ];
+
+    let tricolonCount = 0;
+    const tricolonMatches = [];
+    for (const pattern of tricolonPatterns) {
+      let match;
+      while ((match = pattern.exec(cleanText)) !== null) {
+        // Avoid counting the same match twice
+        const alreadyCounted = tricolonMatches.some(m =>
+          Math.abs(m.position - match.index) < 10
+        );
+        if (!alreadyCounted) {
+          tricolonCount++;
+          tricolonMatches.push({ text: match[0], position: match.index });
+        }
+      }
+    }
+
+    const wordsPerTricolon = words.length / Math.max(tricolonCount, 1);
+    if (tricolonCount > 0 && wordsPerTricolon < 1000) {
+      // More than 1 per 1000 words — flag as hard
+      for (const tm of tricolonMatches) {
+        defects.push({
+          type: 'tricolon',
+          severity: tricolonCount >= 2 ? 'hard' : 'medium',
+          text: tm.text,
+          position: tm.position,
+          suggestion: `Tricolon (list of three): "${tm.text}". AI writing marker. Rephrase: use two items, or four, or restructure entirely.`
+        });
+      }
+    }
+
+    // --- Hard Gate 8: Overwrought similes (AI flourish pattern) ---
+    // Detect "like a [unusual noun] [preposition] [context]" patterns
+    // These are similes that try too hard — a hallmark of AI writing
+    const simileRegex = /(?:like|as)\s+(?:a|an|the)\s+\w+(?:\s+\w+){0,2}\s+(?:on|in|at|from|of|across|against|beneath|under|upon)\s+(?:a|an|the)\s+\w+/gi;
+    let simileMatch;
+    let simileCount = 0;
+    while ((simileMatch = simileRegex.exec(cleanText)) !== null) {
+      simileCount++;
+      if (simileCount > 2) {  // More than 2 elaborate similes per passage
+        defects.push({
+          type: 'overwrought-simile',
+          severity: 'medium',
+          text: simileMatch[0],
+          position: simileMatch.index,
+          suggestion: `Elaborate simile: "${simileMatch[0]}". If this feels like a writerly flourish rather than a genuine observation, cut it or simplify.`
         });
       }
     }

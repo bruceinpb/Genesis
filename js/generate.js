@@ -629,6 +629,207 @@ CRITICAL: If score < ${threshold}, "improvedProse" MUST contain the COMPLETE rew
     }
   }
 
+  /**
+   * Score prose and apply ONE micro-fix — the single highest-impact issue.
+   * Returns { score, subscores, label, issues, microFixedProse, fixApplied, summary }
+   *
+   * Philosophy: Fix one thing perfectly rather than five things sloppily.
+   * Each call should improve the score by 1-3 points at most.
+   */
+  async scoreAndMicroFix(proseText, {
+    threshold = 90,
+    iterationNum = 1,
+    maxIterations = 4,
+    previousFixes = [],
+    lintDefects = [],
+    intentLedger = null,
+    genre = '',
+    voice = '',
+    aiInstructions = '',
+    fourRequirementStatus = null
+  } = {}) {
+    if (!this.apiKey) throw new Error('No API key set.');
+
+    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience. You score prose honestly, then fix EXACTLY ONE thing — the single most impactful issue.
+
+=== SCORING RUBRIC (100 points total) ===
+Score each dimension independently based on EVIDENCE from the text:
+1. Sentence variety and rhythm (0-15)
+2. Dialogue authenticity (0-15): If no dialogue, score narrative voice distinctiveness
+3. Sensory detail / show vs tell (0-15)
+4. Emotional resonance and depth (0-15)
+5. Vocabulary precision (0-10)
+6. Narrative flow and pacing (0-10)
+7. Originality and voice (0-10)
+8. Technical execution (0-10)
+
+CALIBRATION:
+- 40-60: Raw AI prose, clichés, formulaic
+- 65-78: Competent, some AI patterns remain
+- 78-88: Strong human-quality, good variety, specific details
+- 88-95: Excellent, deliberate rhythm, vivid specificity, genuine resonance
+- 96-100: Masterful, rare even in published fiction
+
+PROSECUTION FIRST: Catalogue ALL weaknesses before acknowledging strengths.
+
+=== AI PATTERN DETECTION (CRITICAL) ===
+These patterns are the #1 quality killer. Flag EVERY instance:
+
+OVERWROUGHT SIMILES: Similes that sound crafted rather than observed. A real author's simile comes from the CHARACTER'S world, not from the WRITER trying to be clever.
+- BAD: "opened like a mussel shell" (literary flourish, not how a character would think)
+- BAD: "opened like a patient on a surgical table" (anachronistic, overwrought)
+- GOOD: "opened the way you'd open a letter you'd been dreading" (character-grounded)
+- GOOD: "split down the middle" (plain, direct, human)
+
+TRICOLONS: Lists of three are the single most common AI writing pattern. Flag ALL "X, Y, and Z" constructions. Real human writing uses two items, or four, or restructures entirely.
+- BAD: "brave, kind, and generous"
+- BAD: "the sun, the wind, and the rain"
+- GOOD: "brave and generous" (just two)
+- GOOD: "she was brave. Generous, too, in ways that cost her." (restructured)
+
+PERSONIFICATION OF ABSTRACTIONS: When non-physical things "live," "breathe," "dance," "whisper," "settle," "creep," or "wash over" — this is almost always AI writing.
+- BAD: "knowledge living inside the binding"
+- BAD: "silence settled between them"
+- BAD: "a wave of grief washed over her"
+- GOOD: "she couldn't stop thinking about the book"
+- GOOD: "neither of them spoke"
+- GOOD: "she sat down on the porch steps and stayed there a long time"
+
+TELLING EMOTIONS: Naming the emotion instead of showing it through action.
+- BAD: "She felt a profound sense of loss"
+- GOOD: "She opened his closet. His shirts still smelled like sawdust."
+
+PET PHRASES: Body-reaction shortcuts. Flag ALL: throat tightened, chest constricted, breath caught, heart pounded, eyes widened, jaw clenched, fists clenched, stomach churned, bile rose, pulse quickened, hands trembled, voice wavered.
+
+=== MICRO-FIX RULES ===
+${iterationNum <= maxIterations ? `After scoring, if score < ${threshold}:
+1. Identify ALL issues (list them all in the issues array)
+2. Pick the SINGLE highest-impact issue
+3. Fix ONLY that one issue. Change the absolute MINIMUM words.
+4. The rest of the prose must be VERBATIM — character for character.
+5. Your fix must be 100% clean — no new AI patterns, no new PET phrases, no tricolons.
+
+MICRO-FIX PRIORITIES (in order):
+- Priority 1: Hard lint defects (em dashes, PET phrases, AI-telltale words)
+- Priority 2: Tricolons — restructure or reduce to two items
+- Priority 3: Overwrought similes — simplify or cut
+- Priority 4: Telling vs showing — replace with character-specific action
+- Priority 5: Sentence rhythm issues — break a monotonous run
+- Priority 6: Generic word choice — replace ONE weak word with a precise one
+
+CRITICAL: Change no more than 1-3 sentences. If fixing one issue, do NOT touch any other sentence. Copy everything else EXACTLY.` : `Score only — this is the final scoring pass. Do not fix anything. Set microFixedProse to null.`}
+
+${lintDefects.length > 0 ? `=== HARD DEFECTS FROM LINT (fix the worst one FIRST) ===
+${lintDefects.map((d, i) => `${i+1}. [${d.severity}] ${d.type}: "${d.text}" — ${d.suggestion}`).join('\n')}` : ''}
+
+${previousFixes.length > 0 ? `=== FIXES ALREADY APPLIED IN PREVIOUS ITERATIONS ===
+${previousFixes.map((f, i) => `Pass ${i+1}: ${f}`).join('\n')}
+DO NOT repeat or undo these fixes. Target a DIFFERENT issue this time.` : ''}
+
+${intentLedger ? `=== INTENT LEDGER (non-negotiables) ===
+- POV: ${intentLedger.povCharacter || 'unknown'} (${intentLedger.povType || 'unknown'})
+- Tense: ${intentLedger.tense || 'past'}
+- Emotional arc: ${intentLedger.emotionalArc || 'unknown'}
+- Canon facts: ${(intentLedger.canonFacts || []).join(', ')}` : ''}
+
+${genre ? `Genre: ${genre}` : ''}
+${voice ? `Narrative voice: ${voice} (preserve exactly)` : ''}
+${aiInstructions ? `Author instructions: ${aiInstructions}` : ''}
+
+=== OUTPUT FORMAT ===
+Output valid JSON:
+{
+  "score": number,
+  "subscores": {
+    "sentenceVariety": number,
+    "dialogueAuthenticity": number,
+    "sensoryDetail": number,
+    "emotionalResonance": number,
+    "vocabularyPrecision": number,
+    "narrativeFlow": number,
+    "originalityVoice": number,
+    "technicalExecution": number
+  },
+  "label": "Exceptional|Strong|Good|Competent|Needs Work",
+  "issues": [
+    {"text": "quoted passage", "problem": "description", "severity": "high|medium|low", "category": "ai-pattern|tricolon|pet-phrase|telling|simile|cliche|weak-word|rhythm|other", "estimatedImpact": number}
+  ],
+  "summary": "2-3 sentence assessment",
+  "fixApplied": "Description of the ONE fix made, or null if score >= threshold or final pass",
+  "fixCategory": "Which category was fixed: ai-pattern|tricolon|pet-phrase|telling|simile|cliche|weak-word|rhythm|other, or null",
+  "microFixedProse": "Complete prose with ONE fix applied. null if score >= ${threshold} or no fix needed.",
+  "fourRequirementsFound": {
+    "characterSpecificThought": "quote or null",
+    "preciseObservation": "quote or null",
+    "musicalSentence": "quote or null",
+    "expectationBreak": "quote or null"
+  }
+}
+
+CRITICAL: score = sum of subscores exactly. Do NOT round or adjust.
+CRITICAL: If score >= ${threshold}, set microFixedProse to null.
+CRITICAL: microFixedProse must be the COMPLETE passage — not just the changed sentence.`;
+
+    const userPrompt = `Score this prose using prosecution-first methodology. If below ${threshold}/100, apply ONE surgical micro-fix to the single highest-impact issue. Output valid JSON only.\n\n"""${proseText}"""`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 8192,
+        temperature: 0,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const rawText = result.content?.[0]?.text?.trim() || '';
+
+    let jsonStr = rawText;
+    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    const braceStart = jsonStr.indexOf('{');
+    const braceEnd = jsonStr.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.subscores) {
+        const sum = Object.values(parsed.subscores).reduce((a, b) => a + (Number(b) || 0), 0);
+        parsed.score = Math.round(sum);
+      }
+      if (parsed.score >= 88) parsed.label = 'Exceptional';
+      else if (parsed.score >= 78) parsed.label = 'Strong';
+      else if (parsed.score >= 65) parsed.label = 'Good';
+      else if (parsed.score >= 50) parsed.label = 'Competent';
+      else parsed.label = 'Needs Work';
+      return parsed;
+    } catch (e) {
+      return {
+        score: 0, label: 'Parse Error', subscores: {},
+        issues: [], summary: 'Failed to parse response',
+        microFixedProse: null, fixApplied: null, fixCategory: null,
+        fourRequirementsFound: {}
+      };
+    }
+  }
+
   _buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt, poetryLevel, heatLevel, authorPalette }) {
     // Poetry level calibration
     const poetryGuidance = {
@@ -714,7 +915,40 @@ Show emotion through character-specific action:
 - Eliminate filler: every "very", "really", "just", "quite", "rather" is a failure
 - Natural dialogue: each character sounds distinct; use "said" mostly; vary with action beats and no-tag
 - Convey interiority through behavior, not narration
-- Write ONLY the prose. No meta-commentary, no scene labels, no author notes`;
+- Write ONLY the prose. No meta-commentary, no scene labels, no author notes
+
+=== AI WRITING PATTERNS — ZERO TOLERANCE ===
+These patterns instantly mark prose as AI-generated. A human editor will reject any manuscript containing them. You MUST avoid all of these:
+
+TRICOLONS (lists of three): The single most common AI tell. NEVER write "X, Y, and Z" constructions.
+- BANNED: "strength, courage, and wisdom"
+- BANNED: "the wind, the rain, and the cold"
+- INSTEAD: Use two items ("strength and courage"), or restructure ("she was strong, and more courageous than anyone knew")
+
+OVERWROUGHT SIMILES: Similes must come from the CHARACTER'S experience, not from a writer trying to sound literary.
+- BANNED: Any "like a [unusual noun] on a [surface]" construction
+- BANNED: "opened like a mussel shell" / "spread like a surgical table"
+- INSTEAD: Use the character's own vocabulary. A farmer's simile involves crops. A mechanic's involves engines. If no simile feels natural, use plain description.
+
+PERSONIFIED ABSTRACTIONS: Non-physical things must not "live," "breathe," "dance," "settle," "creep," "wash over," "hang in the air," or "echo through."
+- BANNED: "silence settled between them" / "knowledge living inside"
+- BANNED: "a wave of emotion washed over" / "tension crept into"
+- INSTEAD: "Neither of them spoke" / "She couldn't stop thinking about it"
+
+HEDGING CONSTRUCTIONS: Commit to observations. Do not hedge.
+- BANNED: "seemed to" / "appeared to" / "as if" (more than once per 500 words)
+- BANNED: "something shifted" / "somehow" / "in a way that"
+- INSTEAD: State what happened. "She stepped back." Not "She seemed to step back."
+
+ABSTRACT EMOTION LABELS: NEVER name the emotion. Show it through action.
+- BANNED: "a profound sense of loss" / "overwhelming grief" / "a mixture of joy and sadness"
+- INSTEAD: Show the character doing something that implies the emotion. "She folded his shirts one more time before putting them in the box."
+
+FORMULAIC STRUCTURES:
+- BANNED: Opening more than 1 paragraph with "The" per 500 words
+- BANNED: "As [character] [verbed], [consequence]" — more than once per passage
+- BANNED: "[Character] [verbed], [gerund phrase]" — "She walked, thinking about..."
+- BANNED: Ending paragraphs with a one-sentence philosophical reflection`;
 
     // Voice / POV instruction
     if (voice && voice !== 'auto') {
