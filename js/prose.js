@@ -660,6 +660,38 @@ class ProseAnalyzer {
     const shortPct = sentenceLengths.length > 0 ? shortSentences / sentenceLengths.length : 0;
     const longPct = sentenceLengths.length > 0 ? longSentences / sentenceLengths.length : 0;
 
+    // --- Rhythm monotony detection: runs of similar-length sentences ---
+    let maxRun = 0;
+    let currentRun = 1;
+    for (let i = 1; i < sentenceLengths.length; i++) {
+      if (Math.abs(sentenceLengths[i] - sentenceLengths[i - 1]) <= 3) {
+        currentRun++;
+        maxRun = Math.max(maxRun, currentRun);
+      } else {
+        currentRun = 1;
+      }
+    }
+
+    if (maxRun >= 4) {
+      defects.push({
+        type: 'rhythm-monotony',
+        severity: 'medium',
+        text: `${maxRun} consecutive sentences with similar length`,
+        position: 0,
+        suggestion: 'Break the rhythm. Add a fragment or a long flowing sentence to create variety.'
+      });
+    }
+
+    if (Math.round(shortPct * 100) < 15) {
+      defects.push({
+        type: 'missing-short-sentences',
+        severity: 'medium',
+        text: `Only ${Math.round(shortPct * 100)}% short sentences (target: 20%+)`,
+        position: 0,
+        suggestion: 'Add short punchy sentences (3-8 words) or fragments for rhythm.'
+      });
+    }
+
     const dialogue = this._getDialogueRatio(cleanText);
 
     const stats = {
@@ -680,7 +712,21 @@ class ProseAnalyzer {
       mediumDefects: defects.filter(d => d.severity === 'medium').length
     };
 
-    return { defects, stats };
+    // --- Quality metrics for Phase 2 deterministic gate ---
+    const qualityMetrics = {
+      sentenceLengthMean: Math.round(meanLen * 10) / 10,
+      sentenceLengthStdDev: Math.round(stdDev * 10) / 10,
+      shortSentencePct: Math.round(shortPct * 100),
+      longSentencePct: Math.round(longPct * 100),
+      maxSimilarLengthRun: maxRun,
+      filterWordCount: filterCount,
+      filterWordDensity: Math.round(filterDensity * 1000) / 10,
+      hedgeWordCount: hedgeCount,
+      totalSentences: sentenceLengths.length,
+      totalWords: words.length
+    };
+
+    return { defects, stats, qualityMetrics };
   }
 
   /**

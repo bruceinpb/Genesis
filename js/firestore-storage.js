@@ -45,6 +45,8 @@ class FirestoreStorage {
       title: data.title,
       genre: data.genre || '',
       wordCountGoal: data.wordCountGoal || 80000,
+      poetryLevel: data.poetryLevel || 3,
+      authorPalette: data.authorPalette || '',
       createdAt: new Date(),
       updatedAt: new Date()
     };

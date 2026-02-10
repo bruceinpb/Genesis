@@ -45,7 +45,7 @@ class ProseGenerator {
    * Generate prose based on a plot description and optional context.
    * Streams the response and calls onChunk for each piece of text.
    */
-  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, concludeStory, genre, genreRules, projectGoal, voice, errorPatternsPrompt }, { onChunk, onDone, onError }) {
+  async generate({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, concludeStory, genre, genreRules, projectGoal, voice, errorPatternsPrompt, poetryLevel, authorPalette }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set. Go to Settings to add your Anthropic API key.'));
       return;
@@ -53,7 +53,7 @@ class ProseGenerator {
 
     this.abortController = new AbortController();
 
-    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt });
+    const systemPrompt = this._buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt, poetryLevel, authorPalette });
     const userPrompt = this._buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal });
 
     try {
@@ -455,21 +455,266 @@ For "estimatedImpact": estimate how many points the score would improve if this 
     }
   }
 
-  _buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt }) {
-    let prompt = `You are a world-class fiction author whose prose has been compared to Cormac McCarthy, Toni Morrison, and Denis Johnson. You write with precision, authority, and an unmistakable human voice. Every sentence earns its place.
+  /**
+   * Combined score + targeted improvement in a single API call.
+   * The model scores the prose, identifies the top issues, and outputs
+   * the improved version — all in one response with full context.
+   *
+   * Returns { score, subscores, label, issues, improvedProse, summary, fourRequirementsFound }
+   */
+  async scoreAndImprove(proseText, {
+    threshold = 90,
+    iterationNum = 1,
+    previousScore = null,
+    previousIssues = null,
+    lintDefects = [],
+    intentLedger = null,
+    genre = '',
+    voice = '',
+    aiInstructions = '',
+    isEscalated = false
+  } = {}) {
+    if (!this.apiKey) throw new Error('No API key set.');
 
-=== YOUR CRAFT PRINCIPLES ===
-Before writing, mentally plan: What is the emotional core of this passage? What specific sensory details anchor it? What rhythm should the sentences follow? Then write with intention.
+    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience. You will SCORE the prose, then IMPROVE it in one pass.
 
-PROSE EXCELLENCE — what makes your writing score 90+:
-1. SENTENCE VARIETY & RHYTHM (crucial): Alternate deliberately between short, punchy sentences (3-8 words) and longer, flowing ones (15-30 words). Use fragments for impact. Let a one-word sentence land after a complex one. Aim for standard deviation of 8+ in sentence lengths.
-2. DIALOGUE AUTHENTICITY: Each character speaks differently. One uses clipped phrases. Another rambles. Give them verbal tics, regional flavor, interrupted thoughts. Use "said" mostly, but vary with silence, action, and no tag at all.
-3. SENSORY DETAIL / SHOW DON'T TELL: Name the specific brand, the exact color, the particular smell. Not "flowers" but "the roses his mother grew along the fence, the roses that smelled like rust." Not "He was angry" but "He swept the papers off the desk. They scattered across the floor like dead leaves."
-4. EMOTIONAL RESONANCE: Convey emotion through what characters DO, not what they FEEL. A grieving person might reorganize a kitchen drawer. A nervous person might count ceiling tiles. Find the unexpected, character-specific gesture.
-5. VOCABULARY PRECISION: Choose the one right word. Not "walked slowly" but "shuffled" or "drifted" or "picked his way." Cut every "very", "really", "just", "quite", "rather."
-6. NARRATIVE FLOW & PACING: Vary paragraph lengths. A single-sentence paragraph commands attention. Follow dense description with quick action. Let white space do work.
-7. ORIGINALITY & VOICE: Write sentences no one has written before. Avoid any construction that sounds like it came from a template. If a phrase sounds familiar, replace it.
-8. TECHNICAL EXECUTION: Clean grammar. Purposeful paragraph breaks. Consistent tense and POV.`;
+=== SCORING RUBRIC (100 points total) ===
+Score each dimension independently based on EVIDENCE from the text:
+1. Sentence variety and rhythm (0-15): Measure actual sentence length variation. Similar lengths = 4-6. Genuine variety between short punchy and long flowing = 10+.
+2. Dialogue authenticity (0-15): Distinct character voices? Natural tags? If no dialogue, score narrative voice distinctiveness.
+3. Sensory detail / show vs tell (0-15): Count concrete SHOWING vs abstract TELLING. Heavy telling = 3-5. Mostly showing = 10+.
+4. Emotional resonance and depth (0-15): Emotions conveyed through behavior, not named? Character interiority beyond surface?
+5. Vocabulary precision (0-10): Specific, earned words? Or generic, interchangeable?
+6. Narrative flow and pacing (0-10): Right speed? Smooth transitions? Varied paragraph lengths?
+7. Originality and voice (0-10): Distinct author voice? Or generic AI prose?
+8. Technical execution (0-10): Grammar, punctuation, paragraph breaks.
+
+CALIBRATION:
+- 40-60: Raw AI prose with cliches, formulaic structure
+- 65-78: Competent fiction with some AI patterns, generic descriptions
+- 78-88: Strong human-quality writing with good variety, specific details
+- 88-95: Excellent prose with deliberate rhythm, vivid specificity, genuine emotional resonance
+- 96-100: Truly masterful, rare even in published fiction
+
+PROSECUTION FIRST: Identify ALL weaknesses before assessing strengths. Do not look for positives until negatives are catalogued.
+
+=== IMPROVEMENT RULES ===
+After scoring, if the score is below ${threshold}:
+- Identify the TOP 3-5 highest-impact issues
+- For each issue, make the MINIMUM change needed to fix it
+- Copy all non-problematic text VERBATIM
+- NEVER introduce: em dashes, PET phrases, AI-telltale words, filter words, tricolons
+- NEVER replace a PET phrase with another PET phrase
+- Preserve: voice, tense, POV, paragraph structure, approximate word count
+- Each fix must make the prose measurably BETTER, not just different
+
+${isEscalated ? `=== ESCALATED MODE ===
+Previous iteration did not reach threshold. Be BOLDER:
+- Rewrite weak sentences entirely rather than just swapping words
+- Add vivid new sensory details where prose is generic
+- Dramatically vary sentence rhythm where it's monotonous
+- But STILL preserve voice, POV, and narrative intent` : ''}
+
+${lintDefects.length > 0 ? `=== HARD DEFECTS FOUND BY LINT (must fix ALL) ===
+${lintDefects.map((d, i) => `${i+1}. [${d.severity}] ${d.type}: "${d.text}" \u2014 ${d.suggestion}`).join('\n')}` : ''}
+
+${intentLedger ? `=== INTENT LEDGER (preserve these non-negotiables) ===
+- POV: ${intentLedger.povCharacter || 'unknown'} (${intentLedger.povType || 'unknown'})
+- Tense: ${intentLedger.tense || 'past'}
+- Emotional arc: ${intentLedger.emotionalArc || 'unknown'}
+- Scene change: ${intentLedger.sceneChange || 'unknown'}
+- Sensory anchors to preserve: ${(intentLedger.sensoryAnchors || []).join(', ')}
+- Canon facts (DO NOT ALTER): ${(intentLedger.canonFacts || []).join(', ')}` : ''}
+
+${previousScore !== null ? `=== PREVIOUS ATTEMPT ===
+Previous score: ${previousScore}/100. ${previousIssues ? `Issues that were flagged: ${previousIssues}` : ''}
+This is attempt ${iterationNum}. The previous fixes were insufficient. Take a DIFFERENT approach.` : ''}
+
+${genre ? `Genre: ${genre}` : ''}
+${voice ? `Narrative voice: ${voice} (preserve exactly)` : ''}
+${aiInstructions ? `Author instructions: ${aiInstructions}` : ''}
+
+=== OUTPUT FORMAT ===
+You MUST output valid JSON with this exact structure:
+{
+  "score": number (sum of subscores),
+  "subscores": {
+    "sentenceVariety": number,
+    "dialogueAuthenticity": number,
+    "sensoryDetail": number,
+    "emotionalResonance": number,
+    "vocabularyPrecision": number,
+    "narrativeFlow": number,
+    "originalityVoice": number,
+    "technicalExecution": number
+  },
+  "label": "Exceptional|Strong|Good|Competent|Needs Work",
+  "issues": [
+    {"text": "quoted passage", "problem": "description", "severity": "high|medium|low", "fix_applied": "what was changed (or 'none' if score >= threshold)"}
+  ],
+  "summary": "2-3 sentence assessment",
+  "improvedProse": "The complete improved prose if score < ${threshold}. If score >= ${threshold}, set to null.",
+  "fourRequirementsFound": {
+    "characterSpecificThought": "quote or null",
+    "preciseObservation": "quote or null",
+    "musicalSentence": "quote or null",
+    "expectationBreak": "quote or null"
+  }
+}
+
+CRITICAL: The total score MUST equal the sum of all subscores. Do NOT round or adjust.
+CRITICAL: If score >= ${threshold}, set "improvedProse" to null. Do not rewrite prose that already meets the bar.
+CRITICAL: If score < ${threshold}, "improvedProse" MUST contain the COMPLETE rewritten passage with fixes applied.`;
+
+    const userPrompt = `Score this prose using prosecution-first methodology, then improve it if below ${threshold}/100. Output valid JSON only.\n\n"""${proseText}"""`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 8192,
+        temperature: 0,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const rawText = result.content?.[0]?.text?.trim() || '';
+
+    // Parse JSON (handle markdown wrapping)
+    let jsonStr = rawText;
+    const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+    const braceStart = jsonStr.indexOf('{');
+    const braceEnd = jsonStr.lastIndexOf('}');
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      // Validate score = sum of subscores
+      if (parsed.subscores) {
+        const sum = Object.values(parsed.subscores).reduce((a, b) => a + (Number(b) || 0), 0);
+        parsed.score = Math.round(sum);
+      }
+      // Assign label
+      if (parsed.score >= 88) parsed.label = 'Exceptional';
+      else if (parsed.score >= 78) parsed.label = 'Strong';
+      else if (parsed.score >= 65) parsed.label = 'Good';
+      else if (parsed.score >= 50) parsed.label = 'Competent';
+      else parsed.label = 'Needs Work';
+
+      return parsed;
+    } catch (e) {
+      return {
+        score: 0, label: 'Parse Error', subscores: {},
+        issues: [], summary: 'Failed to parse response',
+        improvedProse: null, fourRequirementsFound: {}
+      };
+    }
+  }
+
+  _buildSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt, poetryLevel, heatLevel, authorPalette }) {
+    // Poetry level calibration
+    const poetryGuidance = {
+      1: 'Write clean, invisible prose. Let the story carry itself. Hemingway-level restraint.',
+      2: 'Write with modest detail. Grounding sensory touches but nothing ornate.',
+      3: 'Write with literary craft. Every sentence shaped with care, metaphors earned.',
+      4: 'Write with heightened language. Rich metaphor, musical sentences, every line crafted.',
+      5: 'Write with lyrical density. Prose-poetry territory. Unconventional structure allowed.'
+    };
+
+    const poetryInstruction = poetryGuidance[poetryLevel || 3];
+
+    let prompt = `You are a world-class fiction author. Your prose has been compared to the best living novelists. You write with precision, authority, and an unmistakable human voice.
+
+=== PROSE DENSITY ===
+${poetryInstruction}
+
+=== THE FOUR REQUIREMENTS (MANDATORY) ===
+Every 250 words of output MUST contain AT LEAST ONE of these. This is not optional:
+
+1. CHARACTER-SPECIFIC THOUGHT — A line that ONLY this character would think. Not generic human reaction. Test: could any character think this? If yes, it fails.
+   EXAMPLE: "Harold had kept a tape measure behind his ear for forty years, as if calamity were something that could be sized up and cut to fit."
+
+2. PRECISE OBSERVATION — So specific it feels like a secret the reader wasn't supposed to know.
+   EXAMPLE: "The coffee cup grew mold by the sink, a civilization rising in miniature beside the unwashed spoons."
+
+3. MUSICAL SENTENCE — Rhythm that demands to be read aloud. Deliberate cadence.
+   EXAMPLE: "Three seconds. That was how long she believed it."
+
+4. EXPECTATION BREAK — True but unexpected. The obvious emotional beat, subverted.
+   EXAMPLE: "She lied to them, and the lying felt good."
+
+=== SENTENCE ARCHITECTURE (MANDATORY) ===
+You MUST alternate sentence lengths deliberately:
+- At least 20% of sentences must be SHORT (3-8 words). Fragments count.
+- At least 15% of sentences must be LONG (20+ words, flowing).
+- NEVER write 3+ consecutive sentences of similar length.
+- After a complex sentence, land a short one. After rapid-fire short sentences, let one breathe.
+- Aim for standard deviation of 8+ in sentence word counts.
+
+Example of GOOD rhythm:
+"The house settled around her. Every creak had a name she'd forgotten to teach anyone else, and the forgetting felt like a second kind of loss, quieter than the first but wider. She poured coffee. The mug said World's Best Grandma in letters that were peeling. She wasn't anybody's grandma. Not yet. Maybe not ever, the way things kept not working out."
+
+Example of BAD rhythm (monotonous):
+"She walked into the kitchen and looked around. The house was quiet and still. She noticed the coffee pot on the counter. She picked up a mug and poured herself some coffee. She took a sip and looked out the window."
+
+=== AUTHOR PALETTE ===
+Channel these voices as you write, not imitating, but channeling their STRENGTHS:
+${authorPalette || '- Morrison: elemental weight\n- Tyler: domestic warmth\n- Russo: working-class dignity\n- Saunders: absurdist heart\n- Strout: plainspoken power'}
+
+=== HARD CONSTRAINTS (ZERO TOLERANCE) ===
+The following are absolute prohibitions. ANY occurrence is a failure:
+
+BANNED WORDS/PHRASES:
+- Em dashes (\u2014, \u2013, ---) \u2192 use comma, semicolon, colon, period, or parentheses
+- "delicate", "intricate", "testament to", "tapestry", "symphony of"
+- "dance of", "nestled", "whispering", "pierced the silence"
+- "shattered the silence", "hung in the air", "palpable"
+- "found herself/himself" \u2192 use action
+- "seemed to" \u2192 commit to the observation
+- "began to" / "started to" \u2192 just do the action
+- "something" / "somehow" \u2192 be specific
+- "for a long moment" \u2192 specific duration or cut
+- "In that moment", "Little did she know", "Meanwhile"
+- Filter words: felt, noticed, realized, saw, seemed, appeared, watched, thought, knew, wondered
+
+BANNED STRUCTURES:
+- Starting more than 1 sentence with "As" or "While" per 500 words
+- Tricolons (lists of three) more than 1 per 1000 words
+- Telling emotions: "She felt sad", "He was angry", "Fear gripped her"
+- PET phrases (body-reaction shortcuts): throat tightened, chest tightened, breath caught, heart pounded, eyes widened, jaw clenched, fists clenched, stomach churned, bile rose, pulse quickened, etc.
+- Formulaic paragraph structure: observation \u2192 feeling \u2192 action \u2192 reflection
+
+INSTEAD OF PET PHRASES:
+Show emotion through character-specific action:
+- NOT "His hands trembled" \u2192 "He couldn't get the key in the lock"
+- NOT "Her heart raced" \u2192 "She counted the ceiling tiles. Twelve. She counted again."
+- NOT "His throat tightened" \u2192 "He picked up the photograph, put it down, picked it up again"
+
+=== CRAFT PRINCIPLES ===
+- Show, don't tell: concrete action, sensory detail, dialogue convey meaning
+- Strong, specific verbs: not "walked" but "shuffled", "strode", "picked his way"
+- Eliminate filler: every "very", "really", "just", "quite", "rather" is a failure
+- Natural dialogue: each character sounds distinct; use "said" mostly; vary with action beats and no-tag
+- Convey interiority through behavior, not narration
+- Write ONLY the prose. No meta-commentary, no scene labels, no author notes`;
 
     // Voice / POV instruction
     if (voice && voice !== 'auto') {
@@ -490,31 +735,6 @@ PROSE EXCELLENCE — what makes your writing score 90+:
       prompt += `\n- Write in third-person limited or first-person as appropriate to the story`;
     }
 
-    prompt += `
-
-=== MANDATORY CRAFT RULES ===
-- Show, don't tell: use concrete action, sensory detail, and dialogue to convey emotion and meaning
-- Vary sentence length deliberately: short sentences (under 8 words) should comprise at least 20% of your sentences; long sentences (over 20 words) at least 15%
-- Use strong, specific verbs: not "walked" but "shuffled", "strode", "picked his way"
-- Eliminate filter words: never use felt, saw, noticed, seemed, realized, watched, thought, knew, wondered
-- Keep passive voice under 10%
-- Write natural, character-distinct dialogue where each speaker has their own vocabulary and rhythm
-- Convey interiority through action and environment, not stated feelings
-- Aim for Flesch readability 60-80
-- Write ONLY the prose. No meta-commentary, no scene labels, no author notes
-
-=== THINGS TO NEVER DO ===
-- NEVER use em dashes (\u2014, \u2013, ---) under any circumstances. Use commas, semicolons, colons, periods, or parentheses instead
-- NEVER use these AI-telltale words: delicate, intricate, testament to, tapestry, symphony of, dance of, nestled, whispering, pierced the silence, shattered the silence, hung in the air, palpable
-- NEVER start more than one sentence per passage with "As" or "While"
-- NEVER use tricolons (lists of three) more than once per 1000 words
-- NEVER write purple prose or flowery descriptions. Prefer plain, precise language
-- NEVER tell emotions: "She felt sad", "He was angry", "Fear gripped her"
-- NEVER use formulaic paragraph structures (observation, feeling, action, reflection)
-- NEVER use: "Meanwhile", "In that moment", "Little did she know", "It was then that"
-- NEVER use cliched body-reaction shortcuts (PET phrases): throat tightened, chest tightened, breath caught, breath hitched, stomach churned/dropped/knotted, heart pounded/hammered/raced/sank, blood ran cold, eyes widened/narrowed, jaw clenched, fists clenched/balled, hands trembled, shoulders tensed/slumped, knees weakened/buckled, skin crawled, bile rose, mouth went dry, swallowed hard, voice cracked/broke/wavered, chill ran down spine, pulse quickened
-- Instead of PET phrases: show emotion through character-specific action (a grieving man polishes his dead wife's reading glasses; a scared child arranges pebbles in a line)`;
-
     if (genreRules) {
       prompt += `\n\n=== GENRE STYLE RULES (${genre}) ===\n${genreRules}`;
       prompt += `\n\n=== STYLE CONSISTENCY ===`;
@@ -530,7 +750,6 @@ PROSE EXCELLENCE — what makes your writing score 90+:
     if (errorPatternsPrompt) {
       prompt += errorPatternsPrompt;
 
-      // Add sentence/paragraph-level error checking instructions
       prompt += `
 
 === SENTENCE-LEVEL ERROR CHECKING PROTOCOL ===
@@ -888,6 +1107,7 @@ CRITICAL: Previous rewrites have failed to improve the score because they introd
    * are needed to get closer to the threshold?"
    * Returns a structured fix list that can be applied in the next rewrite.
    */
+  /** @deprecated Use scoreAndImprove() instead. Kept for backward compatibility. */
   async reflectOnProse({ prose, score, subscores, threshold, issues, aiPatterns, iterationNum, previousFixLists, degradationAnalysis, validationFeedback }) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
@@ -1065,6 +1285,7 @@ Create a fix list based on this analysis. Output valid JSON only:
    * Apply a fix list from reflectOnProse to the prose via a targeted rewrite.
    * The fix list guides the rewrite with specific, pre-analyzed improvements.
    */
+  /** @deprecated Use scoreAndImprove() instead. Kept for backward compatibility. */
   async applyFixList({ originalProse, fixList, chapterTitle, characters, notes, chapterOutline, aiInstructions, tone, style, wordTarget, maxTokens, genre, genreRules, voice, errorPatternsPrompt, iterationNum, threshold }, { onChunk, onDone, onError }) {
     if (!this.apiKey) {
       onError(new Error('No API key set.'));
@@ -1208,6 +1429,7 @@ Create a fix list based on this analysis. Output valid JSON only:
    * Performs detailed analysis of which fixes helped vs. hurt and why.
    * Returns structured guidance for creating better fixes.
    */
+  /** @deprecated No longer used in the 3-phase pipeline. Kept for backward compatibility. */
   async compareProseVersions({ bestProse, bestScore, bestSubscores, rewrittenProse, rewrittenScore, rewrittenSubscores, appliedFixes }) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
@@ -1335,6 +1557,7 @@ Output valid JSON only:
    * on fixes that are predicted to decrease the score.
    * Returns predicted score, confidence level, and per-fix assessments.
    */
+  /** @deprecated Use scoreAndImprove() instead. Kept for backward compatibility. */
   async preValidateFixes({ prose, fixList, currentScore, subscores, threshold }) {
     if (!this.apiKey) {
       throw new Error('No API key set.');

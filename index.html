@@ -436,6 +436,27 @@
       </div>
     </div>
 
+    <div class="analysis-section">
+      <h3>Prose Generation Style</h3>
+      <div class="form-group">
+        <label data-tooltip="Poetry Level -- Controls prose density and ornamentation. Level 1 is clean/invisible (Hemingway). Level 5 is lyrical/prose-poetry territory.">Poetry Level</label>
+        <select class="form-input" id="bs-poetry-level">
+          <option value="1">1 — Clean, invisible (Hemingway)</option>
+          <option value="2">2 — Modest detail</option>
+          <option value="3" selected>3 — Literary (default)</option>
+          <option value="4">4 — Heightened, rich</option>
+          <option value="5">5 — Lyrical / prose-poetry</option>
+        </select>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls prose density and ornamentation. Default: 3 (Literary).</p>
+      </div>
+      <div class="form-group">
+        <label data-tooltip="Author Palette -- Style influences for the AI to channel. List authors and their strengths, one per line.">Author Palette (style influences)</label>
+        <textarea class="form-input" id="bs-author-palette" rows="3"
+          placeholder="Morrison: elemental weight&#10;Tyler: domestic warmth&#10;Russo: working-class dignity&#10;Saunders: absurdist heart&#10;Strout: plainspoken power"></textarea>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">List authors and their strengths to channel, one per line. Leave blank for defaults.</p>
+      </div>
+    </div>
+
     <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
 
     <div class="analysis-section">
@@ -536,6 +557,14 @@
         Iteration: <span id="iterative-iteration-num">0</span> &bull; Best: <span id="iterative-best-score">--</span>
       </div>
       <div id="iterative-score-history" style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;text-align:left;padding:4px 8px;display:none;">
+      </div>
+
+      <div id="iterative-four-reqs" style="display:none;margin-bottom:8px;text-align:left;font-size:0.75rem;padding:6px 8px;background:var(--bg-secondary);border-radius:var(--radius-sm);">
+        <div style="font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Four Requirements</div>
+        <div id="four-req-thought" style="color:var(--text-muted);">&#x25CB; Character-specific thought</div>
+        <div id="four-req-observation" style="color:var(--text-muted);">&#x25CB; Precise observation</div>
+        <div id="four-req-musical" style="color:var(--text-muted);">&#x25CB; Musical sentence</div>
+        <div id="four-req-break" style="color:var(--text-muted);">&#x25CB; Expectation break</div>
       </div>
 
       <div id="iterative-status-log" style="font-size:0.75rem;color:var(--text-muted);max-height:80px;overflow-y:auto;text-align:left;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:16px;">
