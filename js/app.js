@@ -914,26 +914,26 @@ class App {
       // If chunk was too small or empty, stop to avoid infinite loop
       if (chunkWords < 10) break;
 
-      // === NEW PROSE QUALITY PIPELINE (3-Phase) ===
-      // Replaces the old 6-iteration score-reflect-prevalidate-fix loop
+      // === MICRO-FIX ITERATION PIPELINE ===
+      // 3-4 passes, each fixing exactly 1 issue for a 1-2 point improvement
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_ITERATIONS = 2; // Maximum 2 passes, not 6-8
+        const MAX_MICRO_ITERATIONS = 4;
         let currentText = streamedText;
         let bestScore = 0;
         let bestText = streamedText;
         let bestReview = null;
+        let previousFixes = [];  // Track what was fixed each pass
 
         // Reset iteration display for this chunk
         this._updateIterativeScore(null);
         this._updateIterativeIteration(0, 0);
         this._resetScoreHistory();
 
-        // --- PHASE 2: Deterministic lint (free, instant) ---
+        // --- Phase 2: Deterministic lint ---
         let lintResult = this.analyzer.lintProse(currentText);
-        const hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
-
-        this._updateIterativeLog(`Chunk ${chunkNum}: Lint \u2014 ${hardDefects.length} hard defects, ${lintResult.stats.mediumDefects || 0} medium`);
+        let hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
+        this._updateIterativeLog(`Chunk ${chunkNum}: Lint \u2014 ${hardDefects.length} hard, ${lintResult.stats.mediumDefects || 0} medium defects`);
 
         // Calculate local quality metrics
         if (lintResult.qualityMetrics) {
@@ -941,49 +941,47 @@ class App {
           this._updateIterativeLog(`Chunk ${chunkNum}: Metrics \u2014 Sentence StdDev: ${qm.sentenceLengthStdDev}, Short%: ${qm.shortSentencePct}%, Filters: ${qm.filterWordCount}`);
         }
 
-        // --- Generate intent ledger (useful for context) ---
+        // --- Generate intent ledger once (shared across all iterations) ---
         let intentLedger = null;
         try {
           this._updateIterativePhase('Locking intent\u2026');
           this._updateIterativeLog(`Chunk ${chunkNum}: Generating intent ledger\u2026`);
           intentLedger = await this.generator.generateIntentLedger({
-            plot, chapterOutline, characters, existingProse: currentText, chapterTitle
+            plot, chapterOutline, characters,
+            existingProse: currentText, chapterTitle
           });
           this._updateIterativeLog(`Chunk ${chunkNum}: Intent locked (POV: ${intentLedger.povType}, tense: ${intentLedger.tense})`);
         } catch (err) {
           this._updateIterativeLog(`Chunk ${chunkNum}: Intent ledger failed: ${err.message}. Continuing without.`);
         }
 
-        // --- PHASE 3: Score + Improve (1-2 API calls max) ---
-        for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+        // --- Micro-fix iteration loop ---
+        for (let iteration = 1; iteration <= MAX_MICRO_ITERATIONS; iteration++) {
           if (this._generateCancelled) break;
 
-          this._updateIterativePhase(iteration === 1 ? 'Scoring & improving\u2026' : 'Escalated improvement\u2026');
-          this._showIterativeScoringNotice(true);
-          this._updateIterativeLog(`Chunk ${chunkNum}: Phase 3, iteration ${iteration}\u2026`);
-
-          // Re-lint current text (catches issues from previous iteration)
+          // Re-lint current text each iteration
           lintResult = this.analyzer.lintProse(currentText);
-          const currentHardDefects = lintResult.defects.filter(d => d.severity === 'hard');
+          hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
+
+          this._updateIterativePhase(`Micro-fix pass ${iteration}/${MAX_MICRO_ITERATIONS}\u2026`);
+          this._showIterativeScoringNotice(true);
+          this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration} \u2014 scoring + micro-fix\u2026`);
 
           let result;
           try {
-            result = await this.generator.scoreAndImprove(currentText, {
+            result = await this.generator.scoreAndMicroFix(currentText, {
               threshold: qualityThreshold,
               iterationNum: iteration,
-              previousScore: iteration > 1 ? bestScore : null,
-              previousIssues: iteration > 1 && bestReview?.issues
-                ? bestReview.issues.map(i => i.problem).join('; ')
-                : null,
-              lintDefects: currentHardDefects,
+              maxIterations: MAX_MICRO_ITERATIONS,
+              previousFixes,
+              lintDefects: hardDefects,
               intentLedger,
               genre,
               voice: project?.voice || '',
               aiInstructions,
-              isEscalated: iteration > 1
             });
           } catch (err) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: Score+improve failed: ${err.message}`);
+            this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration} failed: ${err.message}`);
             break;
           }
 
@@ -999,19 +997,26 @@ class App {
           this._updateIterativeScore(score, true);
           this._recordIterationScore(iteration, score);
           this._updateIterativeIteration(iteration, Math.max(bestScore, score));
-          this._updateIterativeLog(`Chunk ${chunkNum}: Score = ${score}/100 (${result.label}) [threshold: ${qualityThreshold}]`);
+
+          // Log what was found and fixed
+          const issueCount = result.issues?.length || 0;
+          this._updateIterativeLog(`Chunk ${chunkNum}: Pass ${iteration} \u2014 Score: ${score}/100 (${result.label}) | Issues found: ${issueCount}`);
+
+          if (result.fixApplied) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: Fix applied \u2014 [${result.fixCategory || '?'}] ${result.fixApplied}`);
+          }
 
           // Log Four Requirements
           if (result.fourRequirementsFound) {
             const found = Object.entries(result.fourRequirementsFound)
               .filter(([_, v]) => v)
-              .map(([k]) => k);
-            this._updateIterativeLog(`Chunk ${chunkNum}: Four Requirements met: ${found.length}/4 (${found.join(', ') || 'none'})`);
+              .map(([k]) => k.replace(/([A-Z])/g, ' $1').trim());
+            this._updateIterativeLog(`Chunk ${chunkNum}: Four Requirements: ${found.length}/4`);
             this._updateFourRequirementsDisplay(result.fourRequirementsFound);
           }
 
           // Record errors to cross-project database (non-blocking)
-          if (this.errorDb && result.issues?.length > 0) {
+          if (this.errorDb && issueCount > 0) {
             this.errorDb.recordFromReview(result, {
               projectId: this.state.currentProjectId,
               chapterId: this.state.currentChapterId,
@@ -1024,32 +1029,46 @@ class App {
           }
 
           // Track best version
-          if (score > bestScore) {
-            bestScore = score;
-            bestReview = result;
-
-            // If improved prose was returned AND it passes word count check, use it
-            if (result.improvedProse && result.improvedProse.length > 20) {
+          if (score >= bestScore) {
+            // If micro-fixed prose was returned, validate it
+            if (result.microFixedProse && result.microFixedProse.length > 20) {
               const preWords = (currentText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-              const postWords = (result.improvedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+              const postWords = (result.microFixedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
               const drift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
 
-              if (drift <= 0.20) {
-                // Verify the improved version doesn't have MORE hard defects
-                const newLint = this.analyzer.lintProse(result.improvedProse);
-                const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
+              // Verify: word count within 15%, no new hard defects
+              const newLint = this.analyzer.lintProse(result.microFixedProse);
+              const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
 
-                if (newHardDefects.length <= currentHardDefects.length) {
-                  currentText = result.improvedProse;
-                  bestText = result.improvedProse;
-                  this._updateIterativeLog(`Chunk ${chunkNum}: Improved prose accepted (${postWords} words, ${newHardDefects.length} hard defects)`);
-                } else {
-                  this._updateIterativeLog(`Chunk ${chunkNum}: Improved prose rejected \u2014 introduced ${newHardDefects.length} hard defects (was ${currentHardDefects.length})`);
-                }
+              if (drift <= 0.15 && newHardDefects.length <= hardDefects.length) {
+                currentText = result.microFixedProse;
+                bestText = result.microFixedProse;
+                bestScore = score;
+                bestReview = result;
+                if (result.fixApplied) previousFixes.push(result.fixApplied);
+                this._updateIterativeLog(`Chunk ${chunkNum}: Micro-fix accepted. Score: ${score}/100`);
               } else {
-                this._updateIterativeLog(`Chunk ${chunkNum}: Improved prose rejected \u2014 word count drift ${Math.round(drift * 100)}%`);
+                // Fix rejected — still update best score if score improved on the unchanged text
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestReview = result;
+                }
+                const reason = drift > 0.15
+                  ? `word count drift ${Math.round(drift * 100)}%`
+                  : `introduced ${newHardDefects.length} hard defects (was ${hardDefects.length})`;
+                this._updateIterativeLog(`Chunk ${chunkNum}: Micro-fix REJECTED \u2014 ${reason}. Keeping previous version.`);
+              }
+            } else {
+              // No fix returned (score met threshold or no fix identified)
+              if (score > bestScore) {
+                bestScore = score;
+                bestReview = result;
               }
             }
+          } else {
+            // Score didn't improve — the fix may have hurt
+            this._updateIterativeLog(`Chunk ${chunkNum}: Score did not improve (${score} vs best ${bestScore}). Reverting.`);
+            currentText = bestText;  // Revert to best version
           }
 
           // Check pass condition
@@ -1058,10 +1077,14 @@ class App {
             break;
           }
 
-          // If this was already the escalated attempt, stop
-          if (iteration >= MAX_ITERATIONS) {
-            this._updateIterativeLog(`Chunk ${chunkNum}: Max iterations reached. Best: ${bestScore}/100`);
+          // If no fix was applied (scorer found nothing to fix), stop iterating
+          if (!result.fixApplied && !result.microFixedProse) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: No fixable issues identified. Best: ${bestScore}/100`);
+            break;
           }
+
+          // Brief pause between iterations to avoid rate limits
+          await new Promise(r => setTimeout(r, 500));
         }
 
         // Restore best version in editor
@@ -1073,11 +1096,12 @@ class App {
           editorEl.innerHTML = this._formatGeneratedHtml(editorEl.innerHTML, chapterTitle);
           if (this.state.currentChapterId) {
             this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+            this._updateLocalWordCounts(this.editor.getContent());
           }
         }
 
         chunkScores.push({ score: bestScore, words: chunkWords });
-        this._updateIterativeLog(`Chunk ${chunkNum}: Complete. Best: ${bestScore}/100`);
+        this._updateIterativeLog(`Chunk ${chunkNum}: Complete. Best: ${bestScore}/100 (${previousFixes.length} fixes applied)`);
       }
 
       // Check if we should stop (close to target or generation cancelled)
@@ -2667,10 +2691,10 @@ class App {
   }
 
   /**
-   * Score the current paragraph and refine it using the 3-phase pipeline.
+   * Score the current paragraph and refine it using the micro-fix pipeline.
    * Phase 2: Deterministic lint (free, instant)
-   * Phase 3: Combined score + improve (1-2 API calls max)
-   * Max 2 iterations total.
+   * Phase 3: Micro-fix iterations (3-4 passes, each fixing exactly 1 issue)
+   * Each pass targets the single highest-impact defect for a 1-2 point improvement.
    */
   async _iterativeScoreAndRefine(currentText, iteration, bestScore) {
     if (this._iterativeCancelled) {
@@ -2678,14 +2702,15 @@ class App {
       return;
     }
 
-    const MAX_ITERATIONS = 2;
+    const MAX_MICRO_ITERATIONS = 4;
     const qualityThreshold = this._currentProject?.qualityThreshold || 90;
     let workingText = currentText;
     let iterationHistory = [];
+    let previousFixes = [];  // Track what was fixed each pass
 
     // --- PHASE 2: Deterministic lint (free, instant) ---
     let lintResult = this.analyzer.lintProse(workingText);
-    const hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
+    let hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
     this._updateIterativeLog(`Lint: ${hardDefects.length} hard defects, ${lintResult.stats.mediumDefects || 0} medium`);
 
     if (lintResult.qualityMetrics) {
@@ -2693,43 +2718,40 @@ class App {
       this._updateIterativeLog(`Metrics: Sentence StdDev: ${qm.sentenceLengthStdDev}, Short%: ${qm.shortSentencePct}%, Filters: ${qm.filterWordCount}`);
     }
 
-    // --- PHASE 3: Score + Improve (1-2 API calls max) ---
-    for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
+    // Get project context once
+    const project = this._currentProject;
+    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+
+    // --- PHASE 3: Micro-fix iterations ---
+    for (let iter = 1; iter <= MAX_MICRO_ITERATIONS; iter++) {
       if (this._iterativeCancelled) {
         this._showIterativeOverlay(false);
         return;
       }
 
-      this._updateIterativePhase(iter === 1 ? `Scoring & improving (${iter}/${MAX_ITERATIONS})\u2026` : `Escalated improvement (${iter}/${MAX_ITERATIONS})\u2026`);
+      // Re-lint current text each iteration
+      lintResult = this.analyzer.lintProse(workingText);
+      hardDefects = lintResult.defects.filter(d => d.severity === 'hard');
+
+      this._updateIterativePhase(`Micro-fix pass ${iter}/${MAX_MICRO_ITERATIONS}\u2026`);
       this._showIterativeScoringNotice(true);
       this._updateIterativeIteration(iter, bestScore);
-      this._updateIterativeLog(`Iteration ${iter}: Scoring & improving\u2026`);
-
-      // Re-lint current text
-      lintResult = this.analyzer.lintProse(workingText);
-      const currentHardDefects = lintResult.defects.filter(d => d.severity === 'hard');
-
-      // Get project context
-      const project = this._currentProject;
-      const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+      this._updateIterativeLog(`Pass ${iter}: Scoring + micro-fix\u2026`);
 
       let result;
       try {
-        result = await this.generator.scoreAndImprove(workingText, {
+        result = await this.generator.scoreAndMicroFix(workingText, {
           threshold: qualityThreshold,
           iterationNum: iter,
-          previousScore: iter > 1 ? bestScore : null,
-          previousIssues: iter > 1 && this._iterativeBestReview?.issues
-            ? this._iterativeBestReview.issues.map(i => i.problem).join('; ')
-            : null,
-          lintDefects: currentHardDefects,
+          maxIterations: MAX_MICRO_ITERATIONS,
+          previousFixes,
+          lintDefects: hardDefects,
           genre: genreInfo?.label || '',
           voice: project?.voice || '',
           aiInstructions: project?.aiInstructions || '',
-          isEscalated: iter > 1
         });
       } catch (err) {
-        this._updateIterativeLog(`Score+improve failed: ${err.message}`);
+        this._updateIterativeLog(`Pass ${iter} failed: ${err.message}`);
         break;
       }
 
@@ -2764,31 +2786,88 @@ class App {
       // Record iteration history
       iterationHistory.push({ iteration: iter, score, subscores: { ...result.subscores }, issueCount: result.issues?.length || 0, text: workingText });
 
-      // Track best version
-      if (score > bestScore) {
-        bestScore = score;
-        this._iterativeBestText = workingText;
-        this._iterativeBestReview = result;
-      }
+      // Log what was found and fixed
+      const issueCount = result.issues?.length || 0;
+      this._updateIterativeLog(`Pass ${iter}: Score = ${score}/100 (${result.label}) | Issues: ${issueCount}`);
 
-      // Update UI
-      this._updateIterativeScore(score, true);
-      this._recordIterationScore(iter, score);
-      this._updateIterativeIteration(iter, bestScore);
-      this._updateIterativeLog(`Iteration ${iter}: Score = ${score}/100${score < bestScore ? ` (best: ${bestScore})` : ''} [threshold: ${qualityThreshold}]`);
+      if (result.fixApplied) {
+        this._updateIterativeLog(`Pass ${iter}: Fix applied \u2014 [${result.fixCategory || '?'}] ${result.fixApplied}`);
+      }
 
       // Log Four Requirements
       if (result.fourRequirementsFound) {
         const found = Object.entries(result.fourRequirementsFound)
           .filter(([_, v]) => v)
-          .map(([k]) => k);
-        this._updateIterativeLog(`Four Requirements met: ${found.length}/4 (${found.join(', ') || 'none'})`);
+          .map(([k]) => k.replace(/([A-Z])/g, ' $1').trim());
+        this._updateIterativeLog(`Four Requirements: ${found.length}/4`);
         this._updateFourRequirementsDisplay(result.fourRequirementsFound);
       }
 
+      // Update UI
+      this._updateIterativeScore(score, true);
+      this._recordIterationScore(iter, score);
+      this._updateIterativeIteration(iter, Math.max(bestScore, score));
+
       this._iterPrevScore = score;
-      this._iterPrevIssueCount = result.issues?.length || 0;
+      this._iterPrevIssueCount = issueCount;
       this._iterPrevSubscores = result.subscores;
+
+      // Track best version
+      if (score >= bestScore) {
+        // If micro-fixed prose was returned, validate it
+        if (result.microFixedProse && result.microFixedProse.length > 20) {
+          const preWords = (workingText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+          const postWords = (result.microFixedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
+          const drift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
+
+          // Verify: word count within 15%, no new hard defects
+          const newLint = this.analyzer.lintProse(result.microFixedProse);
+          const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
+
+          if (drift <= 0.15 && newHardDefects.length <= hardDefects.length) {
+            workingText = result.microFixedProse;
+            this._lastGeneratedText = workingText;
+            bestScore = score;
+            this._iterativeBestText = workingText;
+            this._iterativeBestReview = result;
+            if (result.fixApplied) previousFixes.push(result.fixApplied);
+
+            // Update editor
+            const baseContent = this._preGenerationContent || '';
+            const editorEl = this.editor.element;
+            const paragraphs = workingText.split('\n\n');
+            const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+            editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
+            if (this.state.currentChapterId) {
+              this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
+              this._updateLocalWordCounts(this.editor.getContent());
+            }
+            this._updateIterativeLog(`Micro-fix accepted. Score: ${score}/100`);
+          } else {
+            // Fix rejected — still update best score if improved
+            if (score > bestScore) {
+              bestScore = score;
+              this._iterativeBestText = workingText;
+              this._iterativeBestReview = result;
+            }
+            const reason = drift > 0.15
+              ? `word count drift ${Math.round(drift * 100)}%`
+              : `introduced ${newHardDefects.length} hard defects (was ${hardDefects.length})`;
+            this._updateIterativeLog(`Micro-fix REJECTED \u2014 ${reason}. Keeping previous version.`);
+          }
+        } else {
+          // No fix returned (score met threshold or no fix identified)
+          if (score > bestScore) {
+            bestScore = score;
+            this._iterativeBestText = workingText;
+            this._iterativeBestReview = result;
+          }
+        }
+      } else {
+        // Score didn't improve — revert
+        this._updateIterativeLog(`Score did not improve (${score} vs best ${bestScore}). Reverting.`);
+        workingText = this._iterativeBestText || currentText;
+      }
 
       // === THRESHOLD CHECK ===
       if (bestScore >= qualityThreshold) {
@@ -2806,43 +2885,14 @@ class App {
         return;
       }
 
-      // If improved prose was returned, apply it with anti-regression checks
-      if (result.improvedProse && result.improvedProse.length > 20) {
-        const preWords = (workingText.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-        const postWords = (result.improvedProse.match(/[a-zA-Z\u2019'''-]+/g) || []).length;
-        const wordCountDrift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
-
-        if (wordCountDrift <= 0.25) {
-          const newLint = this.analyzer.lintProse(result.improvedProse);
-          const newHardDefects = newLint.defects.filter(d => d.severity === 'hard');
-
-          if (newHardDefects.length <= currentHardDefects.length) {
-            workingText = result.improvedProse;
-            this._lastGeneratedText = workingText;
-
-            // Update editor
-            const baseContent = this._preGenerationContent || '';
-            const editorEl = this.editor.element;
-            const paragraphs = workingText.split('\n\n');
-            const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
-            editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
-            if (this.state.currentChapterId) {
-              this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() }).catch(() => {});
-              this._updateLocalWordCounts(this.editor.getContent());
-            }
-            this._updateIterativeLog(`Improved prose accepted (${postWords} words, ${newHardDefects.length} hard defects)`);
-          } else {
-            this._updateIterativeLog(`Improved prose rejected \u2014 introduced ${newHardDefects.length} hard defects (was ${currentHardDefects.length})`);
-          }
-        } else {
-          this._updateIterativeLog(`Improved prose rejected \u2014 word count drift ${Math.round(wordCountDrift * 100)}%`);
-        }
-      }
-
-      if (iter >= MAX_ITERATIONS) {
-        this._updateIterativeLog(`Max iterations (${MAX_ITERATIONS}) reached. Best: ${bestScore}/${qualityThreshold}`);
+      // If no fix was applied, stop iterating
+      if (!result.fixApplied && !result.microFixedProse) {
+        this._updateIterativeLog(`No fixable issues identified. Best: ${bestScore}/100`);
         break;
       }
+
+      // Brief pause between iterations to avoid rate limits
+      await new Promise(r => setTimeout(r, 500));
     }
 
     // === FINAL: Show the final fix screen with best version ===
