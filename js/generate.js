@@ -993,10 +993,22 @@ BANNED WORDS/PHRASES:
 
 BANNED STRUCTURES:
 - Starting more than 1 sentence with "As" or "While" per 500 words
-- Tricolons (lists of three) more than 1 per 1000 words
+- ABSOLUTELY ZERO tricolons. Never write any list of three items, three adjectives, three parallel clauses, three parallel sentences, or three items joined by 'and'. This is the #1 AI writing pattern. When you need to list things, use EXACTLY TWO items. If you must mention three things, put the third in its own separate sentence with different structure. Check EVERY sentence you write for groups of three before committing it.
+  BANNED examples: "salt pork, eggs, bread" (three food items) → use "salt pork and eggs"
+  BANNED: "She knew X. She knew Y. She knew Z." (three parallel sentences) → use two, or vary the structure
+  BANNED: "its weight, its smoothness, the hollow" (three sensory items) → pick the best two
+  BANNED: "draft horses first, then the milk cows, then the hogs" (three sequential items) → "draft horses and milk cows first, then the hogs"
+  BANNED: "the cotton sheet and the rough palms and the animal sounds" (three items with 'and') → pick two
 - Telling emotions: "She felt sad", "He was angry", "Fear gripped her"
 - PET phrases (body-reaction shortcuts): throat tightened, chest tightened, breath caught, heart pounded, eyes widened, jaw clenched, fists clenched, stomach churned, bile rose, pulse quickened, etc.
 - Formulaic paragraph structure: observation \u2192 feeling \u2192 action \u2192 reflection
+- NEVER end a paragraph with a polished aphorism, thematic summary, or epigrammatic punch line. These are the #2 AI writing pattern. Real literary fiction lets paragraphs end on concrete action or observation, not on a crafted "insight." If your paragraph's last sentence sounds like it could be an Instagram caption or book jacket quote, rewrite it as a plain concrete observation.
+  BANNED: "This was not cruelty. It was the only imagination available to him." (negation \u2192 thematic restatement)
+  BANNED: "Work made its own argument, and daylight was the only currency that could not be saved." (personified abstraction \u2192 aphorism)
+  BANNED: "a distinction that would harden into a fissure" (metaphorical abstraction as closer)
+  INSTEAD: End paragraphs with a specific observed detail, an action, or a plain declarative sentence
+- NEVER use personified abstractions: don't give agency to abstract nouns. "Work made its own argument" gives 'work' human agency. "The arithmetic of survival" personifies math. "A distinction hardening into a fissure" personifies a concept. Use concrete subjects doing concrete things.
+- NEVER use the construction "the way a [metaphor]" \u2014 e.g., "the way a sum could separate the living from the dead" or "the way a man rereads a letter." This is an overwrought simile/epigram structure that AI prose gravitates toward.
 
 INSTEAD OF PET PHRASES:
 Show emotion through character-specific action:

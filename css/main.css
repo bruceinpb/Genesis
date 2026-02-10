@@ -363,9 +363,9 @@ body.no-bounce {
   }
 }
 
-/* Chapter Toolbar (Select All, Delete Selected, Accept Outline) */
+/* Chapter Toolbar (Select All, Delete Selected, Accept Outline) — moved to chapter nav toolbar */
 .chapter-toolbar {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 6px;
   padding: 8px 8px 6px;
@@ -2543,4 +2543,244 @@ select.form-input {
 .nav-item.matter-item.empty .nav-item-name {
   font-style: italic;
   color: var(--text-muted);
+}
+
+/* ============================================
+   Chapter Nav Toolbar
+   ============================================ */
+
+.chapter-nav-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary, rgba(255,255,255,0.03));
+  flex-wrap: wrap;
+}
+
+.nav-select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nav-select-all-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+}
+
+.nav-toolbar-btn {
+  font-size: 0.65rem !important;
+  padding: 2px 6px !important;
+  white-space: nowrap;
+}
+
+.nav-delete-btn {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+
+.nav-delete-btn:disabled {
+  opacity: 0.3;
+}
+
+.nav-accept-btn {
+  color: var(--accent-primary) !important;
+  border-color: var(--accent-primary) !important;
+  margin-left: auto;
+}
+
+.nav-accept-btn:hover {
+  background: var(--accent-subtle);
+}
+
+/* ============================================
+   Translation Modal
+   ============================================ */
+
+.translation-step {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.translation-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trans-option {
+  background: var(--bg-tertiary, rgba(255,255,255,0.03));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.trans-option-header {
+  display: flex;
+  align-items: center;
+}
+
+.trans-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.trans-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-primary);
+}
+
+.trans-option-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 4px 0 0 24px;
+  line-height: 1.4;
+}
+
+.trans-option-desc em {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.trans-option-detail {
+  margin: 6px 0 0 24px;
+}
+
+.form-input-sm {
+  font-size: 0.75rem;
+  padding: 4px 8px;
+}
+
+.trans-scope-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.trans-scope-option:has(input:checked) {
+  border-color: var(--accent-primary);
+  background: rgba(226, 183, 20, 0.1);
+}
+
+/* ============================================
+   Translation Side-by-Side View
+   ============================================ */
+
+.editor-area.translation-active {
+  display: flex;
+  gap: 0;
+  padding: 0;
+}
+
+.editor-area.translation-active .editor-container {
+  flex: 1;
+  min-width: 0;
+  border-right: 1px solid var(--border-color);
+  max-width: none;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.editor-area.translation-active .translation-pane {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-area.translation-active .translation-pane .editor {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.editor-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  min-height: 36px;
+}
+
+.pane-label {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--accent-primary);
+}
+
+.pane-lang {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary, rgba(255,255,255,0.05));
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.pane-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.translation-progress {
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.translation-progress-bar {
+  height: 3px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s;
+}
+
+.translation-progress-text {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  display: block;
+}
+
+/* Mobile: stack vertically */
+@media (max-width: 768px) {
+  .editor-area.translation-active {
+    flex-direction: column;
+  }
+  .editor-area.translation-active .editor-container {
+    flex: none;
+    height: 50%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .editor-area.translation-active .translation-pane {
+    flex: none;
+    height: 50%;
+  }
 }
