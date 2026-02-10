@@ -284,21 +284,45 @@ ${userInstructions}`;
    * Score prose quality on a 100-point scale and detect AI patterns.
    * Returns { score, label, issues[], aiPatterns[], summary }
    */
-  async scoreProse(proseText, { isRewrite, previousIssueCount } = {}) {
+  async scoreProse(proseText, { isRewrite, previousIssueCount, previousSubscores } = {}) {
     if (!this.apiKey) {
       throw new Error('No API key set.');
     }
 
-    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
+    // Build anchoring context for rewrites when previous subscores are available
+    let rewriteContext = '';
+    if (isRewrite && previousSubscores) {
+      const subscoreLines = Object.entries(previousSubscores)
+        .map(([k, v]) => `  ${k}: ${v}`)
+        .join('\n');
+      rewriteContext = `IMPORTANT CONTEXT: This prose was rewritten to fix ${previousIssueCount || 'several'} identified issues.
+PREVIOUS SUB-SCORES (from the pre-fix version):
+${subscoreLines}
 
-${isRewrite ? `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues.
 SCORING RULES FOR REWRITES:
-- Score this text COMPLETELY FRESH — as if you have never seen it before
+- Use the previous sub-scores as your BASELINE REFERENCE
+- For each dimension, compare the rewritten text against what the previous score reflected
+- Only CHANGE a sub-score if you see CONCRETE, SPECIFIC evidence that the dimension improved or degraded
+- If a dimension reads roughly the same as before, keep the same sub-score — do NOT introduce random variance
+- Do NOT artificially inflate or deflate scores
+- Do NOT flag borderline cases or nitpick — only flag clear, unambiguous problems
+- Do NOT penalize the same dimension twice for the same type of issue
+- A sub-score should only decrease if you can point to specific text that is WORSE than what the score previously reflected
+- A sub-score should only increase if you can point to specific text that is BETTER than what the score previously reflected`;
+    } else if (isRewrite) {
+      rewriteContext = `IMPORTANT CONTEXT: This prose was just rewritten to fix ${previousIssueCount || 'several'} identified issues.
+SCORING RULES FOR REWRITES:
+- Score this text on its own merits
 - Do NOT artificially inflate or deflate the score
 - Do NOT flag borderline cases or nitpick — only flag clear, unambiguous problems that a professional editor would actually flag
 - Do NOT penalize the same dimension twice for the same type of issue
 - If a passage is competent but not exceptional, that is NOT an issue — only flag things that are clearly wrong
-- Judge each dimension independently based SOLELY on the text in front of you` : ''}
+- Judge each dimension independently based on the text in front of you`;
+    }
+
+    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You score prose honestly and critically on a 100-point scale. You also detect common AI-generated writing patterns.
+
+${rewriteContext}
 
 SCORING INSTRUCTIONS — Score each sub-category independently, then sum them:
 1. Sentence variety and rhythm (0-15): Count sentence length variation. If most sentences are similar length, score 4-6. If there's genuine variety between short punchy and long flowing, score 10+.
@@ -893,18 +917,37 @@ RULES:
 - Prioritize fixes by estimated point impact (highest first)
 - Never suggest introducing: em dashes, filter words (felt/saw/noticed/seemed/realized), AI-telltale words (delicate/intricate/testament/tapestry/symphony/nestled), PET phrases, tricolons
 - Focus on fixes that will MEASURABLY improve the score toward the threshold
-- Limit to the top 8 highest-impact fixes — more fixes increases the risk of regression`;
+- CRITICAL FIX COUNT LIMITS based on gap size:
+  * Gap of 1-2 points: MAX 2 fixes (fewer fixes = less regression risk)
+  * Gap of 3-5 points: MAX 4 fixes
+  * Gap of 6+ points: MAX 8 fixes
+- More fixes increases the risk of regression — be conservative
+- Ask yourself for EACH fix: "Is this fix clearly better, or just different?" Only include fixes that are CLEARLY better`;
+
+    // Dynamically set max fixes based on gap
+    const maxFixes = (threshold - score) <= 2 ? 2 : (threshold - score) <= 5 ? 4 : 8;
+    systemPrompt += `\n\nFor this specific case (gap: ${threshold - score} pts), limit to ${maxFixes} fixes maximum.`;
 
     if (previousFixLists && previousFixLists.length > 0) {
+      const scoreGap = threshold - score;
       systemPrompt += `\n\nIMPORTANT: Previous fix lists have already been attempted but the score has not reached the threshold.
 Previous approaches that did NOT work sufficiently:
 ${previousFixLists.map((fl, i) => `Attempt ${i + 1}: ${fl.summary || fl.fixes?.map(f => f.description).join('; ')}`).join('\n')}
 
-You MUST take a DIFFERENT and BOLDER approach this time. Do not repeat the same types of fixes. Consider:
-- Restructuring entire sentences rather than word swaps
-- Adding vivid new sensory details rather than tweaking existing ones
-- Dramatically varying sentence rhythm
-- Reworking weak passages more substantially`;
+${scoreGap <= 3 ? `CRITICAL — NEAR-THRESHOLD STRATEGY (only ${scoreGap} pts needed):
+The score is VERY close to threshold. Previous bold approaches FAILED because they disrupted the prose's existing strengths.
+YOU MUST:
+- Make FEWER fixes, not more (1-3 maximum)
+- Target ONLY the single weakest sub-score dimension
+- Each fix must be a precise word or phrase swap — do NOT rewrite sentences
+- If a "fix" might disrupt voice, rhythm, or existing strengths, DO NOT make it
+- Ask yourself: "Is this change clearly and unambiguously better, or just different?"
+- "Different" is NOT "better" — only propose a fix if the improvement is obvious
+- Preserve everything that earned the current high score` : `You MUST take a DIFFERENT approach this time. Do not repeat the same types of fixes. Consider:
+- Targeting DIFFERENT sub-score dimensions than previous attempts
+- Fewer, more targeted fixes rather than many broad changes
+- Focus on the lowest-scoring dimension specifically
+- Each fix must be clearly better, not just different`}`;
     }
 
     if (degradationAnalysis) {
