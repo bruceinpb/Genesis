@@ -387,6 +387,44 @@ class ErrorDatabase {
   }
 
   /**
+   * One-time cleanup: merge duplicate patterns that have the same text
+   * but were stored with different keys due to the old problem-based keying.
+   */
+  async deduplicateExistingPatterns() {
+    const all = await this.storage.getAll('errorPatterns');
+    const byText = {};
+    const toDelete = [];
+
+    for (const p of all) {
+      if (!p.text) continue;
+      const key = p.text.toLowerCase().trim().slice(0, 80);
+      if (byText[key]) {
+        // Merge into the first entry
+        const existing = byText[key];
+        existing.frequency = (existing.frequency || 1) + (p.frequency || 1) - 1;
+        existing.estimatedImpact = Math.max(existing.estimatedImpact || 1, p.estimatedImpact || 1);
+        if (p.severity === 'high') existing.severity = 'high';
+        toDelete.push(p.id);
+      } else {
+        byText[key] = p;
+      }
+    }
+
+    // Save merged entries
+    for (const p of Object.values(byText)) {
+      await this.storage.put('errorPatterns', p);
+    }
+
+    // Delete duplicates
+    for (const id of toDelete) {
+      await this.storage.delete('errorPatterns', id);
+    }
+
+    this._cache = null;
+    console.log(`[ErrorDB] Deduplicated: merged ${toDelete.length} duplicate patterns`);
+  }
+
+  /**
    * Get summary statistics about the error database.
    */
   async getStats() {
