@@ -363,7 +363,7 @@ This is NOT optional. These caps exist because prose with many AI patterns canno
 KNOWN AI WRITING PATTERNS to detect:
 - Overuse of "delicate", "intricate", "testament to", "tapestry", "symphony of", "dance of", "nestled", "whispering"
 - Starting sentences with "As" or "While" excessively (count them)
-- Lists of three (tricolons) used too frequently
+- ZERO tricolons. Never write any list of three items, three adjectives, three clauses, or three parallel phrases. This is the single most common AI writing pattern. If you need multiple items, use exactly two. If you need three things, make the third its own separate sentence. This is non-negotiable
 - Purple prose or overly flowery descriptions
 - Telling emotions instead of showing them ("She felt sad", "He was angry")
 - Formulaic paragraph structures (observation → feeling → action → reflection)
@@ -1028,6 +1028,16 @@ TRICOLONS (lists of three) — THE #1 AI TELL:
   FAIL: "She was [X] by [Y], [X] by [Y], and [X] by [Y]" (three parallel phrases)
   FAIL: Three consecutive short sentences about the same subject (acts as a tricolon of sentences)
   PASS: Use two items. Always two. If you need three things, make the third its own sentence.
+
+  TRICOLON EXAMPLES THAT ARE BANNED:
+  BAD: "He was red, wailing, unremarkable." (three adjectives)
+  GOOD: "He was red and wailing." or "He was red. He was wailing. He was unremarkable." (separate sentences)
+  BAD: "About the blood. About the heat. About the sky." (three parallel fragments)
+  GOOD: "About the blood. About the flat white sky." (two items only)
+  BAD: "its weight, its smoothness, the hollow" (three sensory items)
+  GOOD: "its smoothness, the hollow where the thread had been" (two items)
+  BAD: "Cleared timber. Dug ditches. Set fence posts." (three parallel action sentences)
+  GOOD: "He had cleared the timber and dug the drainage ditches. The fence posts he set himself." (vary structure)
 
 PERSONIFIED ABSTRACTIONS — THE #2 AI TELL:
   FAIL: "where language had weight and color" (language cannot have weight)

@@ -39,6 +39,9 @@
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
 
   --sidebar-width: 280px;
+  --chapter-nav-width: 220px;
+  --chapter-nav-min-width: 160px;
+  --chapter-nav-max-width: 400px;
   --toolbar-height: 52px;
   --status-height: 36px;
 }
