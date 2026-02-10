@@ -573,6 +573,11 @@ class App {
         </button>`;
 
       container.innerHTML = html;
+
+      // Show/hide chapter filter bar based on whether translations exist
+      const hasTranslations = chapters.some(ch => ch.isTranslation);
+      const filterBar = document.getElementById('chapter-filter-bar');
+      if (filterBar) filterBar.style.display = hasTranslations ? 'flex' : 'none';
     } catch (err) {
       console.error('Failed to render chapter list:', err);
     }
@@ -2357,6 +2362,7 @@ class App {
     }
 
     this._updateWordsPerChapter();
+    this._populateExportButtons();
     this._showPanel('book-structure');
   }
 
@@ -4327,6 +4333,40 @@ class App {
       });
     }
 
+    // --- Translation split view ---
+    document.getElementById('btn-close-split')?.addEventListener('click', () => {
+      this._closeTranslationSplitView();
+    });
+
+    document.getElementById('btn-export-translation-docx')?.addEventListener('click', async () => {
+      await this._exportTranslationDocx();
+    });
+
+    // Close split view on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const overlay = document.getElementById('translation-split-view');
+        if (overlay && overlay.style.display !== 'none') {
+          this._closeTranslationSplitView();
+        }
+      }
+    });
+
+    // --- Export original manuscript DOCX ---
+    document.getElementById('btn-export-original-docx')?.addEventListener('click', async () => {
+      await this._exportFullManuscriptDocx(null);
+    });
+
+    // --- Chapter filter ---
+    document.querySelectorAll('.chapter-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.chapter-filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const filter = btn.dataset.filter;
+        this._filterChapterList(filter);
+      });
+    });
+
     // --- Panel overlay close ---
     document.getElementById('panel-overlay')?.addEventListener('click', () => this._closeAllPanels());
     document.querySelectorAll('.panel-close').forEach(btn => {
@@ -4852,10 +4892,27 @@ class App {
       if (wasCurrentChapter) {
         this.state.currentChapterId = null;
         this.editor.clear();
+
+        // Fallback: clear DOM directly in case editor.clear() missed anything
+        const editorEl = document.querySelector('.ProseMirror')
+          || document.querySelector('[contenteditable="true"]')
+          || document.getElementById('editor');
+        if (editorEl && editorEl.innerHTML) editorEl.innerHTML = '';
+
+        // Cancel any pending auto-save
+        if (this._autoSaveTimer) {
+          clearTimeout(this._autoSaveTimer);
+          this._autoSaveTimer = null;
+        }
+
+        // Reset all word count displays
         const wcEl = document.getElementById('status-words');
         if (wcEl) wcEl.textContent = '0';
         const fwcWords = document.getElementById('fwc-words');
         if (fwcWords) fwcWords.textContent = '0';
+        document.querySelectorAll('.word-count, #word-count, [data-word-count]').forEach(el => {
+          if (el.textContent.includes('Words:')) el.textContent = 'Words: 0';
+        });
       }
 
       await this.fs.deleteChapter(chapterId);
@@ -4920,16 +4977,34 @@ class App {
       const idsToDelete = Array.from(checked).map(cb => cb.dataset.chapterId);
       const deletedCurrentChapter = idsToDelete.includes(this.state.currentChapterId);
 
-      for (const chapterId of idsToDelete) {
-        if (this.state.currentChapterId === chapterId) {
-          this.state.currentChapterId = null;
-          this.editor.clear();
-          const wcEl = document.getElementById('status-words');
-          if (wcEl) wcEl.textContent = '0';
-          const fwcWords = document.getElementById('fwc-words');
-          if (fwcWords) fwcWords.textContent = '0';
+      // If deleting the current chapter, clear editor immediately
+      if (deletedCurrentChapter) {
+        this.state.currentChapterId = null;
+        this.editor.clear();
+
+        // Fallback: clear DOM directly
+        const editorEl = document.querySelector('.ProseMirror')
+          || document.querySelector('[contenteditable="true"]')
+          || document.getElementById('editor');
+        if (editorEl && editorEl.innerHTML) editorEl.innerHTML = '';
+
+        // Cancel any pending auto-save
+        if (this._autoSaveTimer) {
+          clearTimeout(this._autoSaveTimer);
+          this._autoSaveTimer = null;
         }
 
+        // Reset all word count displays
+        const wcEl = document.getElementById('status-words');
+        if (wcEl) wcEl.textContent = '0';
+        const fwcWords = document.getElementById('fwc-words');
+        if (fwcWords) fwcWords.textContent = '0';
+        document.querySelectorAll('.word-count, #word-count, [data-word-count]').forEach(el => {
+          if (el.textContent.includes('Words:')) el.textContent = 'Words: 0';
+        });
+      }
+
+      for (const chapterId of idsToDelete) {
         await this.fs.deleteChapter(chapterId);
         delete this._chapterWordCounts[chapterId];
       }
@@ -6547,18 +6622,19 @@ ${adaptationRules}
 
   async _performTranslation(languages) {
     const btn = document.getElementById('btn-perform-translation');
-    const originalText = btn.textContent;
+    const originalBtnText = btn.textContent;
     btn.disabled = true;
 
     try {
-      // Get current chapter content from the editor
-      const content = this.editor?.getContent();
-      if (!content || content.trim().length < 50) {
+      // ── 1. Validate ──
+      const content = this.editor?.getContent() || '';
+      const plainText = content.replace(/<[^>]+>/g, '').trim();
+
+      if (!plainText || plainText.length < 50) {
         alert('No prose in the current chapter to translate. Write or generate prose first.');
         return;
       }
 
-      // Get the API key (same one used for prose generation)
       const apiKey = this.generator?.apiKey;
       if (!apiKey) {
         alert('No Anthropic API key found. Please set your API key in settings.');
@@ -6573,46 +6649,48 @@ ${adaptationRules}
         return;
       }
 
-      // Get chapter title from Firestore
+      // Get chapter info from Firestore
       const chapter = await this.fs.getChapter(chapterId);
       const chapterTitle = chapter?.title || 'Untitled Chapter';
+      const chapterNumber = chapter?.chapterNumber || 1;
 
-      const langNames = {
-        spanish:    { name: 'Spanish',    native: 'español',    code: 'es' },
-        french:     { name: 'French',     native: 'français',   code: 'fr' },
-        italian:    { name: 'Italian',    native: 'italiano',   code: 'it' },
-        german:     { name: 'German',     native: 'Deutsch',    code: 'de' },
-        portuguese: { name: 'Portuguese', native: 'português',  code: 'pt' },
-        japanese:   { name: 'Japanese',   native: '日本語',      code: 'ja' }
+      // ── 2. Language config ──
+      const langConfig = {
+        spanish:    { name: 'Spanish',    native: 'espa\u00f1ol',    code: 'es', flag: '\uD83C\uDDEA\uD83C\uDDF8', chapterWord: 'Cap\u00edtulo'  },
+        french:     { name: 'French',     native: 'fran\u00e7ais',   code: 'fr', flag: '\uD83C\uDDEB\uD83C\uDDF7', chapterWord: 'Chapitre' },
+        italian:    { name: 'Italian',    native: 'italiano',   code: 'it', flag: '\uD83C\uDDEE\uD83C\uDDF9', chapterWord: 'Capitolo' },
+        german:     { name: 'German',     native: 'Deutsch',    code: 'de', flag: '\uD83C\uDDE9\uD83C\uDDEA', chapterWord: 'Kapitel'  },
+        portuguese: { name: 'Portuguese', native: 'portugu\u00eas',  code: 'pt', flag: '\uD83C\uDDE7\uD83C\uDDF7', chapterWord: 'Cap\u00edtulo' },
+        japanese:   { name: 'Japanese',   native: '\u65E5\u672C\u8A9E',      code: 'ja', flag: '\uD83C\uDDEF\uD83C\uDDF5', chapterWord: '\u7B2C'       }
       };
 
       const results = {};
       let completed = 0;
 
+      // ── 3. Translate each language ──
       for (const lang of languages) {
         completed++;
-        btn.textContent = `Translating ${completed}/${languages.length}: ${langNames[lang].name}…`;
+        const lc = langConfig[lang];
+        btn.textContent = `Translating ${completed}/${languages.length}: ${lc.flag} ${lc.name}\u2026`;
 
-        const langInfo = langNames[lang];
+        const systemPrompt = `You are an expert literary translator specializing in ${lc.name} (${lc.native}). Your translations read as if originally written by a skilled native-speaker novelist.
 
-        const systemPrompt = `You are an expert literary translator specializing in ${langInfo.name} (${langInfo.native}). Your translations are indistinguishable from prose originally written in ${langInfo.name} by a native speaker.
-
-TRANSLATION RULES:
-- Preserve the author's narrative voice, tone, rhythm, and style
-- Adapt idioms, metaphors, and cultural references naturally — do NOT translate literally
-- Use vocabulary and sentence structures natural to ${langInfo.name} literary fiction
-- Preserve paragraph breaks exactly as they appear
-- Preserve all dialogue formatting and punctuation conventions appropriate for ${langInfo.name}
-- For terms of endearment, humor, and emotional language: use what a native ${langInfo.name} reader would expect, not word-for-word equivalents
-- Do NOT add translator notes, commentary, or explanations
-- Do NOT change the content, plot, or character actions
-- Output ONLY the translated prose, nothing else
-${lang === 'japanese' ? '\nUse standard modern Japanese (標準語). Use appropriate keigo levels based on character relationships.' : ''}
-${lang === 'spanish' ? '\nUse neutral Latin American Spanish unless the setting specifically calls for Castilian.' : ''}
-${lang === 'portuguese' ? '\nUse Brazilian Portuguese (português brasileiro).' : ''}`;
+RULES:
+- Preserve the author's narrative voice, tone, rhythm, and literary style
+- Adapt idioms, metaphors, and cultural references naturally \u2014 never translate literally
+- Use vocabulary and sentence structures natural to ${lc.name} literary fiction
+- Preserve all paragraph breaks exactly
+- Use ${lc.name} dialogue punctuation conventions (e.g., guillemets for French/Italian/Spanish)
+- For emotional language, terms of endearment, humor: use what a native reader expects
+- Output ONLY the translated prose \u2014 no notes, no commentary, no explanations
+- Do NOT change content, plot, character actions, or proper nouns (character names stay in English unless they have established translations)
+${lang === 'japanese' ? '\nUse standard modern Japanese (\u6A19\u6E96\u8A9E). Appropriate keigo for character relationships. Use Japanese quotation marks \u300C\u300D.' : ''}
+${lang === 'spanish' ? '\nUse neutral Latin American Spanish.' : ''}
+${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}`;
 
         try {
-          const response = await fetch('https://api.anthropic.com/v1/messages', {
+          // ── 3a. Translate the prose ──
+          const proseResponse = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -6626,61 +6704,136 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese (português brasileiro).' 
               system: systemPrompt,
               messages: [{
                 role: 'user',
-                content: `Translate the following prose into ${langInfo.name}:\n\n${content}`
+                content: `Translate the following prose into ${lc.name}:\n\n${plainText}`
               }]
             })
           });
 
-          if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(`API error ${response.status}: ${errData?.error?.message || response.statusText}`);
+          if (!proseResponse.ok) {
+            const errData = await proseResponse.json().catch(() => ({}));
+            throw new Error(`API ${proseResponse.status}: ${errData?.error?.message || proseResponse.statusText}`);
           }
 
-          const data = await response.json();
-          const translatedText = data.content
-            ?.filter(block => block.type === 'text')
-            .map(block => block.text)
+          const proseData = await proseResponse.json();
+          const translatedProse = proseData.content
+            ?.filter(b => b.type === 'text')
+            .map(b => b.text)
             .join('\n') || '';
 
-          if (!translatedText || translatedText.trim().length < 20) {
-            throw new Error('Translation returned empty or too short');
+          if (translatedProse.trim().length < 20) {
+            throw new Error('Translation too short or empty');
           }
 
-          results[lang] = translatedText;
+          // ── 3b. Translate the chapter title ──
+          const titleResponse = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+              model: this.generator.model || 'claude-sonnet-4-20250514',
+              max_tokens: 200,
+              messages: [{
+                role: 'user',
+                content: `Translate this chapter title into ${lc.name}. Return ONLY the translated title, nothing else.\n\nTitle: "${chapterTitle}"`
+              }]
+            })
+          });
 
-          // Save translation to Firestore
-          // Uses flat collection with composite key: chapterId_langCode
-          const translationDocId = `${chapterId}_${langInfo.code}`;
+          let translatedTitle = chapterTitle;
+          if (titleResponse.ok) {
+            const titleData = await titleResponse.json();
+            const rawTitle = titleData.content
+              ?.filter(b => b.type === 'text')
+              .map(b => b.text)
+              .join('') || '';
+            // Clean up any quotes the model might add
+            const cleanedTitle = rawTitle.replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, '').trim();
+            if (cleanedTitle) translatedTitle = cleanedTitle;
+          }
+
+          // ── 3c. Build the translated chapter name with flag indicator ──
+          const translatedChapterName = `${lc.flag} ${translatedTitle}`;
+
+          // ── 3d. Create a new chapter in Firestore for the translation ──
+          const translatedWordCount = translatedProse.split(/\s+/).filter(w => w.length > 0).length;
+          const translationChapterData = await this.fs.createChapter({
+            projectId: projectId,
+            chapterNumber: chapterNumber,
+            title: translatedChapterName,
+            content: translatedProse,
+            status: 'translation'
+          });
+
+          // Update the chapter with translation metadata and recalculate word count
+          await this.fs.updateChapter(translationChapterData.id, {
+            content: translatedProse,
+            isTranslation: true,
+            sourceChapterId: chapterId,
+            sourceChapterTitle: chapterTitle,
+            language: lang,
+            languageCode: lc.code,
+            languageName: lc.name,
+            languageFlag: lc.flag,
+            translatedAt: new Date().toISOString()
+          });
+
+          // Also save to translations collection for backward compat
+          const translationDocId = `${chapterId}_${lc.code}`;
           await this.fs.saveTranslation(translationDocId, {
             language: lang,
-            languageCode: langInfo.code,
-            languageName: langInfo.name,
-            content: translatedText,
-            sourceWordCount: content.split(/\s+/).length,
+            languageCode: lc.code,
+            languageName: lc.name,
+            content: translatedProse,
+            sourceWordCount: plainText.split(/\s+/).length,
             translatedAt: new Date().toISOString(),
             chapterId: chapterId,
             projectId: projectId,
-            chapterTitle: chapterTitle
+            chapterTitle: chapterTitle,
+            translationChapterId: translationChapterData.id
           });
 
-          console.log(`Translation to ${langInfo.name} saved`);
+          results[lang] = {
+            success: true,
+            translatedProse,
+            translatedTitle: translatedChapterName,
+            translationChapterId: translationChapterData.id,
+            langConfig: lc
+          };
+
+          console.log(`${lc.flag} ${lc.name} translation saved as chapter: ${translatedChapterName}`);
 
         } catch (langErr) {
-          console.error(`Translation to ${langInfo.name} failed:`, langErr);
-          results[lang] = `ERROR: ${langErr.message}`;
+          console.error(`${lc.name} translation failed:`, langErr);
+          results[lang] = { success: false, error: langErr.message };
         }
       }
 
-      // Show summary
-      const successCount = Object.values(results).filter(v => !v.startsWith('ERROR:')).length;
+      // ── 4. Refresh chapter list to show new translated chapters ──
+      await this._renderChapterList();
+      await this.renderChapterNav();
+
+      // Show the chapter filter bar since we now have translations
+      const filterBar = document.getElementById('chapter-filter-bar');
+      if (filterBar) filterBar.style.display = 'flex';
+
+      // ── 5. Open side-by-side view with the first successful translation ──
+      const firstSuccess = Object.entries(results).find(([, r]) => r.success);
+      if (firstSuccess) {
+        this._openTranslationSplitView(plainText, chapterTitle, results, langConfig);
+      }
+
+      // ── 6. Show summary ──
+      const successCount = Object.values(results).filter(r => r.success).length;
       const failCount = languages.length - successCount;
-      let summary = `Translation complete!\n\n${successCount} language(s) translated successfully.`;
+      let summary = `Translation complete!\n\n${successCount} language(s) translated and saved as new chapters.`;
       if (failCount > 0) {
-        summary += `\n${failCount} language(s) failed:`;
-        for (const [lang, result] of Object.entries(results)) {
-          if (result.startsWith('ERROR:')) {
-            summary += `\n   - ${langNames[lang].name}: ${result}`;
-          }
+        summary += `\n${failCount} failed:`;
+        for (const [lang, r] of Object.entries(results)) {
+          if (!r.success) summary += `\n   \u2022 ${langConfig[lang].name}: ${r.error}`;
         }
       }
       alert(summary);
@@ -6690,9 +6843,407 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese (português brasileiro).' 
       alert('Translation failed: ' + err.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = originalText;
+      btn.textContent = originalBtnText;
       this._updateTranslateButton();
     }
+  }
+
+  // ========================================
+  //  Translation Split View
+  // ========================================
+
+  /**
+   * Open the side-by-side translation split view
+   */
+  _openTranslationSplitView(originalText, originalTitle, results, langConfig) {
+    const overlay = document.getElementById('translation-split-view');
+    if (!overlay) return;
+
+    // Populate the language dropdown
+    const langSelect = document.getElementById('translation-lang-select');
+    langSelect.innerHTML = '';
+
+    const successfulLangs = Object.entries(results).filter(([, r]) => r.success);
+    for (const [lang, r] of successfulLangs) {
+      const opt = document.createElement('option');
+      opt.value = lang;
+      opt.textContent = `${r.langConfig.flag} ${r.langConfig.name}`;
+      langSelect.appendChild(opt);
+    }
+
+    // Set original pane content
+    const originalPane = document.getElementById('split-original-content');
+    originalPane.textContent = originalText;
+
+    // Store results for switching languages
+    this._translationResults = results;
+    this._translationOriginalText = originalText;
+    this._translationOriginalTitle = originalTitle;
+
+    // Show first translation
+    if (successfulLangs.length > 0) {
+      langSelect.value = successfulLangs[0][0];
+      this._showTranslationInPane(successfulLangs[0][0]);
+    }
+
+    // Wire up language switcher
+    langSelect.onchange = () => {
+      if (langSelect.value) this._showTranslationInPane(langSelect.value);
+    };
+
+    // Show overlay
+    overlay.style.display = 'flex';
+
+    // Update title
+    document.getElementById('translation-split-title').textContent =
+      `Translation: ${originalTitle}`;
+  }
+
+  /**
+   * Display a specific language translation in the right pane
+   */
+  _showTranslationInPane(lang) {
+    const result = this._translationResults?.[lang];
+    if (!result?.success) return;
+
+    const translatedPane = document.getElementById('split-translated-content');
+    translatedPane.textContent = result.translatedProse;
+
+    const label = document.getElementById('split-translated-label');
+    label.textContent = `${result.langConfig.flag} ${result.langConfig.name} Translation`;
+  }
+
+  /**
+   * Close the split view
+   */
+  _closeTranslationSplitView() {
+    const overlay = document.getElementById('translation-split-view');
+    if (overlay) overlay.style.display = 'none';
+    this._translationResults = null;
+  }
+
+  // ========================================
+  //  DOCX Export
+  // ========================================
+
+  /**
+   * Export the current translation split view as a DOCX file.
+   */
+  async _exportTranslationDocx() {
+    try {
+      const langSelect = document.getElementById('translation-lang-select');
+      const selectedLang = langSelect?.value;
+
+      if (!selectedLang || !this._translationResults?.[selectedLang]?.success) {
+        alert('No translation selected to export.');
+        return;
+      }
+
+      const result = this._translationResults[selectedLang];
+      const originalTitle = this._translationOriginalTitle || 'Untitled';
+      const originalText = this._translationOriginalText || '';
+      const translatedText = result.translatedProse;
+      const lc = result.langConfig;
+
+      // Build DOCX with docx-js (browser UMD build)
+      const {
+        Document, Packer, Paragraph, TextRun, HeadingLevel,
+        AlignmentType
+      } = window.docx;
+
+      // Helper: convert plain text (with paragraph breaks) to Paragraph objects
+      const textToParagraphs = (text, isFirstParagraph = false) => {
+        return text.split(/\n\n+/).map((para, idx) => {
+          const trimmed = para.trim();
+          if (!trimmed) return null;
+          return new Paragraph({
+            spacing: { after: 200, line: 360 },
+            indent: { firstLine: idx === 0 && isFirstParagraph ? 0 : 720 },
+            children: [
+              new TextRun({
+                text: trimmed,
+                font: 'Georgia',
+                size: 24
+              })
+            ]
+          });
+        }).filter(Boolean);
+      };
+
+      const sections = [];
+
+      // Section 1: Original prose
+      sections.push({
+        properties: {
+          page: {
+            size: { width: 12240, height: 15840 },
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+          }
+        },
+        children: [
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 480 },
+            children: [
+              new TextRun({ text: originalTitle, font: 'Georgia', size: 32, bold: true })
+            ]
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 600 },
+            children: [
+              new TextRun({ text: 'Original \u2014 English', font: 'Georgia', size: 20, italics: true, color: '888888' })
+            ]
+          }),
+          ...textToParagraphs(originalText, true)
+        ]
+      });
+
+      // Section 2: Translated prose (new page)
+      sections.push({
+        properties: {
+          page: {
+            size: { width: 12240, height: 15840 },
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+          }
+        },
+        children: [
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 480 },
+            children: [
+              new TextRun({ text: result.translatedTitle, font: 'Georgia', size: 32, bold: true })
+            ]
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 600 },
+            children: [
+              new TextRun({ text: `Translation \u2014 ${lc.flag} ${lc.name}`, font: 'Georgia', size: 20, italics: true, color: '888888' })
+            ]
+          }),
+          ...textToParagraphs(translatedText, true)
+        ]
+      });
+
+      const docxDoc = new Document({
+        creator: 'Genesis 2',
+        title: `${originalTitle} \u2014 ${lc.name} Translation`,
+        description: `Chapter translation from English to ${lc.name}`,
+        styles: {
+          default: {
+            document: { run: { font: 'Georgia', size: 24 } }
+          },
+          paragraphStyles: [{
+            id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal',
+            quickFormat: true,
+            run: { size: 32, bold: true, font: 'Georgia' },
+            paragraph: { spacing: { before: 240, after: 240 } }
+          }]
+        },
+        sections: sections
+      });
+
+      // Generate and download
+      const buffer = await Packer.toBlob(docxDoc);
+      const filename = `${originalTitle.replace(/[^a-zA-Z0-9\s-]/g, '').trim()}_${lc.code}.docx`;
+
+      const url = URL.createObjectURL(buffer);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      console.log(`DOCX exported: ${filename}`);
+
+    } catch (err) {
+      console.error('DOCX export failed:', err);
+      alert('DOCX export failed: ' + err.message);
+    }
+  }
+
+  /**
+   * Export full manuscript as DOCX — original or a specific translation language.
+   * Chapters are exported in chapterNumber order.
+   * @param {string|null} languageCode - null for original, 'it'/'fr'/etc. for translation
+   */
+  async _exportFullManuscriptDocx(languageCode = null) {
+    try {
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = window.docx;
+
+      // Fetch all chapters for this project
+      const allProjectChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+
+      const chaptersToExport = allProjectChapters
+        .filter(ch => {
+          if (languageCode) {
+            return ch.isTranslation && ch.languageCode === languageCode;
+          } else {
+            return !ch.isTranslation;
+          }
+        })
+        .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
+
+      if (chaptersToExport.length === 0) {
+        alert(languageCode
+          ? `No translated chapters found for language code "${languageCode}".`
+          : 'No chapters found to export.');
+        return;
+      }
+
+      const textToParagraphs = (text) => {
+        return text.split(/\n\n+/).map((para, idx) => {
+          const trimmed = para.replace(/<[^>]+>/g, '').trim();
+          if (!trimmed) return null;
+          return new Paragraph({
+            spacing: { after: 200, line: 360 },
+            indent: { firstLine: idx === 0 ? 0 : 720 },
+            children: [
+              new TextRun({ text: trimmed, font: 'Georgia', size: 24 })
+            ]
+          });
+        }).filter(Boolean);
+      };
+
+      // Build one section per chapter
+      const sections = chaptersToExport.map((ch, index) => {
+        const chapterContent = ch.content || '';
+        const plainContent = chapterContent.replace(/<[^>]+>/g, '').trim();
+
+        return {
+          properties: {
+            page: {
+              size: { width: 12240, height: 15840 },
+              margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+            }
+          },
+          children: [
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 600 },
+              children: [
+                new TextRun({
+                  text: ch.title || `Chapter ${ch.chapterNumber || index + 1}`,
+                  font: 'Georgia',
+                  size: 32,
+                  bold: true
+                })
+              ]
+            }),
+            ...textToParagraphs(plainContent)
+          ]
+        };
+      });
+
+      const projectTitle = this._currentProject?.title || 'Manuscript';
+      const langSuffix = languageCode ? `_${languageCode}` : '';
+
+      const docxDoc = new Document({
+        creator: 'Genesis 2',
+        title: `${projectTitle}${languageCode ? ` (${languageCode.toUpperCase()})` : ''}`,
+        styles: {
+          default: {
+            document: { run: { font: 'Georgia', size: 24 } }
+          },
+          paragraphStyles: [{
+            id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal',
+            quickFormat: true,
+            run: { size: 32, bold: true, font: 'Georgia' },
+            paragraph: { spacing: { before: 240, after: 240 } }
+          }]
+        },
+        sections: sections
+      });
+
+      const buffer = await Packer.toBlob(docxDoc);
+      const filename = `${projectTitle.replace(/[^a-zA-Z0-9\s-]/g, '').trim()}${langSuffix}.docx`;
+
+      const url = URL.createObjectURL(buffer);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      console.log(`Full manuscript exported: ${filename}`);
+
+    } catch (err) {
+      console.error('Manuscript export failed:', err);
+      alert('Export failed: ' + err.message);
+    }
+  }
+
+  // ========================================
+  //  Export Buttons & Chapter Filter
+  // ========================================
+
+  /**
+   * Populate translation export buttons based on which languages have translated chapters.
+   */
+  async _populateExportButtons() {
+    const container = document.getElementById('export-translation-buttons');
+    if (!container) return;
+    container.innerHTML = '';
+
+    // Find which languages have translated chapters
+    const allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    const translatedLangs = new Map();
+    for (const ch of allChapters) {
+      if (ch.isTranslation && ch.languageCode && ch.languageFlag) {
+        translatedLangs.set(ch.languageCode, {
+          flag: ch.languageFlag,
+          name: ch.languageName || ch.languageCode
+        });
+      }
+    }
+
+    if (translatedLangs.size === 0) {
+      container.innerHTML = '<p style="font-size:0.8rem;color:var(--text-muted);">No translations yet. Use Translation above to create them.</p>';
+      return;
+    }
+
+    for (const [code, info] of translatedLangs) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-sm';
+      btn.style.cssText = 'flex:1;min-width:120px;';
+      btn.textContent = `${info.flag} Export ${info.name}`;
+      btn.addEventListener('click', async () => {
+        await this._exportFullManuscriptDocx(code);
+      });
+      container.appendChild(btn);
+    }
+
+    // Show filter bar if translations exist
+    const filterBar = document.getElementById('chapter-filter-bar');
+    if (filterBar) filterBar.style.display = 'flex';
+  }
+
+  /**
+   * Filter the chapter list sidebar by original/translated/all
+   */
+  _filterChapterList(filter) {
+    const chapterItems = document.querySelectorAll('.tree-item.chapter[data-id]');
+    chapterItems.forEach(item => {
+      const chapterTitle = item.querySelector('.name')?.textContent || '';
+      // Translated chapters have flag emoji prefixes
+      const isTranslation = /^[\uD83C][\uDDE6-\uDDFF][\uD83C][\uDDE6-\uDDFF]\s/.test(chapterTitle);
+
+      if (filter === 'all') {
+        item.style.display = '';
+      } else if (filter === 'original') {
+        item.style.display = isTranslation ? 'none' : '';
+      } else if (filter === 'translations') {
+        item.style.display = isTranslation ? '' : 'none';
+      }
+    });
   }
 
   _splitTextForTranslation(text, maxWords) {

@@ -101,6 +101,11 @@
     </div>
 
     <div class="sidebar-content">
+      <div class="chapter-filter" id="chapter-filter-bar" style="padding:4px 8px;display:none;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-xs chapter-filter-btn active" data-filter="all">All</button>
+        <button class="btn btn-xs chapter-filter-btn" data-filter="original">Original</button>
+        <button class="btn btn-xs chapter-filter-btn" data-filter="translations">Translations</button>
+      </div>
       <div class="sidebar-panel" id="sidebar-chapters" style="display:block;">
         <!-- Chapter list rendered by JS -->
       </div>
@@ -574,6 +579,20 @@
       <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
         Select at least one language, then click to translate the current chapter's prose. Translation uses Claude AI and preserves narrative voice.
       </p>
+    </div>
+
+    <!-- ═══ Export Section ═══ -->
+    <div class="analysis-section">
+      <h3>Export Manuscript</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+        Export chapters as a formatted DOCX file for Vellum import.
+      </p>
+      <button class="btn" id="btn-export-original-docx" style="width:100%;margin-bottom:8px;">
+        Export Original (English)
+      </button>
+      <div id="export-translation-buttons" style="display:flex;flex-wrap:wrap;gap:6px;">
+        <!-- Populated dynamically when translations exist -->
+      </div>
     </div>
 
     <div class="analysis-section">
@@ -1624,9 +1643,36 @@
   </div>
 </div>
 
+<!-- ═══ Translation Side-by-Side View ═══ -->
+<div id="translation-split-view" class="translation-split-overlay" style="display:none;">
+  <div class="translation-split-header">
+    <h3 id="translation-split-title">Translation Preview</h3>
+    <div class="translation-split-actions">
+      <select id="translation-lang-select" class="translation-lang-dropdown">
+        <option value="">Select language…</option>
+      </select>
+      <button class="btn btn-sm" id="btn-export-translation-docx" title="Export as DOCX">Export DOCX</button>
+      <button class="btn btn-sm btn-close-split" id="btn-close-split" title="Close">&#10005;</button>
+    </div>
+  </div>
+  <div class="translation-split-body">
+    <div class="translation-pane translation-pane-original">
+      <div class="translation-pane-label">Original</div>
+      <div class="translation-pane-content" id="split-original-content"></div>
+    </div>
+    <div class="translation-divider"></div>
+    <div class="translation-pane translation-pane-translated">
+      <div class="translation-pane-label" id="split-translated-label">Translation</div>
+      <div class="translation-pane-content" id="split-translated-content"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Flyout Tooltip -->
 <div id="tooltip-flyout"><div class="tooltip-body"></div></div>
 
+<!-- DOCX generation library for manuscript export -->
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
 <script src="https://js.puter.com/v2/"></script>
 <script src="js/genres.js"></script>
 <script type="module" src="js/app.js"></script>
