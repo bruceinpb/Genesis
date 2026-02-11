@@ -425,39 +425,27 @@ class App {
     const ext = file.name.split('.').pop().toLowerCase();
     const baseName = file.name.replace(/\.[^.]+$/, '');
 
-    // Show the progress overlay
-    const overlay = document.getElementById('translation-progress-overlay');
-    const pTitle  = document.getElementById('translation-progress-title');
-    const pDetail = document.getElementById('translation-progress-detail');
-    const pFill   = document.getElementById('translation-progress-fill');
-    const pStep   = document.getElementById('translation-progress-step');
-    if (overlay) {
-      pTitle.textContent  = 'Importing\u2026';
-      pDetail.textContent = file.name;
-      pFill.style.width   = '0%';
-      pStep.textContent   = 'Reading file\u2026';
-      overlay.style.display = 'flex';
-    }
+    const prog = this._showProgressOverlay('Importing\u2026', file.name, 'Reading file\u2026');
 
     try {
       let chapters; // Array of { title: string, content: string (HTML) }
 
       if (ext === 'md') {
         const text = await file.text();
-        if (overlay) { pFill.style.width = '30%'; pStep.textContent = 'Parsing Markdown\u2026'; }
+        prog.update(null, null, 30, 'Parsing Markdown\u2026');
         chapters = this._parseMdImport(text);
       } else if (ext === 'docx') {
         if (typeof mammoth === 'undefined') throw new Error('DOCX library not loaded. Please refresh and try again.');
         const arrayBuf = await file.arrayBuffer();
-        if (overlay) { pFill.style.width = '30%'; pStep.textContent = 'Converting DOCX\u2026'; }
+        prog.update(null, null, 30, 'Converting DOCX\u2026');
         const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuf });
         chapters = this._parseHtmlImport(result.value);
       } else if (ext === 'epub') {
         if (typeof JSZip === 'undefined') throw new Error('EPUB library not loaded. Please refresh and try again.');
         const arrayBuf = await file.arrayBuffer();
-        if (overlay) { pFill.style.width = '20%'; pStep.textContent = 'Extracting EPUB\u2026'; }
+        prog.update(null, null, 20, 'Extracting EPUB\u2026');
         chapters = await this._parseEpubImport(arrayBuf, (msg) => {
-          if (pStep) pStep.textContent = msg;
+          prog.update(null, null, null, msg);
         });
       } else {
         throw new Error(`Unsupported file type: .${ext}`);
@@ -468,7 +456,7 @@ class App {
       }
 
       // Create the project
-      if (overlay) { pFill.style.width = '60%'; pStep.textContent = 'Creating project\u2026'; }
+      prog.update(null, null, 60, 'Creating project\u2026');
       const project = await this.fs.createProject({
         owner: this.state.currentUser,
         title: baseName,
@@ -478,11 +466,8 @@ class App {
 
       // Create chapters
       for (let i = 0; i < chapters.length; i++) {
-        if (overlay) {
-          const pct = 60 + ((i / chapters.length) * 35);
-          pFill.style.width = `${pct}%`;
-          pStep.textContent = `Saving chapter ${i + 1} of ${chapters.length}\u2026`;
-        }
+        const pct = 60 + ((i / chapters.length) * 35);
+        prog.update(null, null, pct, `Saving chapter ${i + 1} of ${chapters.length}\u2026`);
         await this.fs.createChapter({
           projectId: project.id,
           chapterNumber: i + 1,
@@ -491,7 +476,7 @@ class App {
         });
       }
 
-      if (overlay) { pFill.style.width = '100%'; pStep.textContent = 'Done!'; }
+      prog.update(null, null, 100, 'Done!');
       await new Promise(r => setTimeout(r, 500));
 
       await this._openProject(project.id);
@@ -499,7 +484,7 @@ class App {
       console.error('Import failed:', err);
       alert('Import failed: ' + err.message);
     } finally {
-      if (overlay) overlay.style.display = 'none';
+      prog.remove();
     }
   }
 
@@ -7372,19 +7357,8 @@ If there are NO items to localize, return an empty array: []`;
       const results = {};
       let completed = 0;
 
-      // ── Show progress overlay ──
-      const progressOverlay = document.getElementById('translation-progress-overlay');
-      const progressTitle   = document.getElementById('translation-progress-title');
-      const progressDetail  = document.getElementById('translation-progress-detail');
-      const progressFill    = document.getElementById('translation-progress-fill');
-      const progressStep    = document.getElementById('translation-progress-step');
-      if (progressOverlay) {
-        progressTitle.textContent  = 'Translating\u2026';
-        progressDetail.textContent = `0 of ${languages.length} language(s)`;
-        progressFill.style.width   = '0%';
-        progressStep.textContent   = 'Starting\u2026';
-        progressOverlay.style.display = 'flex';
-      }
+      // ── Show progress overlay (created dynamically for reliability) ──
+      const prog = this._showProgressOverlay('Translating\u2026', `0 of ${languages.length} language(s)`, 'Starting\u2026');
 
       // ── 3. Translate each language (with localization analysis) ──
       for (const lang of languages) {
@@ -7394,18 +7368,15 @@ If there are NO items to localize, return an empty array: []`;
 
         // ═══ PHASE 1: LOCALIZATION ANALYSIS ═══
         btn.textContent = `Analyzing for ${lc.flag} ${lc.name} localization\u2026`;
-        if (progressOverlay) {
-          progressTitle.textContent  = `${lc.flag} ${lc.name}`;
-          progressDetail.textContent = `Language ${completed} of ${languages.length}`;
-          progressFill.style.width   = `${pct}%`;
-          progressStep.textContent   = 'Analyzing for cultural localization\u2026';
-        }
+        prog.update(`${lc.flag} ${lc.name}`, `Language ${completed} of ${languages.length}`, pct, 'Analyzing for cultural localization\u2026');
         const locItems = await this._analyzeForLocalization(plainText, lang, lc);
 
         // ═══ PHASE 2: HUMAN REVIEW (if items found) ═══
         let localizationInstructions = '';
         if (locItems.length > 0) {
+          prog.hide();  // Hide overlay so user can interact with review modal
           const review = await this._showLocalizationReview(locItems, lc);
+          prog.show();  // Re-show after review
 
           if (!review.skipped && review.approved.length > 0) {
             localizationInstructions = `\n\nCULTURAL LOCALIZATIONS (approved by author \u2014 apply these changes during translation):\n`;
@@ -7417,9 +7388,7 @@ If there are NO items to localize, return an empty array: []`;
 
         // ═══ PHASE 3: TRANSLATE WITH LOCALIZATIONS ═══
         btn.textContent = `Translating ${completed}/${languages.length}: ${lc.flag} ${lc.name}\u2026`;
-        if (progressOverlay) {
-          progressStep.textContent = 'Translating prose\u2026';
-        }
+        prog.update(null, null, null, 'Translating prose\u2026');
 
         const systemPrompt = `You are an expert literary translator specializing in ${lc.name} (${lc.native}). Your translations read as if originally written by a skilled native-speaker novelist.
 
@@ -7473,9 +7442,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           }
 
           // ── 3b. Translate the chapter title ──
-          if (progressOverlay) {
-            progressStep.textContent = 'Translating chapter title\u2026';
-          }
+          prog.update(null, null, null, 'Translating chapter title\u2026');
           const titleResponse = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -7509,9 +7476,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           const translatedChapterName = `${lc.flag} ${translatedTitle}`;
 
           // ── 3d. Create a new chapter in Firestore for the translation ──
-          if (progressOverlay) {
-            progressStep.textContent = 'Saving translation\u2026';
-          }
+          prog.update(null, null, null, 'Saving translation\u2026');
           const translationChapterData = await this.fs.createChapter({
             projectId: projectId,
             chapterNumber: chapterNumber,
@@ -7566,13 +7531,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       }
 
       // ── Hide progress overlay ──
-      if (progressOverlay) {
-        progressFill.style.width = '100%';
-        progressStep.textContent = 'Complete!';
-        // Brief pause so user sees 100% before overlay closes
-        await new Promise(r => setTimeout(r, 600));
-        progressOverlay.style.display = 'none';
-      }
+      prog.update(null, null, 100, 'Complete!');
+      await new Promise(r => setTimeout(r, 600));
+      prog.remove();
 
       // ── 4. Refresh chapter list to show new translated chapters ──
       await this._renderChapterList();
@@ -7607,8 +7568,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       console.error('Translation failed:', err);
       alert('Translation failed: ' + err.message);
     } finally {
-      const po = document.getElementById('translation-progress-overlay');
-      if (po) po.style.display = 'none';
+      this._removeProgressOverlay();
       btn.disabled = false;
       btn.textContent = originalBtnText;
       this._updateTranslateButton();
@@ -7736,6 +7696,70 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
     // Collapse runs of 3+ newlines into double newlines
     text = text.replace(/\n{3,}/g, '\n\n');
     return text.trim();
+  }
+
+  // ========================================
+  //  Progress Overlay (dynamically created)
+  // ========================================
+
+  /**
+   * Create and show a full-screen progress overlay with spinner, title,
+   * detail text, progress bar, and step description.
+   * Returns an object with update(), hide(), show(), and remove() methods.
+   */
+  _showProgressOverlay(title, detail, step) {
+    // Remove any existing overlay first
+    this._removeProgressOverlay();
+
+    const el = document.createElement('div');
+    el.id = 'genesis-progress-overlay';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+
+    el.innerHTML = `
+      <div style="background:#1e1e30;border:1px solid #c8a96e;border-radius:12px;padding:40px 48px;text-align:center;max-width:420px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+        <div id="gpo-spinner" style="width:48px;height:48px;margin:0 auto 20px;border:3px solid #333;border-top-color:#c8a96e;border-radius:50%;animation:gpo-spin 0.8s linear infinite;"></div>
+        <h3 id="gpo-title" style="margin:0 0 8px;font-size:1.15rem;color:#eee;">${this._escapeHTML(title || '')}</h3>
+        <p id="gpo-detail" style="margin:0 0 20px;font-size:0.85rem;color:#aaa;">${this._escapeHTML(detail || '')}</p>
+        <div style="height:4px;background:#333;border-radius:2px;overflow:hidden;margin-bottom:12px;">
+          <div id="gpo-fill" style="height:100%;width:0%;background:#c8a96e;border-radius:2px;transition:width 0.4s ease;"></div>
+        </div>
+        <p id="gpo-step" style="margin:0;font-size:0.75rem;color:#777;">${this._escapeHTML(step || '')}</p>
+      </div>
+    `;
+
+    // Inject the spinner keyframe animation if not already present
+    if (!document.getElementById('gpo-keyframes')) {
+      const style = document.createElement('style');
+      style.id = 'gpo-keyframes';
+      style.textContent = '@keyframes gpo-spin { to { transform: rotate(360deg); } }';
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(el);
+
+    const titleEl  = el.querySelector('#gpo-title');
+    const detailEl = el.querySelector('#gpo-detail');
+    const fillEl   = el.querySelector('#gpo-fill');
+    const stepEl   = el.querySelector('#gpo-step');
+
+    return {
+      update: (t, d, pct, s) => {
+        if (t != null) titleEl.textContent = t;
+        if (d != null) detailEl.textContent = d;
+        if (pct != null) fillEl.style.width = `${pct}%`;
+        if (s != null) stepEl.textContent = s;
+      },
+      hide: () => { el.style.display = 'none'; },
+      show: () => { el.style.display = 'flex'; },
+      remove: () => { el.remove(); }
+    };
+  }
+
+  /**
+   * Remove the progress overlay if it exists (safety cleanup).
+   */
+  _removeProgressOverlay() {
+    document.getElementById('genesis-progress-overlay')?.remove();
   }
 
   /**
