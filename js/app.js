@@ -5186,7 +5186,12 @@ class App {
     const show = (el) => {
       const text = el.dataset.tooltip;
       if (!text) return;
-      body.textContent = text;
+      // Convert URLs in tooltip text to clickable links
+      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      body.innerHTML = escaped.replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent-primary);text-decoration:underline;">$1</a>'
+      );
       flyout.className = 'visible';
       activeEl = el;
 

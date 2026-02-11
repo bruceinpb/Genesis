@@ -2142,6 +2142,7 @@ select.form-input {
 #tooltip-flyout.visible {
   display: block;
   opacity: 1;
+  pointer-events: auto;
 }
 
 #tooltip-flyout .tooltip-title {
