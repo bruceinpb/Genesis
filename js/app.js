@@ -650,12 +650,77 @@ class App {
       if (manifest[id]) spineItems.push(manifest[id]);
     }
 
-    // 3. Read each spine document
+    // 3. Parse TOC (NCX or EPUB3 nav) to get real chapter titles and boundaries
+    //    This maps file hrefs → chapter titles from the table of contents
+    const tocMap = new Map(); // href (without fragment) → title
+    const tocOrder = [];      // ordered list of hrefs that start chapters
+
+    // Try NCX first (EPUB 2)
+    const tocId = opfDoc.querySelector('spine')?.getAttribute('toc');
+    const ncxHref = tocId && manifest[tocId];
+    if (ncxHref) {
+      const ncxXml = await zip.file(opfDir + ncxHref)?.async('string');
+      if (ncxXml) {
+        const ncxDoc = new DOMParser().parseFromString(ncxXml, 'application/xml');
+        for (const np of ncxDoc.querySelectorAll('navMap navPoint')) {
+          const label = np.querySelector(':scope > navLabel > text')?.textContent?.trim();
+          const src = np.querySelector(':scope > content')?.getAttribute('src');
+          if (label && src) {
+            const bare = src.split('#')[0]; // strip fragment
+            if (!tocMap.has(bare)) {
+              tocMap.set(bare, label);
+              tocOrder.push(bare);
+            }
+          }
+        }
+      }
+    }
+
+    // Try EPUB 3 nav if NCX yielded nothing
+    if (tocMap.size === 0) {
+      for (const item of opfDoc.querySelectorAll('manifest item')) {
+        const props = item.getAttribute('properties') || '';
+        if (props.split(/\s+/).includes('nav')) {
+          const navHref = item.getAttribute('href');
+          const navXml = await zip.file(opfDir + navHref)?.async('string');
+          if (navXml) {
+            const navDoc = new DOMParser().parseFromString(navXml, 'application/xhtml+xml');
+            const tocNav = navDoc.querySelector('nav[epub\\:type="toc"], nav[role="doc-toc"]')
+                        || navDoc.querySelector('nav');
+            if (tocNav) {
+              for (const a of tocNav.querySelectorAll('a[href]')) {
+                const label = a.textContent.trim();
+                const href = a.getAttribute('href');
+                if (label && href) {
+                  const bare = href.split('#')[0];
+                  if (!tocMap.has(bare)) {
+                    tocMap.set(bare, label);
+                    tocOrder.push(bare);
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    // Build a set of spine hrefs that are TOC chapter starts for quick lookup
+    const chapterStarts = new Set(tocOrder);
+
+    // 4. Read spine documents, using TOC to determine chapter boundaries
+    //    - Spine items that match a TOC entry start a new chapter (using TOC title)
+    //    - Spine items NOT in the TOC are continuation sections — append to previous chapter
+    //    - If no TOC was found, fall back to heading-based detection with merging
     const chapters = [];
+    const hasToc = tocMap.size > 0;
+
     for (let i = 0; i < spineItems.length; i++) {
       if (onProgress) onProgress(`Reading section ${i + 1} of ${spineItems.length}\u2026`);
 
-      const href = opfDir + spineItems[i];
+      const spineHref = spineItems[i];
+      const href = opfDir + spineHref;
       const xhtml = await zip.file(href)?.async('string');
       if (!xhtml) continue;
 
@@ -663,20 +728,42 @@ class App {
       const body = doc.querySelector('body');
       if (!body) continue;
 
-      // Extract a title from the first heading
+      // Strip the first heading from content (to avoid duplication with title)
       const heading = body.querySelector('h1, h2, h3');
-      let title = heading?.textContent?.trim() || '';
+      const headingText = heading?.textContent?.trim() || '';
       if (heading) heading.remove();
 
-      // Get the remaining body content
       const content = body.innerHTML.trim();
-
-      // Skip effectively empty sections (e.g., cover pages, copyright)
       const textContent = body.textContent.trim();
-      if (textContent.length < 50) continue;
 
-      if (!title) title = `Chapter ${chapters.length + 1}`;
-      chapters.push({ title, content });
+      // Skip effectively empty sections (e.g. cover image only)
+      if (textContent.length < 20) continue;
+
+      if (hasToc) {
+        // TOC-based chapter detection
+        if (chapterStarts.has(spineHref)) {
+          // This spine item starts a new TOC chapter
+          const title = tocMap.get(spineHref) || headingText || `Chapter ${chapters.length + 1}`;
+          chapters.push({ title, content });
+        } else if (chapters.length > 0) {
+          // Continuation section — append to the previous chapter
+          chapters[chapters.length - 1].content += '\n' + content;
+        } else {
+          // Before first TOC entry — treat as front matter chapter
+          const title = headingText || `Chapter ${chapters.length + 1}`;
+          chapters.push({ title, content });
+        }
+      } else {
+        // Fallback: no TOC found — use heading-based detection with merge
+        if (headingText) {
+          chapters.push({ title: headingText, content });
+        } else if (chapters.length > 0) {
+          // No heading — merge with previous chapter
+          chapters[chapters.length - 1].content += '\n' + content;
+        } else {
+          chapters.push({ title: `Chapter ${chapters.length + 1}`, content });
+        }
+      }
     }
 
     return chapters;
