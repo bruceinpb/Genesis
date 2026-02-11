@@ -3,7 +3,7 @@
  * Enables offline usage on iPad. Caches all app assets.
  */
 
-const CACHE_NAME = 'genesis2-v37';
+const CACHE_NAME = 'genesis2-v38';
 
 // Use relative paths so caching works whether hosted at root or a subdirectory
 // (e.g. GitHub Pages at /Genesis/)
