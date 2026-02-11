@@ -35,12 +35,10 @@ class App {
       currentProjectId: null,
       currentChapterId: null,
       currentMatterId: null,
-      sidebarTab: 'chapters',
+      sidebarTab: 'characters',
       focusMode: false,
       sidebarOpen: true,
       theme: 'dark',
-      dailyGoal: 1000,
-      wordsToday: 0,
       sessionStart: Date.now()
     };
 
@@ -88,7 +86,6 @@ class App {
 
       // Load settings
       this.state.theme = await this.localStorage.getSetting('theme', 'dark');
-      this.state.dailyGoal = await this.localStorage.getSetting('dailyGoal', 1000);
       this._hfToken = await this.localStorage.getSetting('hfToken', '');
 
       // Apply theme
@@ -117,9 +114,6 @@ class App {
       // Show landing page
       await this._showLanding();
 
-      // Track daily words
-      await this._loadDailyProgress();
-
       // Register service worker
       this._registerServiceWorker();
 
@@ -137,13 +131,14 @@ class App {
    * if the current chapter no longer exists (e.g. after deletion).
    */
   _initChapterDeletionFailsafe() {
-    const chapterListContainer = document.getElementById('sidebar-chapters');
+    // Watch the chapter navigator for changes
+    const chapterNavContainer = document.getElementById('nav-chapter-items');
 
-    if (chapterListContainer) {
+    if (chapterNavContainer) {
       const observer = new MutationObserver(() => {
         this._checkCurrentChapterExists();
       });
-      observer.observe(chapterListContainer, { childList: true, subtree: true });
+      observer.observe(chapterNavContainer, { childList: true, subtree: true });
     }
 
     // Periodic check every 2 seconds as ultimate backup
@@ -159,13 +154,13 @@ class App {
     if (!this.state.currentChapterId || !this.state.currentProjectId) return;
     if (this._isLoadingProject) return; // Don't interfere during project loading
 
-    // Check if the current chapter item still exists in the sidebar DOM
-    const chapterEl = document.querySelector(`.tree-item.chapter[data-id="${this.state.currentChapterId}"]`);
+    // Check if the current chapter item still exists in the navigator DOM
+    const chapterEl = document.querySelector(`.nav-item[data-nav-id="${this.state.currentChapterId}"]`);
     if (chapterEl) return; // Still in DOM, nothing to do
 
-    // Also check if sidebar has been rendered (avoid false positive during initial load)
-    const sidebar = document.getElementById('sidebar-chapters');
-    if (!sidebar || sidebar.children.length === 0) return;
+    // Also check if navigator has been rendered (avoid false positive during initial load)
+    const navContainer = document.getElementById('nav-chapter-items');
+    if (!navContainer || navContainer.children.length === 0) return;
 
     console.log('Chapter deletion detected via failsafe — clearing editor');
 
@@ -805,8 +800,7 @@ class App {
       // Update toolbar title
       document.getElementById('project-title').textContent = project.title;
 
-      // Render chapter list and navigator
-      await this._renderChapterList();
+      // Render chapter navigator (single chapter management area)
       await this.renderChapterNav();
 
       // Load first chapter
@@ -825,6 +819,9 @@ class App {
         this.state.currentChapterId = null;
         this._showWelcome();
       }
+
+      // Render sidebar character list (default tab)
+      await this._renderCharactersList();
 
       // Update cover display
       this._updateCoverDisplay();
@@ -979,63 +976,13 @@ class App {
   // ========================================
 
   async _renderChapterList() {
-    const container = document.getElementById('sidebar-chapters');
-    if (!container || !this.state.currentProjectId) return;
-
+    // Chapter list is now consolidated into the Chapter Navigator.
+    // Redirect to renderChapterNav which is the single chapter management area.
+    if (!this.state.currentProjectId) return;
     try {
-      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
-
-      let html = '';
-
-      // Chapter toolbar with Select All, Delete Selected, Accept Outline
-      if (chapters.length > 0) {
-        html += `
-        <div class="chapter-toolbar">
-          <label class="chapter-select-all-label">
-            <input type="checkbox" id="chapter-select-all" title="Select All">
-            <span>Select All</span>
-          </label>
-          <button class="btn btn-sm chapter-toolbar-btn chapter-delete-selected-btn" id="btn-delete-selected-chapters" disabled title="Delete selected chapters">Delete Selected</button>
-          <button class="btn btn-sm chapter-toolbar-btn chapter-accept-outline-btn" id="btn-accept-chapter-outline" title="Accept outline and begin prose generation">Accept Outline</button>
-        </div>`;
-      }
-
-      for (const chapter of chapters) {
-        const statusLabel = chapter.status === 'complete' ? 'done' : chapter.status === 'revision' ? 'rev' : '';
-        const hasOutline = chapter.outline ? ' title="Has outline"' : '';
-        const outlineIcon = chapter.outline ? '<span style="color:var(--accent-primary);font-size:0.7rem;margin-right:2px;">&#9998;</span>' : '';
-        const isFirst = (chapter === chapters[0]);
-        const isLast = (chapter === chapters[chapters.length - 1]);
-        html += `
-        <div class="tree-item chapter ${chapter.id === this.state.currentChapterId ? 'active' : ''}"
-             data-id="${chapter.id}" data-type="chapter"${hasOutline}>
-          <input type="checkbox" class="chapter-checkbox" data-chapter-id="${chapter.id}" title="Select chapter">
-          <span class="icon">&#9656;</span>
-          <span class="name">${outlineIcon}${this._esc(chapter.title)}</span>
-          <span class="word-count">${(chapter.wordCount || 0).toLocaleString()}${statusLabel ? ' (' + statusLabel + ')' : ''}</span>
-          <button class="chapter-delete-btn" data-delete-chapter="${chapter.id}" title="Delete chapter">&times;</button>
-          <button class="chapter-menu-btn" data-chapter-menu="${chapter.id}" title="More options">&#8942;</button>
-          <div class="chapter-menu" data-menu-for="${chapter.id}">
-            ${!isFirst ? `<button data-merge-up="${chapter.id}">Merge with Previous</button>` : ''}
-            ${!isLast ? `<button data-merge-down="${chapter.id}">Merge with Next</button>` : ''}
-            <button data-delete-chapter="${chapter.id}" class="danger">Delete Chapter</button>
-          </div>
-        </div>`;
-      }
-
-      html += `
-        <button class="tree-add" data-action="add-chapter">
-          + Chapter
-        </button>`;
-
-      container.innerHTML = html;
-
-      // Show/hide chapter filter bar based on whether translations exist
-      const hasTranslations = chapters.some(ch => ch.isTranslation);
-      const filterBar = document.getElementById('chapter-filter-bar');
-      if (filterBar) filterBar.style.display = hasTranslations ? 'flex' : 'none';
+      await this.renderChapterNav();
     } catch (err) {
-      console.error('Failed to render chapter list:', err);
+      console.error('Failed to render chapter nav:', err);
     }
   }
 
@@ -1106,76 +1053,17 @@ class App {
   }
 
   async openStructurePanel() {
-    if (!this.state.currentProjectId || !this._currentProject) return;
-
-    const project = this._currentProject;
-    const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
-    const templateId = await this.localStorage.getSetting('structureTemplate_' + this.state.currentProjectId, 'threeAct');
-    const targetWords = project.wordCountGoal || 80000;
-
-    const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
-    const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
-
-    const body = document.getElementById('panel-structure-body');
-    if (!body) return;
-
-    body.innerHTML = this._renderStructure(guidance, beats, project, templateId);
-    this._showPanel('structure');
+    // Structure is now part of the Book Setup tab in the central modal
+    await this.openSetupBookModal('book');
   }
 
   async openExportPanel() {
-    // Show/hide cover download section
-    const coverSection = document.getElementById('export-cover-section');
-    const coverPreview = document.getElementById('export-cover-preview');
-    if (coverSection && coverPreview) {
-      if (this._currentProject?.coverImage) {
-        coverSection.style.display = '';
-        coverPreview.style.display = '';
-        coverPreview.src = this._currentProject.coverImage;
-      } else {
-        coverSection.style.display = 'none';
-      }
-    }
-    this._showPanel('export');
+    await this.openSetupBookModal('export');
   }
 
   async openGeneratePanel() {
-    const noKeyEl = document.getElementById('generate-no-key');
-    const generateBtn = document.getElementById('btn-generate-prose');
-    const plotEl = document.getElementById('generate-plot');
-
-    if (noKeyEl && generateBtn) {
-      if (!this.generator.hasApiKey()) {
-        noKeyEl.style.display = 'block';
-        generateBtn.style.display = 'none';
-      } else {
-        noKeyEl.style.display = 'none';
-        generateBtn.style.display = '';
-      }
-    }
-
-    const errEl = document.getElementById('generate-error');
-    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
-
-    this._setGenerateStatus(false);
-
-    // Populate AI instructions from project
-    const aiInstructionsEl = document.getElementById('generate-ai-instructions');
-    if (aiInstructionsEl) {
-      aiInstructionsEl.value = this._currentProject?.aiInstructions || '';
-    }
-
-    // Show chapter outline if available
-    if (this._currentChapterOutline && plotEl) {
-      // Pre-fill the plot field with the outline if the plot field is empty
-      if (!plotEl.value?.trim()) {
-        plotEl.value = this._currentChapterOutline;
-      }
-    }
-
-    this._showPanel('generate');
-
-    setTimeout(() => plotEl?.focus(), 300);
+    await this.openSetupBookModal('ai-writer');
+    setTimeout(() => document.getElementById('generate-plot')?.focus(), 300);
   }
 
   async _runGeneration(options = {}) {
@@ -1383,7 +1271,8 @@ class App {
         this._showIterativeOverlay(false);
         this._autoWriteToGoal = false;
         this._writeToGoalTarget = 0;
-        this._showPanel('generate');
+        this._showSetupBookModal();
+        this._switchSetupTab('ai-writer');
         if (errEl) {
           errEl.style.display = 'block';
           errEl.textContent = err.message;
@@ -1976,26 +1865,7 @@ class App {
   }
 
   async openSettingsPanel() {
-    const body = document.getElementById('panel-settings-body');
-    if (!body) return;
-
-    body.innerHTML = this._renderSettings(this._currentProject);
-    this._initApiKeyPinLock();
-
-    // Render story structure into settings if project is open
-    if (this._currentProject && this.state.currentProjectId) {
-      const container = document.getElementById('settings-structure-container');
-      if (container) {
-        const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
-        const templateId = await this.localStorage.getSetting('structureTemplate_' + this.state.currentProjectId, 'threeAct');
-        const targetWords = this._currentProject.wordCountGoal || 80000;
-        const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
-        const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
-        container.innerHTML = this._renderStructureInSettings(guidance, beats, this._currentProject, templateId);
-      }
-    }
-
-    this._showPanel('settings');
+    await this.openSetupBookModal('settings');
   }
 
   async openErrorDatabasePanel() {
@@ -2183,13 +2053,10 @@ class App {
   }
 
   _closeAllPanels() {
-    // Auto-save API key and HF token if settings panel is open
-    const settingsPanel = document.getElementById('panel-settings');
-    if (settingsPanel?.classList.contains('visible')) {
-      this._autoSaveSettingsKeys();
-    }
+    this._autoSaveSettingsKeys();
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
-    document.getElementById('panel-overlay').classList.remove('visible');
+    document.getElementById('panel-overlay')?.classList.remove('visible');
+    this._closeSetupBookModal();
   }
 
   async _autoSaveSettingsKeys() {
@@ -2695,7 +2562,7 @@ class App {
       <div class="analysis-section">
         <h3>Appearance</h3>
         <div class="form-group">
-          <label data-tooltip="Choose your editor color scheme. Dark reduces eye strain for nighttime writing. Light provides a clean daytime look. Sepia gives a warm, paper-like feel that's easy on the eyes.">Theme</label>
+          <label>Theme</label>
           <select class="form-input" id="setting-theme">
             <option value="dark" ${this.state.theme === 'dark' ? 'selected' : ''}>Dark</option>
             <option value="light" ${this.state.theme === 'light' ? 'selected' : ''}>Light</option>
@@ -2707,130 +2574,74 @@ class App {
       <div class="analysis-section">
         <h3>AI Prose Generation</h3>
         <div class="form-group">
-          <label data-tooltip="Your Anthropic API key enables AI prose generation, story analysis, and structure analysis. The key is stored only on this device and is sent directly to Anthropic's API — never to any other server. You can protect it with a PIN below.">Anthropic API Key</label>
+          <label>Anthropic API Key</label>
           <div id="api-key-locked" style="display:none;">
             <div style="display:flex;gap:8px;align-items:center;">
-              <input type="password" class="form-input" id="api-key-pin-input" data-tooltip="Enter the PIN you set to unlock and view or change your API key." placeholder="Enter PIN to unlock" style="flex:1;">
-              <button class="btn btn-sm" id="api-key-unlock-btn" data-tooltip="Unlock — Verify your PIN to access the API key field.">Unlock</button>
+              <input type="password" class="form-input" id="api-key-pin-input" placeholder="Enter PIN to unlock" style="flex:1;">
+              <button class="btn btn-sm" id="api-key-unlock-btn">Unlock</button>
             </div>
             <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">API key is PIN-protected.</p>
           </div>
           <div id="api-key-unlocked">
-            <input type="password" class="form-input" id="setting-api-key" data-tooltip="Paste your Anthropic API key here. It starts with 'sk-ant-'. Get one free at console.anthropic.com. Usage is billed directly to your Anthropic account." value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
+            <input type="password" class="form-input" id="setting-api-key" value="${this._esc(this.generator?.apiKey || '')}" placeholder="sk-ant-...">
             <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
               Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent-primary);">console.anthropic.com</a>. Stored locally on this device only.
             </p>
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-              <input type="password" class="form-input" id="api-key-set-pin" data-tooltip="Set a PIN code (at least 4 characters) to protect your API key. When locked, the key cannot be viewed or changed without entering the correct PIN. Useful on shared devices." placeholder="${localStorage.getItem('genesis-api-pin') ? 'New PIN (leave blank to keep)' : 'Set a PIN to lock (optional)'}" style="flex:1;">
-              <button class="btn btn-sm" id="api-key-lock-btn" data-tooltip="${localStorage.getItem('genesis-api-pin') ? 'Update PIN — Change your existing PIN to a new one.' : 'Set PIN — Protect your API key with a PIN code so others cannot view or change it.'}">${localStorage.getItem('genesis-api-pin') ? 'Update PIN' : 'Set PIN'}</button>
-              ${localStorage.getItem('genesis-api-pin') ? '<button class="btn btn-sm" id="api-key-remove-pin" data-tooltip="Remove PIN — Remove PIN protection from your API key. Anyone with access to this device will be able to view and change the key.">Remove PIN</button>' : ''}
+              <input type="password" class="form-input" id="api-key-set-pin" placeholder="${localStorage.getItem('genesis-api-pin') ? 'New PIN (leave blank to keep)' : 'Set a PIN to lock (optional)'}" style="flex:1;">
+              <button class="btn btn-sm" id="api-key-lock-btn">${localStorage.getItem('genesis-api-pin') ? 'Update PIN' : 'Set PIN'}</button>
+              ${localStorage.getItem('genesis-api-pin') ? '<button class="btn btn-sm" id="api-key-remove-pin">Remove PIN</button>' : ''}
             </div>
           </div>
         </div>
         <div class="form-group">
-          <label data-tooltip="Choose which Claude AI model powers prose generation and analysis. Sonnet 4.5 is the best balance of quality, speed, and cost — recommended for most writers. Haiku 4.5 is faster and cheaper but produces slightly less polished prose. Opus 4.6 produces the highest quality literary prose but is slower and costs more per generation.">AI Model</label>
+          <label>AI Model</label>
           <select class="form-input" id="setting-ai-model">
             <option value="claude-sonnet-4-5-20250929" ${this.generator?.model === 'claude-sonnet-4-5-20250929' ? 'selected' : ''}>Claude Sonnet 4.5 (recommended)</option>
             <option value="claude-haiku-4-5-20251001" ${this.generator?.model === 'claude-haiku-4-5-20251001' ? 'selected' : ''}>Claude Haiku 4.5 (faster, cheaper)</option>
             <option value="claude-opus-4-6" ${this.generator?.model === 'claude-opus-4-6' ? 'selected' : ''}>Claude Opus 4.6 (highest quality)</option>
           </select>
         </div>
-        <button class="btn btn-sm" id="save-api-settings" data-tooltip="Save your API key and AI model selection. These settings apply to all projects." style="width:100%;">Save AI Settings</button>
+        <button class="btn btn-sm" id="save-api-settings" style="width:100%;">Save AI Settings</button>
       </div>
 
       <div class="analysis-section">
         <h3>Cover Image Generation</h3>
         <div class="form-group">
-          <label data-tooltip="Your Hugging Face API token enables AI-generated book cover images using Stable Diffusion XL and FLUX models. Free tokens are available at huggingface.co/settings/tokens. The cover generator analyzes your story's content and genre to create a unique cover image.">Hugging Face API Token</label>
-          <input type="password" class="form-input" id="setting-hf-token" data-tooltip="Paste your Hugging Face API token here. It starts with 'hf_'. Free tokens have generous rate limits for image generation." value="${this._esc(this._hfToken || '')}" placeholder="hf_...">
+          <label>Hugging Face API Token</label>
+          <input type="password" class="form-input" id="setting-hf-token" value="${this._esc(this._hfToken || '')}" placeholder="hf_...">
           <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
-            Free token from <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--accent-primary);">huggingface.co</a>. Used for AI cover art (FLUX / Stable Diffusion).
+            Free token from <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--accent-primary);">huggingface.co</a>. Used for AI cover art.
           </p>
         </div>
-        <button class="btn btn-sm" id="save-hf-settings" data-tooltip="Save your Hugging Face token. Once saved, use 'Create Cover' or 'Regenerate Cover' in the sidebar to generate AI cover art." style="width:100%;">Save Cover Settings</button>
-      </div>
-
-      <div class="analysis-section">
-        <h3>Writing Goals</h3>
-        <div class="form-group">
-          <label data-tooltip="Set your daily writing target in words. Your progress toward this goal is tracked in the status bar at the bottom of the screen and resets each day at midnight. A consistent daily goal helps build a productive writing habit.">Daily Word Goal</label>
-          <input type="number" class="form-input" id="setting-daily-goal" data-tooltip="Enter your daily word count target. Common goals: 500 (casual), 1000 (steady), 2000 (ambitious), 5000+ (NaNoWriMo pace)." value="${this.state.dailyGoal}" min="100" step="100">
-        </div>
+        <button class="btn btn-sm" id="save-hf-settings" style="width:100%;">Save Cover Settings</button>
       </div>
 
       ${project ? `
       <div class="analysis-section">
-        <h3>Project Settings</h3>
-        <div class="form-group">
-          <label data-tooltip="The title of your book or manuscript. This appears in the project list, on the AI-generated cover image, and in exported manuscripts.">Project Title</label>
-          <input type="text" class="form-input" id="setting-project-name" value="${this._esc(project.title)}">
-        </div>
-        <div class="form-group">
-          <label data-tooltip="Select your project's literary genre. The AI uses genre-specific prose style rules to maintain consistent tone, pacing, and conventions throughout your manuscript. This prevents style drift during long writing sessions.">Genre</label>
-          <select class="form-input" id="setting-project-genre">
-            <option value="">— Select Genre —</option>
-            ${(window.GENRE_DATA || []).map(g => `<option value="${g.id}" ${(project.genre === g.id) ? 'selected' : ''}>${g.label}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-group" id="subgenre-group" style="${project.subgenre ? '' : 'display:none;'}">
-          <label data-tooltip="Refine your genre selection with a subgenre. Subgenres provide more specific prose style rules — for example, 'Cozy Mystery' vs 'Noir' produce very different writing styles. The AI will follow these specialized rules.">Subgenre</label>
-          <select class="form-input" id="setting-project-subgenre">
-            <option value="">— None (use main genre rules) —</option>
-            ${this._getSubgenreOptions(project.genre, project.subgenre)}
-          </select>
-        </div>
-        <div class="form-group">
-          <label data-tooltip="Select the narrative voice and point of view for AI-generated prose. This controls whether the AI writes in first person, third person limited, omniscient, deep POV, and other narrative perspectives. 'Auto' lets the AI choose based on context.">Narrative Voice / POV</label>
-          <select class="form-input" id="setting-project-voice">
-            <option value="auto" ${(!project.voice || project.voice === 'auto') ? 'selected' : ''}>Auto (AI chooses based on context)</option>
-            <option value="first-person" ${project.voice === 'first-person' ? 'selected' : ''}>First Person (I/me/my)</option>
-            <option value="third-limited" ${project.voice === 'third-limited' ? 'selected' : ''}>Third-Person Limited</option>
-            <option value="third-omniscient" ${project.voice === 'third-omniscient' ? 'selected' : ''}>Third-Person Omniscient</option>
-            <option value="third-objective" ${project.voice === 'third-objective' ? 'selected' : ''}>Third-Person Objective (camera eye)</option>
-            <option value="deep-pov" ${project.voice === 'deep-pov' ? 'selected' : ''}>Deep POV (close third-person)</option>
-            <option value="second-person" ${project.voice === 'second-person' ? 'selected' : ''}>Second Person (you/your)</option>
-            <option value="unreliable" ${project.voice === 'unreliable' ? 'selected' : ''}>Unreliable Narrator</option>
-            <option value="multiple-pov" ${project.voice === 'multiple-pov' ? 'selected' : ''}>Multiple POV (rotating perspectives)</option>
-            <option value="stream-of-consciousness" ${project.voice === 'stream-of-consciousness' ? 'selected' : ''}>Stream of Consciousness</option>
-            <option value="epistolary" ${project.voice === 'epistolary' ? 'selected' : ''}>Epistolary (letters/documents/diary)</option>
-          </select>
-          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls the narrative perspective for all AI-generated prose in this project.</p>
-        </div>
-        <button class="btn btn-primary" id="save-project-settings" data-tooltip="Save changes to the project title, genre, and voice settings." style="width:100%;margin-top:8px;">Save Project Settings</button>
-        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">Word count goal and chapter structure are configured in the Book Structure panel (sidebar).</p>
-      </div>
-
-      <div class="analysis-section">
-        <h3>Story Structure</h3>
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:10px;">
-          Select a narrative structure template to guide your story's pacing and beat progression. Choose "User / AI Created Outline" if your story doesn't follow a traditional structure (e.g., biographies, non-fiction, or custom outlines).
-        </p>
-        <div id="settings-structure-container"></div>
-      </div>
-
-      <div class="analysis-section">
         <h3>Data</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm" id="btn-export-json" data-tooltip="Export a complete JSON backup of this project including all chapters, characters, notes, cover image, and settings. Use for backups or transferring your project to another device.">Backup (JSON)</button>
+          <button class="btn btn-sm" id="btn-export-json">Backup (JSON)</button>
         </div>
       </div>
 
       <div class="analysis-section">
         <h3>Danger Zone</h3>
-        <button class="btn btn-sm" id="btn-delete-project" data-tooltip="Permanently delete this entire project and all its contents: chapters, characters, notes, and cover image. This action cannot be undone. You will be asked to confirm before deletion." style="border-color:var(--danger);color:var(--danger);">Delete Project</button>
+        <button class="btn btn-sm" id="btn-delete-project" style="border-color:var(--danger);color:var(--danger);">Delete Project</button>
       </div>
       ` : ''}
     `;
   }
 
   // ========================================
-  //  Book Structure Panel
+  //  Setup Book Central Modal
   // ========================================
 
-  async openBookStructurePanel() {
+  async openSetupBookModal(tab = 'book') {
     const project = this._currentProject;
     if (!project) return;
 
+    // Populate Book Setup tab fields
     const titleEl = document.getElementById('bs-title');
     const subtitleEl = document.getElementById('bs-subtitle');
     const totalWordsEl = document.getElementById('bs-total-words');
@@ -2840,6 +2651,15 @@ class App {
     if (subtitleEl) subtitleEl.value = project.subtitle || '';
     if (totalWordsEl) totalWordsEl.value = project.wordCountGoal || 80000;
 
+    // Populate Genre & Voice fields
+    this._populateGenreDropdowns(project);
+    const voiceEl = document.getElementById('bs-voice');
+    if (voiceEl) voiceEl.value = project.voice || 'auto';
+
+    // Populate Story Structure
+    await this._populateStructureInModal(project);
+
+    // Populate AI Writer tab fields
     const thresholdEl = document.getElementById('bs-quality-threshold');
     if (thresholdEl) thresholdEl.value = project.qualityThreshold || 90;
 
@@ -2848,6 +2668,32 @@ class App {
 
     const authorPaletteEl = document.getElementById('bs-author-palette');
     if (authorPaletteEl) authorPaletteEl.value = project.authorPalette || '';
+
+    // Populate AI Instructions
+    const aiInstructionsEl = document.getElementById('generate-ai-instructions');
+    if (aiInstructionsEl) aiInstructionsEl.value = project.aiInstructions || '';
+
+    // Populate chapter outline in plot field if available
+    const plotEl = document.getElementById('generate-plot');
+    if (this._currentChapterOutline && plotEl && !plotEl.value?.trim()) {
+      plotEl.value = this._currentChapterOutline;
+    }
+
+    // Check API key for generate tab
+    const noKeyEl = document.getElementById('generate-no-key');
+    const generateBtn = document.getElementById('btn-generate-prose');
+    if (noKeyEl && generateBtn) {
+      if (!this.generator.hasApiKey()) {
+        noKeyEl.style.display = 'block';
+        generateBtn.style.display = 'none';
+      } else {
+        noKeyEl.style.display = 'none';
+        generateBtn.style.display = '';
+      }
+    }
+    const errEl = document.getElementById('generate-error');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    this._setGenerateStatus(false);
 
     // Calculate num chapters from existing or default
     const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
@@ -2879,7 +2725,94 @@ class App {
 
     this._updateWordsPerChapter();
     this._populateExportButtons();
-    this._showPanel('book-structure');
+
+    // Populate Settings tab
+    const settingsBody = document.getElementById('panel-settings-body');
+    if (settingsBody) {
+      settingsBody.innerHTML = this._renderSettings(project);
+      this._initApiKeyPinLock();
+    }
+
+    // Populate Export tab cover section
+    const coverSection = document.getElementById('export-cover-section');
+    const coverPreview = document.getElementById('export-cover-preview');
+    if (coverSection && coverPreview) {
+      if (project.coverImage) {
+        coverSection.style.display = '';
+        coverPreview.style.display = '';
+        coverPreview.src = project.coverImage;
+      } else {
+        coverSection.style.display = 'none';
+      }
+    }
+
+    // Switch to requested tab and show modal
+    this._switchSetupTab(tab);
+    this._showSetupBookModal();
+  }
+
+  _showSetupBookModal() {
+    const overlay = document.getElementById('setup-book-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  _closeSetupBookModal() {
+    const overlay = document.getElementById('setup-book-overlay');
+    if (overlay) overlay.classList.remove('visible');
+    // Auto-save settings keys when closing
+    this._autoSaveSettingsKeys();
+  }
+
+  _switchSetupTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.setup-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.setupTab === tabName);
+    });
+    // Update tab content panels
+    document.querySelectorAll('.setup-tab-content').forEach(panel => {
+      panel.classList.toggle('active', panel.id === `setup-tab-${tabName}`);
+    });
+  }
+
+  _populateGenreDropdowns(project) {
+    const genreEl = document.getElementById('bs-genre');
+    if (!genreEl) return;
+
+    // Populate genre options
+    let genreHtml = '<option value="">-- Select Genre --</option>';
+    for (const g of (window.GENRE_DATA || [])) {
+      genreHtml += `<option value="${g.id}" ${project.genre === g.id ? 'selected' : ''}>${g.label}</option>`;
+    }
+    genreEl.innerHTML = genreHtml;
+
+    // Populate subgenre if genre is set
+    const subgenreGroup = document.getElementById('bs-subgenre-group');
+    const subgenreEl = document.getElementById('bs-subgenre');
+    if (project.genre && subgenreEl) {
+      subgenreGroup.style.display = '';
+      let subHtml = '<option value="">-- None (use main genre rules) --</option>';
+      subHtml += this._getSubgenreOptions(project.genre, project.subgenre);
+      subgenreEl.innerHTML = subHtml;
+    } else if (subgenreGroup) {
+      subgenreGroup.style.display = 'none';
+    }
+  }
+
+  async _populateStructureInModal(project) {
+    const container = document.getElementById('bs-structure-container');
+    if (!container) return;
+
+    const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
+    const templateId = await this.localStorage.getSetting('structureTemplate_' + this.state.currentProjectId, 'threeAct');
+    const targetWords = project.wordCountGoal || 80000;
+    const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
+    const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
+    container.innerHTML = this._renderStructureInSettings(guidance, beats, project, templateId);
+  }
+
+  // Legacy aliases for backward compatibility
+  async openBookStructurePanel() {
+    await this.openSetupBookModal('book');
   }
 
   _updateWordsPerChapter() {
@@ -2901,6 +2834,11 @@ class App {
     const poetryLevel = parseInt(document.getElementById('bs-poetry-level')?.value) || 3;
     const authorPalette = document.getElementById('bs-author-palette')?.value?.trim() || '';
 
+    // Gather genre, subgenre, and voice from Book Setup tab
+    const genre = document.getElementById('bs-genre')?.value || '';
+    const subgenre = document.getElementById('bs-subgenre')?.value || '';
+    const voice = document.getElementById('bs-voice')?.value || 'auto';
+
     // Gather translation languages (stored separately from translation results)
     const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
     const translationLanguages = translationLangs.filter(lang =>
@@ -2916,10 +2854,10 @@ class App {
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
         title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette,
-        translationLanguages, frontMatter, backMatter
+        genre, subgenre, voice, translationLanguages, frontMatter, backMatter
       });
 
-      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, translationLanguages, frontMatter, backMatter };
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, genre, subgenre, voice, translationLanguages, frontMatter, backMatter };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       await this.renderChapterNav();
@@ -4691,14 +4629,8 @@ class App {
     // --- Switch User ---
     document.getElementById('btn-switch-user-sidebar')?.addEventListener('click', () => this._switchUser());
 
-    // --- Delete Project (sidebar) ---
-    document.getElementById('btn-delete-project-sidebar')?.addEventListener('click', () => this._deleteCurrentProject());
-
     // --- Import Knowledge (sidebar) ---
     document.getElementById('btn-import-knowledge-sidebar')?.addEventListener('click', () => this._openImportKnowledgePanel());
-
-    // --- Error Database (sidebar) ---
-    document.getElementById('btn-error-database-sidebar')?.addEventListener('click', () => this.openErrorDatabasePanel());
 
     // --- Sidebar toggle ---
     document.getElementById('btn-sidebar-toggle')?.addEventListener('click', () => {
@@ -4921,12 +4853,40 @@ class App {
     });
 
     // --- Panel buttons ---
-    document.getElementById('btn-generate')?.addEventListener('click', () => this.openGeneratePanel());
     document.getElementById('btn-analysis')?.addEventListener('click', () => this.openAnalysisPanel());
-    document.getElementById('btn-export')?.addEventListener('click', () => this.openExportPanel());
-    document.getElementById('btn-settings')?.addEventListener('click', () => this.openSettingsPanel());
-    document.getElementById('btn-error-database')?.addEventListener('click', () => this.openErrorDatabasePanel());
-    document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openBookStructurePanel());
+    document.getElementById('btn-book-structure')?.addEventListener('click', () => this.openSetupBookModal('book'));
+
+    // --- Setup Book Modal: close button and overlay click ---
+    document.getElementById('btn-close-setup-book')?.addEventListener('click', () => this._closeSetupBookModal());
+    document.getElementById('setup-book-overlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'setup-book-overlay') this._closeSetupBookModal();
+    });
+
+    // --- Setup Book Modal: tab switching ---
+    document.querySelectorAll('.setup-tab').forEach(tab => {
+      tab.addEventListener('click', () => this._switchSetupTab(tab.dataset.setupTab));
+    });
+
+    // --- Setup Book Modal: Genre change updates subgenre dropdown ---
+    document.getElementById('bs-genre')?.addEventListener('change', (e) => {
+      const genreId = e.target.value;
+      const subgenreGroup = document.getElementById('bs-subgenre-group');
+      const subgenreEl = document.getElementById('bs-subgenre');
+      if (genreId && subgenreEl) {
+        subgenreGroup.style.display = '';
+        let html = '<option value="">-- None (use main genre rules) --</option>';
+        html += this._getSubgenreOptions(genreId, '');
+        subgenreEl.innerHTML = html;
+      } else if (subgenreGroup) {
+        subgenreGroup.style.display = 'none';
+      }
+    });
+
+    // --- Error Database (from Settings tab) ---
+    document.getElementById('btn-error-database-popup')?.addEventListener('click', () => {
+      this._closeSetupBookModal();
+      this.openErrorDatabasePanel();
+    });
 
     // Translation language selection — SINGLE SELECT (radio behavior with checkboxes)
     const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
@@ -5050,17 +5010,13 @@ class App {
         this._applyTheme(this.state.theme);
         await this.localStorage.setSetting('theme', this.state.theme);
       }
-      if (e.target.id === 'setting-daily-goal') {
-        this.state.dailyGoal = parseInt(e.target.value) || 1000;
-        await this.localStorage.setSetting('dailyGoal', this.state.dailyGoal);
-      }
       if (e.target.id === 'bs-total-words' || e.target.id === 'bs-num-chapters') {
         this._updateWordsPerChapter();
       }
       if (e.target.id === 'structure-template-select') {
         await this.localStorage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
-        // Refresh the structure section within settings
-        const container = document.getElementById('settings-structure-container');
+        // Refresh the structure section within the Book Setup tab
+        const container = document.getElementById('bs-structure-container');
         if (container && this._currentProject) {
           const totalWords = Object.values(this._chapterWordCounts).reduce((sum, wc) => sum + wc, 0);
           const templateId = e.target.value;
@@ -5248,6 +5204,7 @@ class App {
         document.getElementById('accept-outline-overlay')?.classList.remove('visible');
       }
       if (e.target.id === 'btn-generate-prose') {
+        this._closeSetupBookModal();
         await this._runGeneration();
       }
       if (e.target.id === 'btn-generate-cancel') {
@@ -5260,6 +5217,7 @@ class App {
         this._showContinueBar(true);
       }
       if (e.target.id === 'btn-iterative-write') {
+        this._closeSetupBookModal();
         await this._iterativeWrite();
       }
       if (e.target.id === 'btn-iterative-cancel') {
@@ -5286,8 +5244,7 @@ class App {
         await this._iterativeScoreAndRefine(this._iterativeAcceptText || this._lastGeneratedText, 0, 0);
       }
       if (e.target.id === 'btn-generate-open-settings') {
-        this._closeAllPanels();
-        setTimeout(() => this.openSettingsPanel(), 100);
+        this._switchSetupTab('settings');
       }
       // Continue Writing word-count buttons (+1000, +2000, +3000)
       const continueBtn = e.target.closest('.continue-word-btn');
@@ -5481,25 +5438,8 @@ class App {
     if (el('status-total')) el('status-total').textContent = total.toLocaleString();
     if (el('status-goal')) el('status-goal').textContent = goal.toLocaleString();
     if (el('status-progress')) el('status-progress').textContent = progress + '%';
-    if (el('status-daily')) el('status-daily').textContent = `${this.state.wordsToday} / ${this.state.dailyGoal}`;
     if (el('fwc-total')) el('fwc-total').textContent = total.toLocaleString();
     if (el('fwc-progress')) el('fwc-progress').textContent = progress + '%';
-  }
-
-  async _loadDailyProgress() {
-    const today = new Date().toISOString().split('T')[0];
-    this.state.wordsToday = await this.localStorage.getSetting('wordsToday_' + today, 0);
-  }
-
-  _trackDailyWords(currentChapterWords) {
-    const today = new Date().toISOString().split('T')[0];
-    const key = 'wordsToday_' + today;
-    const updated = Math.max(this.state.wordsToday, currentChapterWords);
-    this.state.wordsToday = updated;
-    this.localStorage.setSetting(key, updated);
-    // Update daily display
-    const dailyEl = document.getElementById('status-daily');
-    if (dailyEl) dailyEl.textContent = `${updated.toLocaleString()} / ${this.state.dailyGoal.toLocaleString()}`;
   }
 
   _applyTheme(theme) {
@@ -5508,26 +5448,9 @@ class App {
   }
 
   async _saveProjectSettings() {
-    if (!this.state.currentProjectId) return;
-    const title = document.getElementById('setting-project-name')?.value;
-    const genre = document.getElementById('setting-project-genre')?.value || '';
-    const subgenre = document.getElementById('setting-project-subgenre')?.value || '';
-    const voice = document.getElementById('setting-project-voice')?.value || 'auto';
-
-    try {
-      await this.fs.updateProject(this.state.currentProjectId, {
-        title, genre, subgenre, voice
-      });
-
-      // Update cached project
-      this._currentProject = { ...this._currentProject, title, genre, subgenre, voice };
-      document.getElementById('project-title').textContent = title;
-      this._updateStatusBarLocal();
-      this._closeAllPanels();
-    } catch (err) {
-      console.error('Failed to save project settings:', err);
-      alert('Failed to save settings.');
-    }
+    // Project settings (genre, voice, title) are now saved via _saveBookStructure
+    // from the Book Setup tab in the central modal
+    await this._saveBookStructure();
   }
 
   async _deleteCurrentProject() {
@@ -5793,7 +5716,8 @@ class App {
       plotEl.value = this._currentChapterOutline;
     }
 
-    // Trigger generation
+    // Close the modal and trigger generation
+    this._closeSetupBookModal();
     await this._runGeneration();
   }
 
