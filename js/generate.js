@@ -7,6 +7,21 @@
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
 
+/** Lazy-load the Puter.js SDK only when AI image features are used. */
+let _puterLoading = null;
+function loadPuterSDK() {
+  if (typeof puter !== 'undefined') return Promise.resolve();
+  if (_puterLoading) return _puterLoading;
+  _puterLoading = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://js.puter.com/v2/';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Puter.js SDK'));
+    document.head.appendChild(script);
+  });
+  return _puterLoading;
+}
+
 class ProseGenerator {
   constructor(storage) {
     this.storage = storage;
@@ -2112,6 +2127,7 @@ Output valid JSON only:
    * Returns a base64 data URL of the generated image.
    */
   async generateCoverWithPuter(prompt) {
+    await loadPuterSDK();
     if (typeof puter === 'undefined' || !puter.ai) {
       throw new Error('Puter.js not loaded');
     }
@@ -2304,6 +2320,7 @@ Output valid JSON only:
    */
   async generateCoverViaHF(prompt, hfToken) {
     if (!hfToken) throw new Error('No Hugging Face token set.');
+    await loadPuterSDK();
     if (typeof puter === 'undefined' || !puter.net || !puter.net.fetch) {
       throw new Error('Puter.js net.fetch not available');
     }
