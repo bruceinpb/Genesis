@@ -1164,72 +1164,95 @@
   </div>
 </div>
 
-<!-- ===== Edit Cover Panel ===== -->
-<div class="panel" id="panel-edit-cover">
-  <div class="panel-header">
-    <h2>Edit Cover</h2>
-    <button class="panel-close" aria-label="Close">&times;</button>
-  </div>
-  <div class="panel-body" id="panel-edit-cover-body">
-    <div class="edit-cover-preview">
-      <canvas id="cover-edit-canvas" width="600" height="900" style="max-width:100%; border:1px solid var(--border-color); border-radius:var(--radius-sm);"></canvas>
+<!-- ===== Full-Screen Cover Editor ===== -->
+<div id="cover-editor-overlay" class="cover-editor-overlay">
+  <div class="cover-editor-header">
+    <h2>Cover Editor</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-primary btn-sm" id="btn-ce-save">Save Cover</button>
+      <button class="panel-close" id="btn-ce-close" aria-label="Close">&times;</button>
     </div>
-    <div class="edit-cover-controls" style="margin-top:16px;">
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-title">Title Text</label>
-        <input type="text" id="cover-edit-title" class="form-input" placeholder="Book title">
+  </div>
+  <div class="cover-editor-body">
+    <!-- Canvas Preview Area -->
+    <div class="cover-editor-canvas-area">
+      <div class="cover-editor-canvas-wrapper">
+        <canvas id="cover-edit-canvas"></canvas>
       </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-subtitle">Subtitle Text</label>
-        <input type="text" id="cover-edit-subtitle" class="form-input" placeholder="Subtitle (optional)">
+      <div id="ce-canvas-info" class="ce-canvas-info"></div>
+    </div>
+    <!-- Controls Sidebar -->
+    <div class="cover-editor-controls" id="ce-controls">
+      <!-- Image Dimensions -->
+      <div class="ce-section">
+        <div class="ce-section-title" data-section="dims">Image Dimensions</div>
+        <div class="ce-section-body">
+          <div class="ce-row">
+            <div class="form-group ce-half">
+              <label>Width</label>
+              <input type="number" id="ce-width" class="form-input" value="6" step="0.01" min="0.1">
+            </div>
+            <div class="form-group ce-half">
+              <label>Height</label>
+              <input type="number" id="ce-height" class="form-input" value="9" step="0.01" min="0.1">
+            </div>
+          </div>
+          <div class="ce-row">
+            <div class="form-group ce-half">
+              <label>Unit</label>
+              <select id="ce-unit" class="form-input">
+                <option value="in" selected>Inches</option>
+                <option value="cm">Centimeters</option>
+                <option value="px">Pixels</option>
+              </select>
+            </div>
+            <div class="form-group ce-half">
+              <label>DPI (72–300)</label>
+              <input type="number" id="ce-dpi" class="form-input" value="300" min="72" max="300">
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin:8px 0;cursor:pointer;font-size:0.85rem;">
+            <input type="checkbox" id="ce-lock-aspect" style="width:18px;height:18px;">
+            Constrain proportions
+          </label>
+          <button class="btn btn-sm" id="btn-ce-apply-dims" style="width:100%;">Apply Dimensions</button>
+        </div>
       </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-author">Author Name</label>
-        <input type="text" id="cover-edit-author" class="form-input" placeholder="Author name (optional)">
+      <!-- Image Generation -->
+      <div class="ce-section">
+        <div class="ce-section-title" data-section="gen">Image Generation</div>
+        <div class="ce-section-body">
+          <div class="form-group">
+            <label>Prompt</label>
+            <textarea id="ce-prompt" class="form-input" rows="3" placeholder="Describe the cover image you want generated..."></textarea>
+          </div>
+          <div class="form-group">
+            <label>Reference Image</label>
+            <input type="file" id="ce-ref-input" accept="image/*" style="display:none;">
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-sm" id="btn-ce-ref-upload" style="flex:1;">Upload Reference</button>
+              <button class="btn btn-sm" id="btn-ce-ref-use-bg" style="flex:1;" title="Use the reference image as the cover background">Use as Background</button>
+            </div>
+            <div id="ce-ref-preview" style="display:none;text-align:center;margin-top:6px;">
+              <img id="ce-ref-thumb" style="max-width:100%;max-height:80px;border-radius:4px;">
+              <br><button class="btn btn-sm" id="btn-ce-ref-remove" style="font-size:0.75rem;margin-top:4px;">Remove</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm" id="btn-ce-auto-prompt" style="flex:1;" title="Generate a prompt from your story using AI">Auto-Prompt</button>
+            <button class="btn btn-primary btn-sm" id="btn-ce-generate" style="flex:1;">Generate Image</button>
+          </div>
+          <div id="ce-gen-status" style="display:none;margin-top:8px;font-size:0.8rem;color:var(--accent-primary);text-align:center;"></div>
+        </div>
       </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-font">Font Family</label>
-        <select id="cover-edit-font" class="form-input">
-          <option value="Georgia">Georgia (Serif)</option>
-          <option value="Garamond">Garamond</option>
-          <option value="Palatino">Palatino</option>
-          <option value="Times New Roman">Times New Roman</option>
-          <option value="Helvetica">Helvetica (Sans)</option>
-          <option value="Arial">Arial</option>
-          <option value="Verdana">Verdana</option>
-          <option value="Trebuchet MS">Trebuchet MS</option>
-          <option value="Courier New">Courier New (Mono)</option>
-          <option value="Impact">Impact</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-fontsize">Title Font Size</label>
-        <input type="range" id="cover-edit-fontsize" min="24" max="80" value="48" style="width:100%;">
-        <span id="cover-edit-fontsize-label" style="font-size:12px; color:var(--text-muted);">48px</span>
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-color">Text Color</label>
-        <input type="color" id="cover-edit-color" value="#ffffff" style="width:100%; height:36px; border:none; cursor:pointer;">
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-position">Text Placement</label>
-        <select id="cover-edit-position" class="form-input">
-          <option value="top">Top</option>
-          <option value="center">Center</option>
-          <option value="bottom" selected>Bottom</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin-bottom:12px;">
-        <label for="cover-edit-shadow">Text Shadow</label>
-        <select id="cover-edit-shadow" class="form-input">
-          <option value="none">None</option>
-          <option value="light" selected>Light</option>
-          <option value="heavy">Heavy</option>
-        </select>
-      </div>
-      <div style="display:flex; gap:8px; margin-top:16px;">
-        <button class="btn btn-primary" id="btn-cover-edit-apply" style="flex:1;">Apply Changes</button>
-        <button class="btn btn-sm" id="btn-cover-edit-save" style="flex:1;">Save Cover</button>
+      <!-- Text Blocks -->
+      <div class="ce-section">
+        <div class="ce-section-title" data-section="text">Text Blocks</div>
+        <div class="ce-section-body" style="padding:8px;">
+          <p style="font-size:0.75rem;color:var(--text-muted);margin:0 0 8px;">Click text on canvas to select. Drag to move.</p>
+          <div id="ce-blocks-list"></div>
+          <button class="btn btn-sm" id="btn-ce-add-block" style="width:100%;margin-top:6px;">+ Add Text Block</button>
+        </div>
       </div>
     </div>
   </div>
