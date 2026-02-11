@@ -15,6 +15,7 @@ import { ExportManager } from './export.js';
 import { Editor } from './editor.js';
 import { ProseGenerator } from './generate.js';
 import { ErrorDatabase } from './error-database.js';
+import { CoverEditor } from './cover-editor.js';
 
 class App {
   constructor() {
@@ -27,6 +28,7 @@ class App {
     this.editor = null;
     this.generator = null;
     this.errorDb = null;
+    this.coverEditor = null;
 
     this.state = {
       currentUser: null,
@@ -104,6 +106,10 @@ class App {
 
       // Initialize Chapter Navigator
       this._initChapterNav();
+
+      // Initialize Cover Editor
+      this.coverEditor = new CoverEditor(this);
+      this.coverEditor.init();
 
       // Initialize Translation System
       this._initTranslation();
@@ -2431,14 +2437,14 @@ class App {
       img.style.display = 'block';
       img.src = project.coverImage;
       regenBtn.style.cssText = 'display:block; width:100%; margin-top:6px;';
-      if (editBtn) editBtn.style.cssText = 'display:block; width:100%; margin-top:6px;';
     } else {
       placeholder.style.display = '';
       img.style.display = 'none';
       img.src = '';
       regenBtn.style.cssText = 'display:none; width:100%; margin-top:6px;';
-      if (editBtn) editBtn.style.cssText = 'display:none; width:100%; margin-top:6px;';
     }
+    // Always show the edit button when a project is loaded (editor can generate images)
+    if (editBtn && project) editBtn.style.cssText = 'display:block; width:100%; margin-top:6px;';
   }
 
   async _generateCover(regenerate = false) {
@@ -4951,13 +4957,7 @@ class App {
         await this._generateCover(true);
       }
       if (e.target.id === 'btn-edit-cover') {
-        this._openEditCoverPanel();
-      }
-      if (e.target.id === 'btn-cover-edit-apply') {
-        this._applyCoverEdits();
-      }
-      if (e.target.id === 'btn-cover-edit-save') {
-        await this._saveCoverEdits();
+        this.coverEditor?.open();
       }
       if (e.target.id === 'btn-knowledge-paste') {
         this._showKnowledgePasteArea();
@@ -6551,213 +6551,7 @@ class App {
   }
 
   // ======== Edit Cover Methods ========
-
-  _openEditCoverPanel() {
-    const project = this._currentProject;
-    if (!project?.coverImage) {
-      alert('Generate a cover first before editing.');
-      return;
-    }
-    const panel = document.getElementById('panel-edit-cover');
-    if (!panel) return;
-    panel.classList.add('visible');
-
-    // Populate fields from project
-    const titleInput = document.getElementById('cover-edit-title');
-    const subtitleInput = document.getElementById('cover-edit-subtitle');
-    const authorInput = document.getElementById('cover-edit-author');
-    if (titleInput) titleInput.value = project.coverTitle || project.title || '';
-    if (subtitleInput) subtitleInput.value = project.coverSubtitle || project.subtitle || '';
-    if (authorInput) authorInput.value = project.coverAuthor || this.state.currentUser || '';
-
-    // Load saved cover edit settings
-    const fontInput = document.getElementById('cover-edit-font');
-    const sizeInput = document.getElementById('cover-edit-fontsize');
-    const colorInput = document.getElementById('cover-edit-color');
-    const posInput = document.getElementById('cover-edit-position');
-    const shadowInput = document.getElementById('cover-edit-shadow');
-    if (fontInput) fontInput.value = project.coverFont || 'Georgia';
-    if (sizeInput) {
-      sizeInput.value = project.coverFontSize || 48;
-      const label = document.getElementById('cover-edit-fontsize-label');
-      if (label) label.textContent = (project.coverFontSize || 48) + 'px';
-    }
-    if (colorInput) colorInput.value = project.coverTextColor || '#ffffff';
-    if (posInput) posInput.value = project.coverTextPosition || 'bottom';
-    if (shadowInput) shadowInput.value = project.coverTextShadow || 'light';
-
-    // Set up live font size label update
-    if (sizeInput) {
-      sizeInput.oninput = () => {
-        const label = document.getElementById('cover-edit-fontsize-label');
-        if (label) label.textContent = sizeInput.value + 'px';
-      };
-    }
-
-    // Draw initial preview
-    this._drawCoverPreview();
-  }
-
-  _drawCoverPreview() {
-    const project = this._currentProject;
-    if (!project?.coverImage) return;
-
-    const canvas = document.getElementById('cover-edit-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-
-    const titleText = document.getElementById('cover-edit-title')?.value || '';
-    const subtitleText = document.getElementById('cover-edit-subtitle')?.value || '';
-    const authorText = document.getElementById('cover-edit-author')?.value || '';
-    const fontFamily = document.getElementById('cover-edit-font')?.value || 'Georgia';
-    const fontSize = parseInt(document.getElementById('cover-edit-fontsize')?.value || '48', 10);
-    const textColor = document.getElementById('cover-edit-color')?.value || '#ffffff';
-    const position = document.getElementById('cover-edit-position')?.value || 'bottom';
-    const shadow = document.getElementById('cover-edit-shadow')?.value || 'light';
-
-    // Use base image (without text) if available, otherwise fall back to coverImage
-    const imageSrc = project.coverImageBase || project.coverImage;
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      // Cap canvas dimensions to keep JPEG output under Firestore's 1MB field limit
-      const MAX_DIM = 800;
-      let w = img.width || 600;
-      let h = img.height || 900;
-      if (w > MAX_DIM || h > MAX_DIM) {
-        const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      canvas.width = w;
-      canvas.height = h;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      // Apply text shadow
-      if (shadow === 'light') {
-        ctx.shadowColor = 'rgba(0,0,0,0.6)';
-        ctx.shadowBlur = 4;
-        ctx.shadowOffsetX = 2;
-        ctx.shadowOffsetY = 2;
-      } else if (shadow === 'heavy') {
-        ctx.shadowColor = 'rgba(0,0,0,0.9)';
-        ctx.shadowBlur = 8;
-        ctx.shadowOffsetX = 3;
-        ctx.shadowOffsetY = 3;
-      }
-
-      ctx.fillStyle = textColor;
-      ctx.textAlign = 'center';
-
-      // Calculate Y position
-      let titleY, subtitleY, authorY;
-      if (position === 'top') {
-        titleY = fontSize + 30;
-        subtitleY = titleY + fontSize * 0.6 + 10;
-        authorY = canvas.height - 40;
-      } else if (position === 'center') {
-        titleY = canvas.height / 2 - fontSize * 0.3;
-        subtitleY = titleY + fontSize * 0.6 + 10;
-        authorY = canvas.height - 40;
-      } else {
-        titleY = canvas.height - 120;
-        subtitleY = titleY + fontSize * 0.6 + 10;
-        authorY = canvas.height - 40;
-      }
-
-      const centerX = canvas.width / 2;
-
-      // Draw title
-      if (titleText) {
-        ctx.font = `bold ${fontSize}px "${fontFamily}"`;
-        ctx.fillText(titleText, centerX, titleY, canvas.width - 40);
-      }
-
-      // Draw subtitle
-      if (subtitleText) {
-        ctx.font = `${Math.round(fontSize * 0.5)}px "${fontFamily}"`;
-        ctx.fillText(subtitleText, centerX, subtitleY, canvas.width - 40);
-      }
-
-      // Draw author
-      if (authorText) {
-        ctx.shadowBlur = Math.max(ctx.shadowBlur - 2, 0);
-        ctx.font = `${Math.round(fontSize * 0.4)}px "${fontFamily}"`;
-        ctx.fillText(authorText, centerX, authorY, canvas.width - 40);
-      }
-    };
-    img.src = imageSrc;
-  }
-
-  _applyCoverEdits() {
-    this._drawCoverPreview();
-  }
-
-  async _saveCoverEdits() {
-    const project = this._currentProject;
-    if (!project) return;
-
-    const canvas = document.getElementById('cover-edit-canvas');
-    if (!canvas) return;
-
-    // Redraw to make sure canvas is current
-    this._drawCoverPreview();
-
-    // Wait a moment for the image to draw
-    await new Promise(r => setTimeout(r, 300));
-
-    try {
-      // Firestore has a 1,048,487 byte limit per field value.
-      // We must keep the data URL string under this limit.
-      const MAX_BYTES = 1000000;
-
-      // Step 1: Try progressive JPEG quality reduction
-      let quality = 0.85;
-      let sourceCanvas = canvas;
-      let dataUrl = sourceCanvas.toDataURL('image/jpeg', quality);
-
-      while (dataUrl.length > MAX_BYTES && quality > 0.1) {
-        quality -= 0.05;
-        dataUrl = sourceCanvas.toDataURL('image/jpeg', quality);
-      }
-
-      // Step 2: If still too large, downscale image dimensions
-      if (dataUrl.length > MAX_BYTES) {
-        let scale = 0.8;
-        while (dataUrl.length > MAX_BYTES && scale >= 0.3) {
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = Math.round(canvas.width * scale);
-          tempCanvas.height = Math.round(canvas.height * scale);
-          const tempCtx = tempCanvas.getContext('2d');
-          tempCtx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
-          dataUrl = tempCanvas.toDataURL('image/jpeg', 0.6);
-          scale -= 0.1;
-        }
-      }
-
-      // Save cover typography settings
-      const updates = {
-        coverImage: dataUrl,
-        coverTitle: document.getElementById('cover-edit-title')?.value || '',
-        coverSubtitle: document.getElementById('cover-edit-subtitle')?.value || '',
-        coverAuthor: document.getElementById('cover-edit-author')?.value || '',
-        coverFont: document.getElementById('cover-edit-font')?.value || 'Georgia',
-        coverFontSize: parseInt(document.getElementById('cover-edit-fontsize')?.value || '48', 10),
-        coverTextColor: document.getElementById('cover-edit-color')?.value || '#ffffff',
-        coverTextPosition: document.getElementById('cover-edit-position')?.value || 'bottom',
-        coverTextShadow: document.getElementById('cover-edit-shadow')?.value || 'light'
-      };
-
-      await this.fs.updateProject(project.id, updates);
-      Object.assign(project, updates);
-      this._updateCoverDisplay();
-
-      document.getElementById('panel-edit-cover')?.classList.remove('visible');
-    } catch (err) {
-      alert('Failed to save cover: ' + err.message);
-    }
-  }
+  // Cover editing is now handled by the CoverEditor class (js/cover-editor.js)
 
   // ======== Import Knowledge Methods ========
 
