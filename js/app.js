@@ -7358,7 +7358,7 @@ If there are NO items to localize, return an empty array: []`;
       let completed = 0;
 
       // ── Show progress overlay (created dynamically for reliability) ──
-      const prog = this._showProgressOverlay('Translating\u2026', `0 of ${languages.length} language(s)`, 'Starting\u2026');
+      let prog = this._showProgressOverlay('Translating\u2026', `0 of ${languages.length} language(s)`, 'Starting\u2026');
 
       // ── 3. Translate each language (with localization analysis) ──
       for (const lang of languages) {
@@ -7374,9 +7374,15 @@ If there are NO items to localize, return an empty array: []`;
         // ═══ PHASE 2: HUMAN REVIEW (if items found) ═══
         let localizationInstructions = '';
         if (locItems.length > 0) {
-          prog.hide();  // Hide overlay so user can interact with review modal
+          prog.remove();  // Remove overlay from DOM so user can interact with review modal
           const review = await this._showLocalizationReview(locItems, lc);
-          prog.show();  // Re-show after review
+          // Re-create overlay after review completes
+          prog = this._showProgressOverlay(
+            `${lc.flag} ${lc.name}`,
+            `Language ${completed} of ${languages.length}`,
+            'Preparing translation\u2026'
+          );
+          prog.update(null, null, pct, 'Preparing translation\u2026');
 
           if (!review.skipped && review.approved.length > 0) {
             localizationInstructions = `\n\nCULTURAL LOCALIZATIONS (approved by author \u2014 apply these changes during translation):\n`;
