@@ -656,13 +656,15 @@ class App {
     const tocOrder = [];      // ordered list of hrefs that start chapters
 
     // Try NCX first (EPUB 2)
+    // Use > navPoint to skip nested sub-entries (Kindle splits chapters across
+    // multiple files and nests continuation navPoints under the parent chapter)
     const tocId = opfDoc.querySelector('spine')?.getAttribute('toc');
     const ncxHref = tocId && manifest[tocId];
     if (ncxHref) {
       const ncxXml = await zip.file(opfDir + ncxHref)?.async('string');
       if (ncxXml) {
         const ncxDoc = new DOMParser().parseFromString(ncxXml, 'application/xml');
-        for (const np of ncxDoc.querySelectorAll('navMap navPoint')) {
+        for (const np of ncxDoc.querySelectorAll('navMap > navPoint')) {
           const label = np.querySelector(':scope > navLabel > text')?.textContent?.trim();
           const src = np.querySelector(':scope > content')?.getAttribute('src');
           if (label && src) {
@@ -677,6 +679,7 @@ class App {
     }
 
     // Try EPUB 3 nav if NCX yielded nothing
+    // Use only top-level <li> > <a> entries to skip nested sub-sections
     if (tocMap.size === 0) {
       for (const item of opfDoc.querySelectorAll('manifest item')) {
         const props = item.getAttribute('properties') || '';
@@ -688,7 +691,12 @@ class App {
             const tocNav = navDoc.querySelector('nav[epub\\:type="toc"], nav[role="doc-toc"]')
                         || navDoc.querySelector('nav');
             if (tocNav) {
-              for (const a of tocNav.querySelectorAll('a[href]')) {
+              // Select only direct children <li> of the top-level <ol>
+              const topOl = tocNav.querySelector(':scope > ol');
+              const topLinks = topOl
+                ? topOl.querySelectorAll(':scope > li > a[href]')
+                : tocNav.querySelectorAll('a[href]');
+              for (const a of topLinks) {
                 const label = a.textContent.trim();
                 const href = a.getAttribute('href');
                 if (label && href) {
@@ -712,6 +720,8 @@ class App {
     // 4. Read spine documents, using TOC to determine chapter boundaries
     //    - Spine items that match a TOC entry start a new chapter (using TOC title)
     //    - Spine items NOT in the TOC are continuation sections — append to previous chapter
+    //    - Even TOC-listed items are merged if they have no heading and duplicate
+    //      the previous chapter's title (flat NCX with split-file entries)
     //    - If no TOC was found, fall back to heading-based detection with merging
     const chapters = [];
     const hasToc = tocMap.size > 0;
@@ -740,10 +750,17 @@ class App {
       if (textContent.length < 20) continue;
 
       if (hasToc) {
-        // TOC-based chapter detection
-        if (chapterStarts.has(spineHref)) {
+        const tocTitle = tocMap.get(spineHref);
+        const isTocEntry = chapterStarts.has(spineHref);
+
+        // Detect continuation: a TOC entry with no heading whose title matches the
+        // previous chapter (flat NCX with duplicate entries for split files)
+        const prevTitle = chapters.length > 0 ? chapters[chapters.length - 1].title : null;
+        const isDuplicateTocEntry = isTocEntry && !headingText && prevTitle && tocTitle === prevTitle;
+
+        if (isTocEntry && !isDuplicateTocEntry) {
           // This spine item starts a new TOC chapter
-          const title = tocMap.get(spineHref) || headingText || `Chapter ${chapters.length + 1}`;
+          const title = tocTitle || headingText || `Chapter ${chapters.length + 1}`;
           chapters.push({ title, content });
         } else if (chapters.length > 0) {
           // Continuation section — append to the previous chapter
@@ -987,6 +1004,8 @@ class App {
         const statusLabel = chapter.status === 'complete' ? 'done' : chapter.status === 'revision' ? 'rev' : '';
         const hasOutline = chapter.outline ? ' title="Has outline"' : '';
         const outlineIcon = chapter.outline ? '<span style="color:var(--accent-primary);font-size:0.7rem;margin-right:2px;">&#9998;</span>' : '';
+        const isFirst = (chapter === chapters[0]);
+        const isLast = (chapter === chapters[chapters.length - 1]);
         html += `
         <div class="tree-item chapter ${chapter.id === this.state.currentChapterId ? 'active' : ''}"
              data-id="${chapter.id}" data-type="chapter"${hasOutline}>
@@ -995,6 +1014,12 @@ class App {
           <span class="name">${outlineIcon}${this._esc(chapter.title)}</span>
           <span class="word-count">${(chapter.wordCount || 0).toLocaleString()}${statusLabel ? ' (' + statusLabel + ')' : ''}</span>
           <button class="chapter-delete-btn" data-delete-chapter="${chapter.id}" title="Delete chapter">&times;</button>
+          <button class="chapter-menu-btn" data-chapter-menu="${chapter.id}" title="More options">&#8942;</button>
+          <div class="chapter-menu" data-menu-for="${chapter.id}">
+            ${!isFirst ? `<button data-merge-up="${chapter.id}">Merge with Previous</button>` : ''}
+            ${!isLast ? `<button data-merge-down="${chapter.id}">Merge with Next</button>` : ''}
+            <button data-delete-chapter="${chapter.id}" class="danger">Delete Chapter</button>
+          </div>
         </div>`;
       }
 
@@ -4746,14 +4771,47 @@ class App {
         return;
       }
 
-      // Handle chapter delete button
-      const deleteBtn = e.target.closest('.chapter-delete-btn');
+      // Handle chapter delete button (inline × or from menu)
+      const deleteBtn = e.target.closest('.chapter-delete-btn') || e.target.closest('[data-delete-chapter]');
       if (deleteBtn) {
         e.stopPropagation();
         const chapterId = deleteBtn.dataset.deleteChapter;
         if (chapterId) {
+          this._closeChapterMenus();
           await this._deleteChapter(chapterId);
         }
+        return;
+      }
+
+      // Handle chapter menu button (⋮)
+      const menuBtn = e.target.closest('.chapter-menu-btn');
+      if (menuBtn) {
+        e.stopPropagation();
+        const chapterId = menuBtn.dataset.chapterMenu;
+        const menu = document.querySelector(`.chapter-menu[data-menu-for="${chapterId}"]`);
+        if (menu) {
+          const wasOpen = menu.classList.contains('open');
+          this._closeChapterMenus();
+          if (!wasOpen) menu.classList.add('open');
+        }
+        return;
+      }
+
+      // Handle merge up
+      const mergeUpBtn = e.target.closest('[data-merge-up]');
+      if (mergeUpBtn) {
+        e.stopPropagation();
+        this._closeChapterMenus();
+        await this._mergeChapter(mergeUpBtn.dataset.mergeUp, 'up');
+        return;
+      }
+
+      // Handle merge down
+      const mergeDownBtn = e.target.closest('[data-merge-down]');
+      if (mergeDownBtn) {
+        e.stopPropagation();
+        this._closeChapterMenus();
+        await this._mergeChapter(mergeDownBtn.dataset.mergeDown, 'down');
         return;
       }
 
@@ -4811,6 +4869,13 @@ class App {
             await this._renderNotesList();
           }
         }
+      }
+    });
+
+    // Close chapter menus on click outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.chapter-menu-btn') && !e.target.closest('.chapter-menu')) {
+        this._closeChapterMenus();
       }
     });
 
@@ -5598,6 +5663,59 @@ class App {
     } catch (err) {
       console.error('Failed to delete chapter:', err);
       alert('Failed to delete chapter.');
+    }
+  }
+
+  _closeChapterMenus() {
+    document.querySelectorAll('.chapter-menu.open').forEach(m => m.classList.remove('open'));
+  }
+
+  async _mergeChapter(chapterId, direction) {
+    try {
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const originals = chapters.filter(ch => !ch.isTranslation);
+      const idx = originals.findIndex(ch => ch.id === chapterId);
+      if (idx === -1) return;
+
+      const source = originals[idx];
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= originals.length) return;
+      const target = originals[targetIdx];
+
+      const sourceTitle = source.title || 'Untitled';
+      const targetTitle = target.title || 'Untitled';
+      const label = direction === 'up'
+        ? `Merge "${sourceTitle}" into "${targetTitle}" (previous)?`
+        : `Merge "${sourceTitle}" into "${targetTitle}" (next)?`;
+      if (!confirm(label)) return;
+
+      // Read full content of both chapters
+      const sourceData = await this.fs.getChapter(source.id);
+      const targetData = await this.fs.getChapter(target.id);
+      if (!sourceData || !targetData) return;
+
+      // Merge up: append source after target (previous chapter keeps its content first)
+      // Merge down: prepend source before target (next chapter gets source content first)
+      const mergedContent = direction === 'up'
+        ? (targetData.content || '') + '\n' + (sourceData.content || '')
+        : (sourceData.content || '') + '\n' + (targetData.content || '');
+
+      // Update target with merged content
+      await this.fs.updateChapter(target.id, { content: mergedContent });
+
+      // Delete the source chapter (and its translations)
+      await this._deleteChaptersAndCleanup([source.id]);
+
+      // If the source was the currently loaded chapter, switch to the target
+      if (this.state.currentChapterId === source.id) {
+        await this._loadChapter(target.id);
+      } else if (this.state.currentChapterId === target.id) {
+        // Reload target chapter to show merged content
+        await this._loadChapter(target.id);
+      }
+    } catch (err) {
+      console.error('Failed to merge chapters:', err);
+      alert('Failed to merge chapters.');
     }
   }
 
