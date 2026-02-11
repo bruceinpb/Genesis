@@ -3,34 +3,36 @@
  * Enables offline usage on iPad. Caches all app assets.
  */
 
-const CACHE_NAME = 'genesis2-v35';
+const CACHE_NAME = 'genesis2-v36';
 
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/css/main.css',
-  '/css/themes.css',
-  '/js/app.js',
-  '/js/storage.js',
-  '/js/editor.js',
-  '/js/manuscript.js',
-  '/js/prose.js',
-  '/js/structure.js',
-  '/js/export.js',
-  '/js/generate.js',
-  '/js/firebase-config.js',
-  '/js/firestore-storage.js',
-  '/js/genres.js',
-  '/icons/icon-192.svg',
-  '/icons/icon-512.svg'
+// Use relative paths so caching works whether hosted at root or a subdirectory
+// (e.g. GitHub Pages at /Genesis/)
+const ASSET_PATHS = [
+  './',
+  './index.html',
+  './manifest.json',
+  './css/main.css',
+  './css/themes.css',
+  './js/app.js',
+  './js/storage.js',
+  './js/editor.js',
+  './js/manuscript.js',
+  './js/prose.js',
+  './js/structure.js',
+  './js/export.js',
+  './js/generate.js',
+  './js/firebase-config.js',
+  './js/firestore-storage.js',
+  './js/genres.js',
+  './icons/icon-192.svg',
+  './icons/icon-512.svg'
 ];
 
 // Install: cache all core assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
+      return cache.addAll(ASSET_PATHS);
     })
   );
   self.skipWaiting();

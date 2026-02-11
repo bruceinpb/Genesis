@@ -58,62 +58,72 @@ class App {
   }
 
   async init() {
-    // Initialize local storage (for settings, characters, notes)
-    await this.localStorage.init();
-    this.manuscript = new ManuscriptManager(this.localStorage);
+    // Bind landing page events FIRST — these don't depend on async init
+    // and must work even if later initialization steps fail.
+    this._bindLandingEvents();
 
-    // Initialize modules
-    this.exporter = new ExportManager(this.fs);
-    this.generator = new ProseGenerator(this.localStorage);
-    await this.generator.init();
-    this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
-
-    // One-time cleanup of duplicate error patterns from old problem-based keying
-    this.errorDb.deduplicateExistingPatterns().catch(() => {});
-
-    // Pre-load error patterns prompt for immediate availability
-    this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 })
-      .then(prompt => { this._cachedErrorPatternsPrompt = prompt; })
-      .catch(() => {});
-
-    // Load settings
-    this.state.theme = await this.localStorage.getSetting('theme', 'dark');
-    this.state.dailyGoal = await this.localStorage.getSetting('dailyGoal', 1000);
-    this._hfToken = await this.localStorage.getSetting('hfToken', '');
-
-    // Apply theme
-    this._applyTheme(this.state.theme);
-
-    // Initialize editor
-    const editorEl = document.getElementById('editor');
-    this.editor = new Editor(editorEl, {
-      onChange: (content) => this._onEditorChange(content),
-      onWordCount: (count) => this._onWordCountUpdate(count)
-    });
-
-    // Bind UI events
-    this._bindEvents();
-
-    // Initialize Chapter Navigator
-    this._initChapterNav();
-
-    // Initialize Translation System
-    this._initTranslation();
-
-    // Check for saved user
+    // Check for saved user early (sync localStorage read)
     this.state.currentUser = window.localStorage.getItem('genesis2_userName') || null;
 
-    // Show landing page
-    await this._showLanding();
+    try {
+      // Initialize local storage (for settings, characters, notes)
+      await this.localStorage.init();
+      this.manuscript = new ManuscriptManager(this.localStorage);
 
-    // Track daily words
-    await this._loadDailyProgress();
+      // Initialize modules
+      this.exporter = new ExportManager(this.fs);
+      this.generator = new ProseGenerator(this.localStorage);
+      await this.generator.init();
+      this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
 
-    // Register service worker
-    this._registerServiceWorker();
+      // One-time cleanup of duplicate error patterns from old problem-based keying
+      this.errorDb.deduplicateExistingPatterns().catch(() => {});
 
-    // ── FAILSAFE: Watch for chapter deletions and clear editor if needed ──
-    this._initChapterDeletionFailsafe();
+      // Pre-load error patterns prompt for immediate availability
+      this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 })
+        .then(prompt => { this._cachedErrorPatternsPrompt = prompt; })
+        .catch(() => {});
+
+      // Load settings
+      this.state.theme = await this.localStorage.getSetting('theme', 'dark');
+      this.state.dailyGoal = await this.localStorage.getSetting('dailyGoal', 1000);
+      this._hfToken = await this.localStorage.getSetting('hfToken', '');
+
+      // Apply theme
+      this._applyTheme(this.state.theme);
+
+      // Initialize editor
+      const editorEl = document.getElementById('editor');
+      this.editor = new Editor(editorEl, {
+        onChange: (content) => this._onEditorChange(content),
+        onWordCount: (count) => this._onWordCountUpdate(count)
+      });
+
+      // Bind remaining UI events (editor, sidebar, etc.)
+      this._bindEvents();
+
+      // Initialize Chapter Navigator
+      this._initChapterNav();
+
+      // Initialize Translation System
+      this._initTranslation();
+
+      // Show landing page
+      await this._showLanding();
+
+      // Track daily words
+      await this._loadDailyProgress();
+
+      // Register service worker
+      this._registerServiceWorker();
+
+      // ── FAILSAFE: Watch for chapter deletions and clear editor if needed ──
+      this._initChapterDeletionFailsafe();
+    } catch (err) {
+      console.error('Genesis 2 init failed:', err);
+      // Even if init fails, show the landing page so the user can still log in
+      await this._showLanding();
+    }
   }
 
   /**
@@ -4179,9 +4189,9 @@ class App {
   //  Event Binding
   // ========================================
 
-  _bindEvents() {
-    // --- Landing Page Events ---
-
+  // Landing page events — bound early before async init so the
+  // splash screen is always interactive even if later steps fail.
+  _bindLandingEvents() {
     // User list clicks
     document.getElementById('user-list')?.addEventListener('click', (e) => {
       const btn = e.target.closest('.user-btn');
@@ -4231,9 +4241,13 @@ class App {
     document.getElementById('my-projects-list')?.addEventListener('click', handleProjectClick);
     document.getElementById('others-projects-list')?.addEventListener('click', handleProjectClick);
 
-    // --- Back to Projects ---
+    // Back to Projects
     document.getElementById('btn-back-to-projects')?.addEventListener('click', () => this._showLanding());
     document.getElementById('btn-back-to-projects-sidebar')?.addEventListener('click', () => this._showLanding());
+  }
+
+  _bindEvents() {
+    // --- App Events (landing events already bound in _bindLandingEvents) ---
 
     // --- Switch User ---
     document.getElementById('btn-switch-user-sidebar')?.addEventListener('click', () => this._switchUser());
