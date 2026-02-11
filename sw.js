@@ -7,7 +7,7 @@
  *  - Everything else  → cache-first with background refresh (icons, CSS, manifest)
  */
 
-const CACHE_NAME = 'genesis2-v42';
+const CACHE_NAME = 'genesis2-v43';
 
 // Use relative paths so caching works whether hosted at root or a subdirectory
 // (e.g. GitHub Pages at /Genesis/)
