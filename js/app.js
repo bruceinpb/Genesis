@@ -452,7 +452,7 @@ class App {
       if (chapters.length > 0) {
         await this._loadChapter(chapters[0].id);
       } else {
-        this.editor.clear();
+        if (this.editor) this.editor.clear();
         this.state.currentChapterId = null;
         this._showWelcome();
       }
@@ -6428,6 +6428,13 @@ class App {
       const swPath = new URL('sw.js', window.location.href).pathname;
       navigator.serviceWorker.register(swPath).catch(() => {
         // Service worker registration failed — app still works without it
+      });
+
+      // When a new SW activates, it posts SW_UPDATED — reload to get fresh code
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'SW_UPDATED') {
+          window.location.reload();
+        }
       });
     }
   }
