@@ -7049,7 +7049,7 @@ If there are NO items to localize, return an empty array: []`;
     try {
       // ── 1. Validate ──
       const content = this.editor?.getContent() || '';
-      const plainText = content.replace(/<[^>]+>/g, '').trim();
+      const plainText = this._htmlToPlainText(content);
 
       if (!plainText || plainText.length < 50) {
         alert('No prose in the current chapter to translate. Write or generate prose first.');
@@ -7088,13 +7088,34 @@ If there are NO items to localize, return an empty array: []`;
       const results = {};
       let completed = 0;
 
+      // ── Show progress overlay ──
+      const progressOverlay = document.getElementById('translation-progress-overlay');
+      const progressTitle   = document.getElementById('translation-progress-title');
+      const progressDetail  = document.getElementById('translation-progress-detail');
+      const progressFill    = document.getElementById('translation-progress-fill');
+      const progressStep    = document.getElementById('translation-progress-step');
+      if (progressOverlay) {
+        progressTitle.textContent  = 'Translating\u2026';
+        progressDetail.textContent = `0 of ${languages.length} language(s)`;
+        progressFill.style.width   = '0%';
+        progressStep.textContent   = 'Starting\u2026';
+        progressOverlay.style.display = 'flex';
+      }
+
       // ── 3. Translate each language (with localization analysis) ──
       for (const lang of languages) {
         completed++;
         const lc = langConfig[lang];
+        const pct = ((completed - 1) / languages.length) * 100;
 
         // ═══ PHASE 1: LOCALIZATION ANALYSIS ═══
         btn.textContent = `Analyzing for ${lc.flag} ${lc.name} localization\u2026`;
+        if (progressOverlay) {
+          progressTitle.textContent  = `${lc.flag} ${lc.name}`;
+          progressDetail.textContent = `Language ${completed} of ${languages.length}`;
+          progressFill.style.width   = `${pct}%`;
+          progressStep.textContent   = 'Analyzing for cultural localization\u2026';
+        }
         const locItems = await this._analyzeForLocalization(plainText, lang, lc);
 
         // ═══ PHASE 2: HUMAN REVIEW (if items found) ═══
@@ -7112,6 +7133,9 @@ If there are NO items to localize, return an empty array: []`;
 
         // ═══ PHASE 3: TRANSLATE WITH LOCALIZATIONS ═══
         btn.textContent = `Translating ${completed}/${languages.length}: ${lc.flag} ${lc.name}\u2026`;
+        if (progressOverlay) {
+          progressStep.textContent = 'Translating prose\u2026';
+        }
 
         const systemPrompt = `You are an expert literary translator specializing in ${lc.name} (${lc.native}). Your translations read as if originally written by a skilled native-speaker novelist.
 
@@ -7165,6 +7189,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           }
 
           // ── 3b. Translate the chapter title ──
+          if (progressOverlay) {
+            progressStep.textContent = 'Translating chapter title\u2026';
+          }
           const titleResponse = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -7198,6 +7225,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           const translatedChapterName = `${lc.flag} ${translatedTitle}`;
 
           // ── 3d. Create a new chapter in Firestore for the translation ──
+          if (progressOverlay) {
+            progressStep.textContent = 'Saving translation\u2026';
+          }
           const translationChapterData = await this.fs.createChapter({
             projectId: projectId,
             chapterNumber: chapterNumber,
@@ -7251,6 +7281,15 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         }
       }
 
+      // ── Hide progress overlay ──
+      if (progressOverlay) {
+        progressFill.style.width = '100%';
+        progressStep.textContent = 'Complete!';
+        // Brief pause so user sees 100% before overlay closes
+        await new Promise(r => setTimeout(r, 600));
+        progressOverlay.style.display = 'none';
+      }
+
       // ── 4. Refresh chapter list to show new translated chapters ──
       await this._renderChapterList();
       await this.renderChapterNav();
@@ -7284,6 +7323,8 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       console.error('Translation failed:', err);
       alert('Translation failed: ' + err.message);
     } finally {
+      const po = document.getElementById('translation-progress-overlay');
+      if (po) po.style.display = 'none';
       btn.disabled = false;
       btn.textContent = originalBtnText;
       this._updateTranslateButton();
@@ -7388,6 +7429,32 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
   }
 
   /**
+   * Convert HTML content to plain text while preserving paragraph breaks.
+   * Unlike a simple tag-strip, this inserts newlines for block-level elements
+   * so that _proseToHTML() can reconstruct proper paragraphs.
+   */
+  _htmlToPlainText(html) {
+    if (!html) return '';
+    let text = html;
+    // Normalize <br> variants to newlines
+    text = text.replace(/<br\s*\/?>/gi, '\n');
+    // Block-level closing tags → double newline (paragraph break)
+    text = text.replace(/<\/(?:p|div|h[1-6]|li|blockquote)>/gi, '\n\n');
+    // Remove all remaining HTML tags
+    text = text.replace(/<[^>]+>/g, '');
+    // Decode common HTML entities
+    text = text.replace(/&amp;/g, '&')
+               .replace(/&lt;/g, '<')
+               .replace(/&gt;/g, '>')
+               .replace(/&quot;/g, '"')
+               .replace(/&#39;/g, "'")
+               .replace(/&nbsp;/g, ' ');
+    // Collapse runs of 3+ newlines into double newlines
+    text = text.replace(/\n{3,}/g, '\n\n');
+    return text.trim();
+  }
+
+  /**
    * Close the split view
    */
   _closeTranslationSplitView() {
@@ -7410,7 +7477,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       try {
         const sourceChapter = await this.fs.getChapter(sourceId);
         if (sourceChapter) {
-          originalText = (sourceChapter.content || '').replace(/<[^>]+>/g, '').trim();
+          originalText = this._htmlToPlainText(sourceChapter.content || '');
           originalTitle = sourceChapter.title || originalTitle;
         }
       } catch (e) {
@@ -7422,7 +7489,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         return;
       }
 
-      const translatedText = (translatedChapter.content || '').replace(/<[^>]+>/g, '').trim();
+      const translatedText = this._htmlToPlainText(translatedChapter.content || '');
       const lang = translatedChapter.language || 'unknown';
       const lc = {
         flag: translatedChapter.languageFlag || '',
