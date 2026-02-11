@@ -4523,6 +4523,26 @@ class App {
       this._createNewProject();
     });
 
+    // Import project — landing page
+    document.getElementById('btn-import-project-landing')?.addEventListener('click', () => {
+      document.getElementById('import-project-file-landing')?.click();
+    });
+    document.getElementById('import-project-file-landing')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (file) await this._handleImportProject(file);
+      e.target.value = '';
+    });
+
+    // Import project — sidebar
+    document.getElementById('btn-import-project-sidebar')?.addEventListener('click', () => {
+      document.getElementById('import-project-file-sidebar')?.click();
+    });
+    document.getElementById('import-project-file-sidebar')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (file) await this._handleImportProject(file);
+      e.target.value = '';
+    });
+
     // New project modal events
     document.getElementById('btn-new-project-accept')?.addEventListener('click', () => {
       this._submitNewProject();
@@ -5012,6 +5032,9 @@ class App {
       // --- Book Structure events ---
       if (e.target.id === 'btn-save-book-structure') {
         await this._saveBookStructure();
+      }
+      if (e.target.id === 'btn-ai-populate-matter') {
+        await this._aiPopulateMatter();
       }
       if (e.target.id === 'btn-perform-translation') {
         const bsLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
@@ -6249,6 +6272,223 @@ class App {
     matterContent[this.state.currentMatterId] = content;
     await this.fs.updateProject(this.state.currentProjectId, { matterContent });
     this._currentProject.matterContent = matterContent;
+  }
+
+  // ========================================
+  //  AI Populate Front & Back Matter
+  // ========================================
+
+  /**
+   * Use AI to auto-generate content for all selected front and back matter pages.
+   * Builds a synopsis from the first ~3000 words of prose, then generates each
+   * matter page with context-appropriate prompts.
+   */
+  async _aiPopulateMatter() {
+    const project = this._currentProject;
+    if (!project) { alert('No project open.'); return; }
+
+    const apiKey = this.generator?.apiKey;
+    if (!apiKey) { alert('No API key found. Set your Anthropic API key in Settings.'); return; }
+
+    const frontMatter = project.frontMatter || [];
+    const backMatter = project.backMatter || [];
+    const allMatter = [
+      ...frontMatter.map(fm => ({ id: `fm-${fm}`, key: fm, type: 'front' })),
+      ...backMatter.map(bm => ({ id: `bm-${bm}`, key: bm, type: 'back' }))
+    ];
+
+    // Skip pages that already have content
+    const matterContent = project.matterContent || {};
+    const toGenerate = allMatter.filter(m => !matterContent[m.id]?.trim());
+
+    if (toGenerate.length === 0) {
+      alert('All selected front & back matter pages already have content. Clear a page to regenerate it.');
+      return;
+    }
+
+    const btn = document.getElementById('btn-ai-populate-matter');
+    const originalText = btn?.textContent;
+    if (btn) btn.disabled = true;
+
+    const prog = this._showProgressOverlay(
+      'Populating Matter Pages\u2026',
+      `0 of ${toGenerate.length} pages`,
+      'Building synopsis from manuscript\u2026'
+    );
+
+    try {
+      // ── 1. Build a synopsis from the manuscript prose ──
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const proseChapters = chapters.filter(ch => ch.status !== 'translation');
+
+      let proseSample = '';
+      const chapterTitles = [];
+      for (const ch of proseChapters) {
+        chapterTitles.push(ch.title || `Chapter ${ch.chapterNumber}`);
+        const plain = this._htmlToPlainText(ch.content || '');
+        if (proseSample.length < 4000) {
+          proseSample += plain + '\n\n';
+        }
+      }
+      proseSample = proseSample.substring(0, 4000).trim();
+
+      if (!proseSample || proseSample.length < 100) {
+        throw new Error('Not enough prose in the manuscript to generate matter pages. Write or generate some chapters first.');
+      }
+
+      // Gather characters
+      let characterSummary = '';
+      try {
+        const chars = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
+        if (chars?.length > 0) {
+          characterSummary = chars.map(c => `${c.name} (${c.role || 'character'}): ${c.description || ''}`).join('\n');
+        }
+      } catch (_) {}
+
+      const projectTitle = project.title || 'Untitled';
+      const projectGenre = project.genre || '';
+      const authorName = project.owner || 'the author';
+
+      // ── 2. Generate a synopsis via AI ──
+      prog.update(null, null, 10, 'Generating synopsis\u2026');
+
+      const synopsisResponse = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: this.generator.model || 'claude-sonnet-4-5-20250929',
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: `Write a 2-3 paragraph synopsis of this novel based on the prose sample below. Include the main characters, central conflict, setting, and tone. Do NOT include spoilers about the ending.\n\nTitle: "${projectTitle}"\nGenre: ${projectGenre || 'Fiction'}\n${characterSummary ? `\nCharacters:\n${characterSummary}\n` : ''}\nChapter Titles: ${chapterTitles.join(', ')}\n\nProse Sample:\n${proseSample}`
+          }]
+        })
+      });
+
+      if (!synopsisResponse.ok) throw new Error(`Synopsis API error: ${synopsisResponse.status}`);
+      const synopsisData = await synopsisResponse.json();
+      const synopsis = synopsisData.content?.filter(b => b.type === 'text').map(b => b.text).join('\n') || '';
+
+      // ── 3. Generate each matter page ──
+      const matterPrompts = this._getMatterPrompts(projectTitle, authorName, projectGenre, synopsis, chapterTitles, characterSummary);
+
+      for (let i = 0; i < toGenerate.length; i++) {
+        const matter = toGenerate[i];
+        const pct = 20 + ((i / toGenerate.length) * 75);
+        prog.update(null, `${i + 1} of ${toGenerate.length} pages`, pct, `Generating ${this._getMatterLabel(matter.key)}\u2026`);
+
+        const prompt = matterPrompts[matter.key];
+        if (!prompt) {
+          // No prompt defined for this type, skip
+          continue;
+        }
+
+        try {
+          const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+              model: this.generator.model || 'claude-sonnet-4-5-20250929',
+              max_tokens: 2048,
+              system: 'You are a publishing professional who creates polished book matter pages. Output clean HTML using only <p>, <h2>, <h3>, <em>, <strong> tags. No markdown. No explanations or commentary \u2014 output ONLY the page content.',
+              messages: [{ role: 'user', content: prompt }]
+            })
+          });
+
+          if (!response.ok) {
+            console.error(`Failed to generate ${matter.key}: ${response.status}`);
+            continue;
+          }
+
+          const data = await response.json();
+          const html = data.content?.filter(b => b.type === 'text').map(b => b.text).join('') || '';
+
+          if (html.trim()) {
+            matterContent[matter.id] = html;
+          }
+        } catch (err) {
+          console.error(`Error generating ${matter.key}:`, err);
+        }
+      }
+
+      // ── 4. Save all generated matter content ──
+      prog.update(null, null, 98, 'Saving\u2026');
+      await this.fs.updateProject(this.state.currentProjectId, { matterContent });
+      this._currentProject.matterContent = matterContent;
+
+      // Refresh nav to show checkmarks
+      await this.renderChapterNav();
+
+      prog.update(null, null, 100, 'Done!');
+      await new Promise(r => setTimeout(r, 500));
+      prog.remove();
+
+      const generated = toGenerate.length;
+      alert(`Front & back matter populated! ${generated} page(s) generated. Navigate to each page in the chapter navigator to review and edit.`);
+
+    } catch (err) {
+      console.error('AI matter population failed:', err);
+      alert('Failed to populate matter pages: ' + err.message);
+      prog.remove();
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+  }
+
+  /**
+   * Build matter-specific prompts for each page type.
+   */
+  _getMatterPrompts(title, author, genre, synopsis, chapterTitles, characters) {
+    return {
+      'title-page': `Create a title page for a ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nAuthor: ${author}\n\nFormat it as a centered title page with the book title as an <h2>, subtitle line if appropriate for the genre, and author name. Keep it elegant and simple.`,
+
+      'copyright': `Create a standard copyright page for a published novel.\n\nTitle: "${title}"\nAuthor: ${author}\nYear: ${new Date().getFullYear()}\n\nInclude: copyright notice, "All rights reserved" statement, "This is a work of fiction" disclaimer, placeholder for ISBN, and placeholder for publisher info. Use standard publishing conventions.`,
+
+      'dedication': `Write a short, heartfelt dedication page for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nSynopsis: ${synopsis}\n\nMake it brief (1-3 lines), evocative, and appropriate for the book's tone. Do not use generic clich\u00e9s.`,
+
+      'epigraph': `Choose or compose a fitting epigraph (opening quotation) for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nSynopsis: ${synopsis}\n\nProvide a short, thematically resonant quote (real or original) that sets the tone for the story. Include attribution. Keep it to 1-3 lines.`,
+
+      'table-of-contents': `Create a Table of Contents page for this novel.\n\nChapters:\n${chapterTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nFormat as a clean, simple list with chapter numbers and titles. Use <p> tags for each entry.`,
+
+      'prologue': `Write a compelling prologue for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nSynopsis: ${synopsis}\n${characters ? `Characters: ${characters}\n` : ''}\nWrite a 300-500 word prologue that hooks the reader and establishes the story's central tension or mystery. Match the tone and style of the genre. This should feel like the opening of a published novel.`,
+
+      'epilogue': `Write a satisfying epilogue for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nSynopsis: ${synopsis}\n${characters ? `Characters: ${characters}\n` : ''}\nWrite a 300-500 word epilogue that provides closure and a sense of where the characters end up. Match the story's tone. Do not contradict the synopsis.`,
+
+      'acknowledgments': `Write an acknowledgments page for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nAuthor: ${author}\n\nWrite warm, genuine acknowledgments (150-250 words) thanking editors, family, writing community, and readers. Use placeholders like [editor name], [agent name], [family member] where specific names would go. Make it feel authentic and personal.`,
+
+      'about-author': `Write an "About the Author" page for the author of this ${genre || 'fiction'} novel.\n\nAuthor Name: ${author}\nBook Title: "${title}"\nGenre: ${genre || 'Fiction'}\n\nWrite a professional 100-150 word third-person author bio. Use placeholder details like [city], [previous works], [hobby/interest]. Make it polished and suitable for the back of a published book.`,
+
+      'also-by': `Create an "Also By This Author" page.\n\nAuthor: ${author}\nCurrent Book: "${title}"\nGenre: ${genre || 'Fiction'}\n\nCreate a placeholder page with 3-4 fictional book titles in the same genre that this author might have written. Format as a simple list. Include a note: "[Replace with your actual published titles]"`,
+
+      'glossary': `Create a glossary page for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nSynopsis: ${synopsis}\n\nBased on the synopsis and genre, create 8-12 glossary entries for key terms, places, or concepts that readers might encounter. Format each as: <p><strong>Term</strong> \u2014 Definition</p>`,
+
+      'appendix': `Create an appendix page for this ${genre || 'fiction'} novel.\n\nTitle: "${title}"\nSynopsis: ${synopsis}\nGenre: ${genre || 'Fiction'}\n\nCreate a brief appendix with supplementary material appropriate for this genre (timeline, character list, map description, historical notes, etc.). Keep it to 200-300 words.`
+    };
+  }
+
+  /**
+   * Get human-readable label for a matter key.
+   */
+  _getMatterLabel(key) {
+    const labels = {
+      'title-page': 'Title Page', 'copyright': 'Copyright Page',
+      'dedication': 'Dedication', 'epigraph': 'Epigraph',
+      'table-of-contents': 'Table of Contents', 'prologue': 'Prologue',
+      'epilogue': 'Epilogue', 'acknowledgments': 'Acknowledgments',
+      'about-author': 'About the Author', 'also-by': 'Also By This Author',
+      'glossary': 'Glossary', 'appendix': 'Appendix'
+    };
+    return labels[key] || key;
   }
 
   async _removeBookMatterItem(id) {

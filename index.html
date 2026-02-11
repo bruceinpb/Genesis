@@ -50,9 +50,15 @@
     </div>
 
     <div class="landing-body">
-      <button class="btn btn-primary landing-create-btn" id="btn-create-project" data-tooltip="Create New Project — Start a new writing project. You'll set a title, genre, and word count goal. Each project has its own chapters, characters, notes, and cover image.">
-        + Create New Project
-      </button>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-primary landing-create-btn" id="btn-create-project" data-tooltip="Create New Project — Start a new writing project. You'll set a title, genre, and word count goal. Each project has its own chapters, characters, notes, and cover image.">
+          + Create New Project
+        </button>
+        <button class="btn landing-create-btn" id="btn-import-project-landing" data-tooltip="Import Existing Project — Import a manuscript from a .md, .docx, or .epub file. Chapters are automatically detected and created.">
+          &#8681; Import Project
+        </button>
+        <input type="file" id="import-project-file-landing" accept=".md,.docx,.epub" style="display:none;">
+      </div>
 
       <div class="projects-section" id="my-projects-section">
         <h3>Your Projects</h3>
@@ -121,6 +127,10 @@
       <button class="btn btn-sm" id="btn-import-knowledge-sidebar" data-tooltip="Import Knowledge — Import external research materials, Wikipedia articles, or reference documents into this project. Imported knowledge is automatically used as context during AI prose generation." style="flex:1; margin-bottom:6px;">
         &#x1F4DA; Import Knowledge
       </button>
+      <button class="btn btn-sm" id="btn-import-project-sidebar" data-tooltip="Import Project — Import a manuscript from a .md, .docx, or .epub file into a new project." style="flex:1; margin-bottom:6px;">
+        &#8681; Import Project
+      </button>
+      <input type="file" id="import-project-file-sidebar" accept=".md,.docx,.epub" style="display:none;">
       <button class="btn btn-sm" id="btn-error-database-sidebar" data-tooltip="Error Database — View and manage the cross-project error pattern database. Tracks common prose errors found during scoring and uses them as negative prompts during future AI generation." style="flex:1; margin-bottom:6px;">
         &#x1F5C3; Error Database
       </button>
@@ -703,6 +713,9 @@
     </div>
 
     <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
+    <button class="btn" id="btn-ai-populate-matter" style="width:100%;margin-top:8px;" data-tooltip="AI Populate — Use AI to auto-generate content for all selected front and back matter pages based on your manuscript prose, characters, and project details.">
+      &#x2728; AI Populate Front &amp; Back Matter
+    </button>
 
     <div class="analysis-section">
       <h3>AI Outline Generation</h3>
