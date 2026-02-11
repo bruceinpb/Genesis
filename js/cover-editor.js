@@ -299,6 +299,8 @@ export class CoverEditor {
       outlineColor: defaults.outlineColor || '#000000',
       shadowEnabled: defaults.shadowEnabled ?? true,
       shadowBlur: defaults.shadowBlur ?? 4,
+      shadowSize: defaults.shadowSize ?? 0,
+      shadowSpread: defaults.shadowSpread ?? 0,
       shadowDistance: defaults.shadowDistance ?? 3,
       shadowColor: defaults.shadowColor || '#000000',
       shadowOpacity: defaults.shadowOpacity ?? 70,
@@ -349,6 +351,14 @@ export class CoverEditor {
       block[prop] = el.checked;
     } else if (el.type === 'number' || el.type === 'range') {
       block[prop] = parseFloat(el.value) || 0;
+      // Sync paired slider/number inputs
+      const group = el.closest('.ce-slider-group');
+      if (group) {
+        const paired = group.querySelector(
+          el.type === 'range' ? 'input[type="number"]' : 'input[type="range"]'
+        );
+        if (paired) paired.value = el.value;
+      }
     } else {
       block[prop] = el.value;
     }
@@ -368,107 +378,143 @@ export class CoverEditor {
     });
   }
 
+  _sliderInput(blockId, prop, value, min, max, step = 1, unit = '') {
+    const unitHtml = unit ? `<span class="ce-unit-label">${unit}</span>` : '';
+    return `<div class="ce-slider-group">
+      <input type="range" class="ce-range ce-input" data-block-id="${blockId}" data-prop="${prop}" value="${value}" min="${min}" max="${max}" step="${step}">
+      <input type="number" class="ce-num ce-input" data-block-id="${blockId}" data-prop="${prop}" value="${value}" min="${min}" max="${max}" step="${step}">
+      ${unitHtml}
+    </div>`;
+  }
+
   _renderBlockCard(block) {
     const isSelected = block.id === this.selectedBlockId;
     const escapedText = this._escapeHtml(block.text);
     const escapedLabel = this._escapeHtml(block.label);
+    const bid = block.id;
 
     return `
-    <div class="ce-block ${isSelected ? 'selected expanded' : ''}" data-block-id="${block.id}">
-      <div class="ce-block-header" data-block-id="${block.id}">
+    <div class="ce-block ${isSelected ? 'selected expanded' : ''}" data-block-id="${bid}">
+      <div class="ce-block-header" data-block-id="${bid}">
         <span class="ce-block-label">${escapedLabel}: ${escapedText || '(empty)'}</span>
         <div style="display:flex;gap:2px;">
-          <button class="ce-block-btn" data-action="move-up" data-block-id="${block.id}" title="Move up">&#9650;</button>
-          <button class="ce-block-btn" data-action="move-down" data-block-id="${block.id}" title="Move down">&#9660;</button>
-          <button class="ce-block-btn ce-block-remove" data-action="remove" data-block-id="${block.id}" title="Remove">&times;</button>
+          <button class="ce-block-btn" data-action="move-up" data-block-id="${bid}" title="Move up">&#9650;</button>
+          <button class="ce-block-btn" data-action="move-down" data-block-id="${bid}" title="Move down">&#9660;</button>
+          <button class="ce-block-btn ce-block-remove" data-action="remove" data-block-id="${bid}" title="Remove">&times;</button>
         </div>
       </div>
       <div class="ce-block-body">
+        <!-- Text & Label -->
         <div class="form-group" style="margin-bottom:8px;">
           <label>Text</label>
-          <input type="text" class="form-input ce-input" data-block-id="${block.id}" data-prop="text" value="${escapedText}">
+          <input type="text" class="form-input ce-input" data-block-id="${bid}" data-prop="text" value="${escapedText}">
         </div>
         <div class="form-group" style="margin-bottom:8px;">
           <label>Label</label>
-          <input type="text" class="form-input ce-input" data-block-id="${block.id}" data-prop="label" value="${escapedLabel}" style="font-size:0.8rem;">
+          <input type="text" class="form-input ce-input" data-block-id="${bid}" data-prop="label" value="${escapedLabel}" style="font-size:0.8rem;">
         </div>
+
+        <!-- Font -->
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>Font</label>
+          <select class="form-input ce-input" data-block-id="${bid}" data-prop="fontFamily" data-current-value="${this._escapeHtml(block.fontFamily)}"></select>
+        </div>
+
+        <!-- Font Size -->
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>Size</label>
+          ${this._sliderInput(bid, 'fontSize', block.fontSize, 4, 400, 1, 'pt')}
+        </div>
+
+        <!-- Color & Alignment -->
         <div class="ce-row">
           <div class="form-group ce-half">
-            <label>Font</label>
-            <select class="form-input ce-input" data-block-id="${block.id}" data-prop="fontFamily" data-current-value="${this._escapeHtml(block.fontFamily)}"></select>
-          </div>
-          <div class="form-group ce-half">
-            <label>Size (pt)</label>
-            <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="fontSize" value="${block.fontSize}" min="4" max="400" step="1">
-          </div>
-        </div>
-        <div class="ce-row">
-          <div class="form-group ce-third">
             <label>Color</label>
-            <input type="color" class="ce-input ce-color-input" data-block-id="${block.id}" data-prop="color" value="${block.color}">
+            <input type="color" class="ce-input ce-color-input" data-block-id="${bid}" data-prop="color" value="${block.color}">
           </div>
-          <div class="form-group ce-third">
+          <div class="form-group ce-half">
             <label>Align</label>
-            <select class="form-input ce-input" data-block-id="${block.id}" data-prop="textAlign">
+            <select class="form-input ce-input" data-block-id="${bid}" data-prop="textAlign">
               <option value="left" ${block.textAlign === 'left' ? 'selected' : ''}>Left</option>
               <option value="center" ${block.textAlign === 'center' ? 'selected' : ''}>Center</option>
               <option value="right" ${block.textAlign === 'right' ? 'selected' : ''}>Right</option>
             </select>
           </div>
-          <div class="form-group ce-third">
-            <label>Angle °</label>
-            <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="angle" value="${block.angle}" min="-180" max="180" step="1">
-          </div>
         </div>
+
+        <!-- Bold / Italic -->
         <div class="ce-row" style="margin-bottom:8px;">
           <label class="ce-check-label">
-            <input type="checkbox" class="ce-input" data-block-id="${block.id}" data-prop="bold" ${block.bold ? 'checked' : ''}> Bold
+            <input type="checkbox" class="ce-input" data-block-id="${bid}" data-prop="bold" ${block.bold ? 'checked' : ''}> Bold
           </label>
           <label class="ce-check-label">
-            <input type="checkbox" class="ce-input" data-block-id="${block.id}" data-prop="italic" ${block.italic ? 'checked' : ''}> Italic
+            <input type="checkbox" class="ce-input" data-block-id="${bid}" data-prop="italic" ${block.italic ? 'checked' : ''}> Italic
           </label>
         </div>
-        <details class="ce-details">
-          <summary>Outline</summary>
-          <div class="ce-row">
-            <div class="form-group ce-half">
-              <label>Size (pt)</label>
-              <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="outlineSize" value="${block.outlineSize}" min="0" max="30" step="0.5">
-            </div>
-            <div class="form-group ce-half">
-              <label>Color</label>
-              <input type="color" class="ce-input ce-color-input" data-block-id="${block.id}" data-prop="outlineColor" value="${block.outlineColor}">
-            </div>
+
+        <!-- Position -->
+        <details class="ce-details" ${isSelected ? 'open' : ''}>
+          <summary>Position</summary>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>X Position</label>
+            ${this._sliderInput(bid, 'x', Math.round(block.x * 10) / 10, 0, 100, 0.5, '%')}
+          </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Y Position</label>
+            ${this._sliderInput(bid, 'y', Math.round(block.y * 10) / 10, 0, 100, 0.5, '%')}
+          </div>
+          <div class="form-group">
+            <label>Rotation</label>
+            ${this._sliderInput(bid, 'angle', block.angle, -180, 180, 1, '\u00B0')}
           </div>
         </details>
+
+        <!-- Outline -->
+        <details class="ce-details">
+          <summary>Outline</summary>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Thickness</label>
+            ${this._sliderInput(bid, 'outlineSize', block.outlineSize, 0, 30, 0.5, 'pt')}
+          </div>
+          <div class="form-group">
+            <label>Color</label>
+            <input type="color" class="ce-input ce-color-input" data-block-id="${bid}" data-prop="outlineColor" value="${block.outlineColor}">
+          </div>
+        </details>
+
+        <!-- Shadow -->
         <details class="ce-details">
           <summary>Shadow</summary>
           <label class="ce-check-label" style="margin-bottom:8px;">
-            <input type="checkbox" class="ce-input" data-block-id="${block.id}" data-prop="shadowEnabled" ${block.shadowEnabled ? 'checked' : ''}> Enable
+            <input type="checkbox" class="ce-input" data-block-id="${bid}" data-prop="shadowEnabled" ${block.shadowEnabled ? 'checked' : ''}> Enable Shadow
           </label>
-          <div class="ce-row">
-            <div class="form-group ce-half">
-              <label>Blur</label>
-              <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="shadowBlur" value="${block.shadowBlur}" min="0" max="50">
-            </div>
-            <div class="form-group ce-half">
-              <label>Distance</label>
-              <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="shadowDistance" value="${block.shadowDistance}" min="0" max="50">
-            </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Distance</label>
+            ${this._sliderInput(bid, 'shadowDistance', block.shadowDistance, 0, 50, 1)}
           </div>
-          <div class="ce-row">
-            <div class="form-group ce-third">
-              <label>Color</label>
-              <input type="color" class="ce-input ce-color-input" data-block-id="${block.id}" data-prop="shadowColor" value="${block.shadowColor}">
-            </div>
-            <div class="form-group ce-third">
-              <label>Opacity %</label>
-              <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="shadowOpacity" value="${block.shadowOpacity}" min="0" max="100">
-            </div>
-            <div class="form-group ce-third">
-              <label>Angle °</label>
-              <input type="number" class="form-input ce-input" data-block-id="${block.id}" data-prop="shadowAngle" value="${block.shadowAngle}" min="0" max="360">
-            </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Size</label>
+            ${this._sliderInput(bid, 'shadowSize', block.shadowSize || 0, 0, 30, 0.5)}
+          </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Blur</label>
+            ${this._sliderInput(bid, 'shadowBlur', block.shadowBlur, 0, 50, 1)}
+          </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Spread (Gaussian)</label>
+            ${this._sliderInput(bid, 'shadowSpread', block.shadowSpread || 0, 0, 40, 1)}
+          </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Opacity</label>
+            ${this._sliderInput(bid, 'shadowOpacity', block.shadowOpacity, 0, 100, 1, '%')}
+          </div>
+          <div class="form-group" style="margin-bottom:6px;">
+            <label>Angle</label>
+            ${this._sliderInput(bid, 'shadowAngle', block.shadowAngle, 0, 360, 1, '\u00B0')}
+          </div>
+          <div class="form-group">
+            <label>Color</label>
+            <input type="color" class="ce-input ce-color-input" data-block-id="${bid}" data-prop="shadowColor" value="${block.shadowColor}">
           </div>
         </details>
       </div>
@@ -570,30 +616,45 @@ export class CoverEditor {
     if (block.textAlign === 'left') anchorX = -maxWidth / 2;
     else if (block.textAlign === 'right') anchorX = maxWidth / 2;
 
-    // Shadow setup
-    if (block.shadowEnabled && block.shadowDistance > 0) {
+    // Shadow rendering
+    const hasShadow = block.shadowEnabled && (block.shadowDistance > 0 || block.shadowBlur > 0 || (block.shadowSpread || 0) > 0 || (block.shadowSize || 0) > 0);
+    if (hasShadow) {
       const shadowDistPx = block.shadowDistance * scale;
       const shadowBlurPx = block.shadowBlur * scale;
+      const shadowSpreadPx = (block.shadowSpread || 0) * scale;
+      const shadowSizePx = (block.shadowSize || 0) * scale;
       const angleRad = block.shadowAngle * Math.PI / 180;
-      ctx.shadowOffsetX = shadowDistPx * Math.sin(angleRad);
-      ctx.shadowOffsetY = -shadowDistPx * Math.cos(angleRad);
-      ctx.shadowBlur = shadowBlurPx;
+      const offX = shadowDistPx * Math.sin(angleRad);
+      const offY = -shadowDistPx * Math.cos(angleRad);
       const opacity = (block.shadowOpacity / 100).toFixed(2);
-      ctx.shadowColor = this._hexToRgba(block.shadowColor, opacity);
-    }
+      const shadowRgba = this._hexToRgba(block.shadowColor, opacity);
 
-    // Draw fill (with shadow)
-    ctx.fillStyle = block.color;
-    for (let i = 0; i < lines.length; i++) {
-      const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
-      ctx.fillText(lines[i], anchorX, ly);
-    }
+      ctx.save();
 
-    // Turn off shadow for outline + re-fill
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
+      // Apply gaussian spread via canvas filter
+      const totalBlur = shadowBlurPx + shadowSpreadPx;
+      if (totalBlur > 0) {
+        ctx.filter = `blur(${totalBlur}px)`;
+      }
+
+      // Draw shadow shape at offset: stroke for size expansion, then fill
+      if (shadowSizePx > 0) {
+        ctx.lineWidth = shadowSizePx * 2;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = shadowRgba;
+        for (let i = 0; i < lines.length; i++) {
+          const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
+          ctx.strokeText(lines[i], anchorX + offX, ly + offY);
+        }
+      }
+      ctx.fillStyle = shadowRgba;
+      for (let i = 0; i < lines.length; i++) {
+        const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
+        ctx.fillText(lines[i], anchorX + offX, ly + offY);
+      }
+
+      ctx.restore();
+    }
 
     // Draw outline
     if (outlineSizePx > 0) {
@@ -604,12 +665,13 @@ export class CoverEditor {
         const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
         ctx.strokeText(lines[i], anchorX, ly);
       }
-      // Re-fill on top of outline
-      ctx.fillStyle = block.color;
-      for (let i = 0; i < lines.length; i++) {
-        const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
-        ctx.fillText(lines[i], anchorX, ly);
-      }
+    }
+
+    // Draw fill text on top
+    ctx.fillStyle = block.color;
+    for (let i = 0; i < lines.length; i++) {
+      const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
+      ctx.fillText(lines[i], anchorX, ly);
     }
 
     // Selection indicator
