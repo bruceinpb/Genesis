@@ -4686,11 +4686,15 @@ class App {
         await this.openSettingsPanel();
       }
       if (e.target.id === 'save-api-settings') {
-        const key = document.getElementById('setting-api-key')?.value || '';
+        const key = (document.getElementById('setting-api-key')?.value || '').trim();
         const model = document.getElementById('setting-ai-model')?.value || 'claude-sonnet-4-5-20250929';
         await this.generator.setApiKey(key);
         await this.generator.setModel(model);
-        alert('AI settings saved.');
+        if (!key) {
+          alert('AI model saved, but no API key was entered. Paste your key starting with "sk-ant-" and save again.');
+        } else {
+          alert('AI settings saved.');
+        }
       }
       if (e.target.id === 'save-hf-settings') {
         const token = document.getElementById('setting-hf-token')?.value || '';

@@ -31,13 +31,13 @@ class ProseGenerator {
   }
 
   async init() {
-    this.apiKey = await this.storage.getSetting('anthropicApiKey', '');
+    this.apiKey = (await this.storage.getSetting('anthropicApiKey', '') || '').trim();
     this.model = await this.storage.getSetting('aiModel', DEFAULT_MODEL);
   }
 
   async setApiKey(key) {
-    this.apiKey = key;
-    await this.storage.setSetting('anthropicApiKey', key);
+    this.apiKey = (key || '').trim();
+    await this.storage.setSetting('anthropicApiKey', this.apiKey);
   }
 
   async setModel(model) {
