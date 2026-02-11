@@ -9,6 +9,10 @@ export class CoverEditor {
     this.textBlocks = [];
     this.selectedBlockId = null;
     this.dragging = false;
+    this.resizing = false;         // true when dragging a corner handle
+    this._resizeAnchor = null;     // opposite corner in canvas coords
+    this._resizeStartDist = 0;     // initial distance from anchor to pointer
+    this._resizeStartFontSize = 0; // initial fontSize at resize start
     this.dragStart = { x: 0, y: 0 };
     this.dragBlockStart = { x: 0, y: 0 };
     this.boundingBoxes = [];
@@ -158,11 +162,17 @@ export class CoverEditor {
   }
 
   close() {
+    // Preserve text blocks in memory so reopening doesn't lose unsaved work
+    const project = this.app._currentProject;
+    if (project && this.textBlocks.length > 0) {
+      project.coverTextBlocks = JSON.stringify(this.textBlocks);
+    }
     const overlay = document.getElementById('cover-editor-overlay');
     if (overlay) overlay.classList.remove('visible');
     this._isOpen = false;
     this.selectedBlockId = null;
     this.dragging = false;
+    this.resizing = false;
   }
 
   // ─── Dimension Management ────────────────────────────────
@@ -616,47 +626,49 @@ export class CoverEditor {
     if (block.textAlign === 'left') anchorX = -maxWidth / 2;
     else if (block.textAlign === 'right') anchorX = maxWidth / 2;
 
-    // Shadow rendering
+    // Shadow rendering — uses ctx.shadowBlur/shadowOffset (works on all browsers incl. Safari)
     const hasShadow = block.shadowEnabled && (block.shadowDistance > 0 || block.shadowBlur > 0 || (block.shadowSpread || 0) > 0 || (block.shadowSize || 0) > 0);
     if (hasShadow) {
       const shadowDistPx = block.shadowDistance * scale;
-      const shadowBlurPx = block.shadowBlur * scale;
-      const shadowSpreadPx = (block.shadowSpread || 0) * scale;
       const shadowSizePx = (block.shadowSize || 0) * scale;
+      const blurAmount = (block.shadowBlur + (block.shadowSpread || 0)) * scale;
       const angleRad = block.shadowAngle * Math.PI / 180;
       const offX = shadowDistPx * Math.sin(angleRad);
       const offY = -shadowDistPx * Math.cos(angleRad);
       const opacity = (block.shadowOpacity / 100).toFixed(2);
       const shadowRgba = this._hexToRgba(block.shadowColor, opacity);
 
-      ctx.save();
+      ctx.shadowOffsetX = offX;
+      ctx.shadowOffsetY = offY;
+      ctx.shadowBlur = blurAmount;
+      ctx.shadowColor = shadowRgba;
 
-      // Apply gaussian spread via canvas filter
-      const totalBlur = shadowBlurPx + shadowSpreadPx;
-      if (totalBlur > 0) {
-        ctx.filter = `blur(${totalBlur}px)`;
-      }
-
-      // Draw shadow shape at offset: stroke for size expansion, then fill
+      // Size expansion: stroke text to create a bigger shadow source
       if (shadowSizePx > 0) {
         ctx.lineWidth = shadowSizePx * 2;
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = shadowRgba;
+        ctx.strokeStyle = block.color;
         for (let i = 0; i < lines.length; i++) {
           const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
-          ctx.strokeText(lines[i], anchorX + offX, ly + offY);
+          ctx.strokeText(lines[i], anchorX, ly);
         }
       }
-      ctx.fillStyle = shadowRgba;
+
+      // Fill text with shadow
+      ctx.fillStyle = block.color;
       for (let i = 0; i < lines.length; i++) {
         const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
-        ctx.fillText(lines[i], anchorX + offX, ly + offY);
+        ctx.fillText(lines[i], anchorX, ly);
       }
 
-      ctx.restore();
+      // Reset shadow for subsequent draws
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
     }
 
-    // Draw outline
+    // Draw outline (no shadow)
     if (outlineSizePx > 0) {
       ctx.strokeStyle = block.outlineColor;
       ctx.lineWidth = outlineSizePx;
@@ -667,24 +679,25 @@ export class CoverEditor {
       }
     }
 
-    // Draw fill text on top
+    // Re-draw fill text on top (clean, covers shadow-pass stroke halo)
     ctx.fillStyle = block.color;
     for (let i = 0; i < lines.length; i++) {
       const ly = -totalHeight / 2 + lineHeight * i + lineHeight / 2;
       ctx.fillText(lines[i], anchorX, ly);
     }
 
+    // Measure bounding box (needed for both selection indicator and hit testing)
+    let maxLineW = 0;
+    for (const line of lines) {
+      maxLineW = Math.max(maxLineW, ctx.measureText(line).width);
+    }
+    const pad = 10 * scale;
+    const halfW = maxLineW / 2 + pad;
+    const halfH = totalHeight / 2 + pad;
+    const hs = 7 * scale;
+
     // Selection indicator
     if (isSelected) {
-      // Measure bounding box
-      let maxLineW = 0;
-      for (const line of lines) {
-        maxLineW = Math.max(maxLineW, ctx.measureText(line).width);
-      }
-      const pad = 10 * scale;
-      const halfW = maxLineW / 2 + pad;
-      const halfH = totalHeight / 2 + pad;
-
       ctx.strokeStyle = '#4a9eff';
       ctx.lineWidth = 2 * scale;
       ctx.setLineDash([6 * scale, 4 * scale]);
@@ -692,7 +705,6 @@ export class CoverEditor {
       ctx.setLineDash([]);
 
       // Corner handles
-      const hs = 5 * scale;
       ctx.fillStyle = '#4a9eff';
       for (const [hx, hy] of [[-halfW, -halfH], [halfW, -halfH], [-halfW, halfH], [halfW, halfH]]) {
         ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
@@ -701,20 +713,19 @@ export class CoverEditor {
 
     ctx.restore();
 
-    // Store bounding box for hit testing
-    let maxLineW = 0;
-    ctx.save();
-    ctx.font = fontStr;
-    for (const line of lines) {
-      maxLineW = Math.max(maxLineW, ctx.measureText(line).width);
-    }
-    ctx.restore();
-    const pad = 10 * scale;
+    // Store bounding box with handle positions for hit testing
+    const corners = [
+      { lx: -halfW, ly: -halfH }, // top-left
+      { lx:  halfW, ly: -halfH }, // top-right
+      { lx: -halfW, ly:  halfH }, // bottom-left
+      { lx:  halfW, ly:  halfH }  // bottom-right
+    ];
     this.boundingBoxes.push({
       blockId: block.id,
       cx, cy,
-      halfW: maxLineW / 2 + pad,
-      halfH: totalHeight / 2 + pad,
+      halfW, halfH,
+      handleSize: hs,
+      corners,
       angle: block.angle
     });
   }
@@ -753,11 +764,28 @@ export class CoverEditor {
   _onPointerDown(e) {
     e.preventDefault();
     const coords = this._getCanvasCoords(e);
-    const hitId = this._hitTest(coords.x, coords.y);
 
+    // Check for corner handle hit on selected block first
+    const handleHit = this._hitTestHandle(coords.x, coords.y);
+    if (handleHit) {
+      const block = this.textBlocks.find(b => b.id === handleHit.blockId);
+      if (block) {
+        this.resizing = true;
+        this.dragging = false;
+        this._resizeAnchor = handleHit.anchor;
+        this._resizeStartDist = handleHit.dist;
+        this._resizeStartFontSize = block.fontSize;
+        this.canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
+
+    // Normal block hit test
+    const hitId = this._hitTest(coords.x, coords.y);
     if (hitId) {
       this._selectBlock(hitId);
       this.dragging = true;
+      this.resizing = false;
       const block = this.textBlocks.find(b => b.id === hitId);
       if (block) {
         this.dragStart = coords;
@@ -774,27 +802,55 @@ export class CoverEditor {
   }
 
   _onPointerMove(e) {
-    if (!this.dragging || !this.selectedBlockId) return;
+    if (!this.selectedBlockId) return;
     e.preventDefault();
     const coords = this._getCanvasCoords(e);
     const block = this.textBlocks.find(b => b.id === this.selectedBlockId);
     if (!block) return;
 
-    const dx = coords.x - this.dragStart.x;
-    const dy = coords.y - this.dragStart.y;
-    const newX = this.dragBlockStart.x + dx;
-    const newY = this.dragBlockStart.y + dy;
+    if (this.resizing) {
+      // Compute scale based on distance from anchor
+      const dx = coords.x - this._resizeAnchor.x;
+      const dy = coords.y - this._resizeAnchor.y;
+      const currentDist = Math.sqrt(dx * dx + dy * dy);
+      const scaleFactor = currentDist / this._resizeStartDist;
 
-    block.x = (newX / this.canvas.width) * 100;
-    block.y = (newY / this.canvas.height) * 100;
+      // Apply scale to font size with bounds
+      const newSize = Math.round(Math.max(4, Math.min(400, this._resizeStartFontSize * scaleFactor)));
+      block.fontSize = newSize;
+      // Update the sidebar font size slider+number without full re-render
+      const container = document.getElementById('ce-blocks-list');
+      if (container) {
+        container.querySelectorAll(`[data-block-id="${block.id}"][data-prop="fontSize"]`).forEach(el => {
+          el.value = newSize;
+        });
+      }
+      this._requestRender();
+      return;
+    }
 
-    this._requestRender();
+    if (this.dragging) {
+      const dx = coords.x - this.dragStart.x;
+      const dy = coords.y - this.dragStart.y;
+      const newX = this.dragBlockStart.x + dx;
+      const newY = this.dragBlockStart.y + dy;
+
+      block.x = (newX / this.canvas.width) * 100;
+      block.y = (newY / this.canvas.height) * 100;
+
+      this._requestRender();
+    }
   }
 
   _onPointerUp(e) {
-    if (this.dragging) {
+    const wasResizing = this.resizing;
+    if (this.dragging || this.resizing) {
       this.dragging = false;
+      this.resizing = false;
       this.canvas?.releasePointerCapture(e.pointerId);
+    }
+    if (wasResizing) {
+      this._renderAllBlockCards();
     }
   }
 
@@ -806,6 +862,42 @@ export class CoverEditor {
       x: (e.clientX - rect.left) * scaleX,
       y: (e.clientY - rect.top) * scaleY
     };
+  }
+
+  _hitTestHandle(canvasX, canvasY) {
+    // Only check handles on the currently selected block
+    if (!this.selectedBlockId) return null;
+    const box = this.boundingBoxes.find(b => b.blockId === this.selectedBlockId);
+    if (!box || !box.corners) return null;
+
+    const { cx, cy, corners, handleSize, angle } = box;
+    const rad = -(angle || 0) * Math.PI / 180;
+    const dx = canvasX - cx;
+    const dy = canvasY - cy;
+    const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+    const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+    const hitRadius = handleSize * 2; // generous touch target
+    for (let i = 0; i < corners.length; i++) {
+      const c = corners[i];
+      if (Math.abs(localX - c.lx) <= hitRadius && Math.abs(localY - c.ly) <= hitRadius) {
+        // Anchor is the opposite corner, in canvas coords
+        const opposite = corners[3 - i]; // 0↔3, 1↔2
+        const cosA = Math.cos(-rad);
+        const sinA = Math.sin(-rad);
+        const anchorX = cx + opposite.lx * cosA - opposite.ly * sinA;
+        const anchorY = cy + opposite.lx * sinA + opposite.ly * cosA;
+        // Distance from anchor to the clicked point
+        const adx = canvasX - anchorX;
+        const ady = canvasY - anchorY;
+        return {
+          blockId: this.selectedBlockId,
+          anchor: { x: anchorX, y: anchorY },
+          dist: Math.sqrt(adx * adx + ady * ady) || 1
+        };
+      }
+    }
+    return null;
   }
 
   _hitTest(canvasX, canvasY) {
@@ -1035,49 +1127,78 @@ export class CoverEditor {
 
   // ─── Save / Load ─────────────────────────────────────────
 
+  _compressDataUrl(dataUrl, maxBytes, startQuality = 0.8) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width;
+        let h = img.height;
+        let quality = startQuality;
+
+        const attempt = () => {
+          const c = document.createElement('canvas');
+          c.width = w;
+          c.height = h;
+          const cx = c.getContext('2d');
+          cx.drawImage(img, 0, 0, w, h);
+          let result = c.toDataURL('image/jpeg', quality);
+
+          if (result.length <= maxBytes) return resolve(result);
+
+          // Reduce quality first
+          if (quality > 0.2) {
+            quality -= 0.1;
+            return attempt();
+          }
+
+          // Then downscale
+          w = Math.round(w * 0.75);
+          h = Math.round(h * 0.75);
+          quality = 0.6;
+          if (w < 100 || h < 100) return resolve(result); // give up
+          attempt();
+        };
+        attempt();
+      };
+      img.onerror = () => resolve(dataUrl); // fallback
+      img.src = dataUrl;
+    });
+  }
+
   async save() {
     const project = this.app._currentProject;
     if (!project) return;
 
+    // Preserve text blocks in memory immediately (survives close + reopen)
+    project.coverTextBlocks = JSON.stringify(this.textBlocks);
+
     // Redraw at final resolution
     this.drawCanvas();
-
-    // Wait for render
     await new Promise(r => setTimeout(r, 100));
 
     try {
-      const MAX_BYTES = 1000000;
+      // Firestore doc limit is 1,048,576 bytes. Reserve ~100KB for metadata + text fields.
+      // Split the remaining ~950KB between coverImage and coverImageBase.
+      const PER_IMAGE_MAX = 400000;
 
-      // Export canvas to JPEG with progressive quality reduction
-      let quality = 0.85;
-      let dataUrl = this.canvas.toDataURL('image/jpeg', quality);
+      // Compress the rendered canvas
+      const coverImage = await this._compressDataUrl(
+        this.canvas.toDataURL('image/jpeg', 0.85), PER_IMAGE_MAX
+      );
 
-      while (dataUrl.length > MAX_BYTES && quality > 0.1) {
-        quality -= 0.05;
-        dataUrl = this.canvas.toDataURL('image/jpeg', quality);
-      }
-
-      // Downscale if still too large
-      if (dataUrl.length > MAX_BYTES) {
-        let scale = 0.8;
-        while (dataUrl.length > MAX_BYTES && scale >= 0.3) {
-          const tmpCanvas = document.createElement('canvas');
-          tmpCanvas.width = Math.round(this.canvas.width * scale);
-          tmpCanvas.height = Math.round(this.canvas.height * scale);
-          const tmpCtx = tmpCanvas.getContext('2d');
-          tmpCtx.drawImage(this.canvas, 0, 0, tmpCanvas.width, tmpCanvas.height);
-          dataUrl = tmpCanvas.toDataURL('image/jpeg', 0.6);
-          scale -= 0.1;
-        }
+      // Compress the base image (raw AI image) separately
+      let coverImageBase = null;
+      if (this.baseImage) {
+        coverImageBase = await this._compressDataUrl(this.baseImage, PER_IMAGE_MAX, 0.7);
       }
 
       // Build save data
       const unit = document.getElementById('ce-unit')?.value || 'in';
       const updates = {
-        coverImage: dataUrl,
-        coverImageBase: this.baseImage || null,
+        coverImage,
+        coverImageBase,
         coverPrompt: document.getElementById('ce-prompt')?.value || '',
-        coverTextBlocks: JSON.stringify(this.textBlocks),
+        coverTextBlocks: project.coverTextBlocks,
         coverEditorSettings: {
           width: parseFloat(document.getElementById('ce-width')?.value) || 6,
           height: parseFloat(document.getElementById('ce-height')?.value) || 9,
