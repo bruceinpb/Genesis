@@ -151,6 +151,7 @@ class App {
    */
   async _checkCurrentChapterExists() {
     if (!this.state.currentChapterId || !this.state.currentProjectId) return;
+    if (this._isLoadingProject) return; // Don't interfere during project loading
 
     // Check if the current chapter item still exists in the sidebar DOM
     const chapterEl = document.querySelector(`.tree-item.chapter[data-id="${this.state.currentChapterId}"]`);
@@ -421,6 +422,7 @@ class App {
   // ========================================
 
   async _loadProject(projectId) {
+    this._isLoadingProject = true;
     try {
       const project = await this.fs.getProject(projectId);
       if (!project) {
@@ -468,8 +470,10 @@ class App {
       }, 30000);
     } catch (err) {
       console.error('Failed to load project:', err);
-      alert('Failed to load project. Check your internet connection.');
+      alert('Failed to load project: ' + (err.message || err) + '\n\nCheck your internet connection.');
       await this._showLanding();
+    } finally {
+      this._isLoadingProject = false;
     }
   }
 
@@ -7489,10 +7493,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         }]
       });
 
-      const buffer = await Packer.toBuffer(doc);
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      });
+      const blob = await Packer.toBlob(doc);
       const filename = translatedTitle.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_') + '_Vellum.docx';
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -7646,10 +7647,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       });
 
       // Export and download
-      const buffer = await Packer.toBuffer(doc);
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      });
+      const blob = await Packer.toBlob(doc);
 
       let filename = bookTitle.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
       if (languageCode) {
