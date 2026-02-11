@@ -418,6 +418,280 @@ class App {
   }
 
   // ========================================
+  //  Project Import (MD / DOCX / EPUB)
+  // ========================================
+
+  async _handleImportProject(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const baseName = file.name.replace(/\.[^.]+$/, '');
+
+    // Show the progress overlay
+    const overlay = document.getElementById('translation-progress-overlay');
+    const pTitle  = document.getElementById('translation-progress-title');
+    const pDetail = document.getElementById('translation-progress-detail');
+    const pFill   = document.getElementById('translation-progress-fill');
+    const pStep   = document.getElementById('translation-progress-step');
+    if (overlay) {
+      pTitle.textContent  = 'Importing\u2026';
+      pDetail.textContent = file.name;
+      pFill.style.width   = '0%';
+      pStep.textContent   = 'Reading file\u2026';
+      overlay.style.display = 'flex';
+    }
+
+    try {
+      let chapters; // Array of { title: string, content: string (HTML) }
+
+      if (ext === 'md') {
+        const text = await file.text();
+        if (overlay) { pFill.style.width = '30%'; pStep.textContent = 'Parsing Markdown\u2026'; }
+        chapters = this._parseMdImport(text);
+      } else if (ext === 'docx') {
+        if (typeof mammoth === 'undefined') throw new Error('DOCX library not loaded. Please refresh and try again.');
+        const arrayBuf = await file.arrayBuffer();
+        if (overlay) { pFill.style.width = '30%'; pStep.textContent = 'Converting DOCX\u2026'; }
+        const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuf });
+        chapters = this._parseHtmlImport(result.value);
+      } else if (ext === 'epub') {
+        if (typeof JSZip === 'undefined') throw new Error('EPUB library not loaded. Please refresh and try again.');
+        const arrayBuf = await file.arrayBuffer();
+        if (overlay) { pFill.style.width = '20%'; pStep.textContent = 'Extracting EPUB\u2026'; }
+        chapters = await this._parseEpubImport(arrayBuf, (msg) => {
+          if (pStep) pStep.textContent = msg;
+        });
+      } else {
+        throw new Error(`Unsupported file type: .${ext}`);
+      }
+
+      if (!chapters || chapters.length === 0) {
+        throw new Error('No chapters found in the imported file.');
+      }
+
+      // Create the project
+      if (overlay) { pFill.style.width = '60%'; pStep.textContent = 'Creating project\u2026'; }
+      const project = await this.fs.createProject({
+        owner: this.state.currentUser,
+        title: baseName,
+        genre: '',
+        wordCountGoal: 80000
+      });
+
+      // Create chapters
+      for (let i = 0; i < chapters.length; i++) {
+        if (overlay) {
+          const pct = 60 + ((i / chapters.length) * 35);
+          pFill.style.width = `${pct}%`;
+          pStep.textContent = `Saving chapter ${i + 1} of ${chapters.length}\u2026`;
+        }
+        await this.fs.createChapter({
+          projectId: project.id,
+          chapterNumber: i + 1,
+          title: chapters[i].title || `Chapter ${i + 1}`,
+          content: chapters[i].content || ''
+        });
+      }
+
+      if (overlay) { pFill.style.width = '100%'; pStep.textContent = 'Done!'; }
+      await new Promise(r => setTimeout(r, 500));
+
+      await this._openProject(project.id);
+    } catch (err) {
+      console.error('Import failed:', err);
+      alert('Import failed: ' + err.message);
+    } finally {
+      if (overlay) overlay.style.display = 'none';
+    }
+  }
+
+  /**
+   * Parse a Markdown file into chapters.
+   * Splits on heading lines (# or ##) that look like chapter titles.
+   */
+  _parseMdImport(text) {
+    const lines = text.split('\n');
+    const chapters = [];
+    let currentTitle = null;
+    let currentLines = [];
+
+    const flushChapter = () => {
+      const body = currentLines.join('\n').trim();
+      if (currentTitle || body) {
+        chapters.push({
+          title: currentTitle || `Chapter ${chapters.length + 1}`,
+          content: this._mdToHTML(currentLines.join('\n').trim())
+        });
+      }
+      currentTitle = null;
+      currentLines = [];
+    };
+
+    for (const line of lines) {
+      // Match # or ## headings (chapter-level)
+      const headingMatch = line.match(/^#{1,2}\s+(.+)$/);
+      if (headingMatch) {
+        flushChapter();
+        currentTitle = headingMatch[1].trim();
+        continue;
+      }
+      currentLines.push(line);
+    }
+    flushChapter();
+
+    // If no headings found, treat entire file as one chapter
+    if (chapters.length === 0 && text.trim()) {
+      chapters.push({
+        title: 'Chapter 1',
+        content: this._mdToHTML(text.trim())
+      });
+    }
+
+    return chapters;
+  }
+
+  /**
+   * Convert simple Markdown text to HTML paragraphs.
+   */
+  _mdToHTML(md) {
+    if (!md) return '';
+    // Split on blank lines to get paragraphs
+    const blocks = md.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+    let html = '';
+    for (const block of blocks) {
+      // Skip headings (already used as chapter titles)
+      if (/^#{1,3}\s+/.test(block)) continue;
+      // Scene breaks
+      if (/^[\*\-\s]{3,}$/.test(block) || block === '***' || block === '---' || block === '* * *') {
+        html += '<p style="text-align:center;">* * *</p>';
+        continue;
+      }
+      // Convert single newlines within a block to spaces (soft wrap)
+      const text = block.replace(/\n/g, ' ');
+      html += `<p>${text}</p>`;
+    }
+    return html;
+  }
+
+  /**
+   * Parse HTML output (from mammoth DOCX conversion) into chapters.
+   * Splits on h1/h2 elements that look like chapter titles.
+   */
+  _parseHtmlImport(html) {
+    if (!html) return [];
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+    const root = doc.body.firstChild;
+    const chapters = [];
+    let currentTitle = null;
+    let currentNodes = [];
+
+    const flushChapter = () => {
+      const div = document.createElement('div');
+      for (const n of currentNodes) div.appendChild(n.cloneNode(true));
+      const body = div.innerHTML.trim();
+      if (currentTitle || body) {
+        chapters.push({
+          title: currentTitle || `Chapter ${chapters.length + 1}`,
+          content: body
+        });
+      }
+      currentTitle = null;
+      currentNodes = [];
+    };
+
+    for (const node of root.childNodes) {
+      const tag = node.tagName?.toLowerCase();
+      if (tag === 'h1' || tag === 'h2') {
+        flushChapter();
+        currentTitle = node.textContent.trim();
+        continue;
+      }
+      currentNodes.push(node);
+    }
+    flushChapter();
+
+    // If no headings found, treat entire content as one chapter
+    if (chapters.length === 0 && html.trim()) {
+      chapters.push({
+        title: 'Chapter 1',
+        content: html
+      });
+    }
+
+    return chapters;
+  }
+
+  /**
+   * Parse an EPUB file into chapters.
+   * Reads the OPF manifest to find content documents in spine order,
+   * then extracts text from each XHTML file.
+   */
+  async _parseEpubImport(arrayBuffer, onProgress) {
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    // 1. Find the OPF file via META-INF/container.xml
+    const containerXml = await zip.file('META-INF/container.xml')?.async('string');
+    if (!containerXml) throw new Error('Invalid EPUB: missing container.xml');
+
+    const containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
+    const rootfileEl = containerDoc.querySelector('rootfile');
+    const opfPath = rootfileEl?.getAttribute('full-path');
+    if (!opfPath) throw new Error('Invalid EPUB: no OPF path found');
+
+    const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
+
+    // 2. Parse the OPF
+    const opfXml = await zip.file(opfPath)?.async('string');
+    if (!opfXml) throw new Error('Invalid EPUB: cannot read OPF');
+
+    const opfDoc = new DOMParser().parseFromString(opfXml, 'application/xml');
+
+    // Build manifest map: id → href
+    const manifest = {};
+    for (const item of opfDoc.querySelectorAll('manifest item')) {
+      manifest[item.getAttribute('id')] = item.getAttribute('href');
+    }
+
+    // Get spine order
+    const spineItems = [];
+    for (const itemref of opfDoc.querySelectorAll('spine itemref')) {
+      const id = itemref.getAttribute('idref');
+      if (manifest[id]) spineItems.push(manifest[id]);
+    }
+
+    // 3. Read each spine document
+    const chapters = [];
+    for (let i = 0; i < spineItems.length; i++) {
+      if (onProgress) onProgress(`Reading section ${i + 1} of ${spineItems.length}\u2026`);
+
+      const href = opfDir + spineItems[i];
+      const xhtml = await zip.file(href)?.async('string');
+      if (!xhtml) continue;
+
+      const doc = new DOMParser().parseFromString(xhtml, 'application/xhtml+xml');
+      const body = doc.querySelector('body');
+      if (!body) continue;
+
+      // Extract a title from the first heading
+      const heading = body.querySelector('h1, h2, h3');
+      let title = heading?.textContent?.trim() || '';
+      if (heading) heading.remove();
+
+      // Get the remaining body content
+      const content = body.innerHTML.trim();
+
+      // Skip effectively empty sections (e.g., cover pages, copyright)
+      const textContent = body.textContent.trim();
+      if (textContent.length < 50) continue;
+
+      if (!title) title = `Chapter ${chapters.length + 1}`;
+      chapters.push({ title, content });
+    }
+
+    return chapters;
+  }
+
+  // ========================================
   //  Project & Chapter Management
   // ========================================
 
@@ -4587,6 +4861,16 @@ class App {
       if (e.target.id === 'btn-new-project' || e.target.closest('#btn-new-project')) {
         await this._createNewProject();
       }
+      if (e.target.id === 'btn-import-project' || e.target.closest('#btn-import-project')) {
+        document.getElementById('import-project-file')?.click();
+      }
+    });
+
+    // --- Import project file handler ---
+    document.getElementById('import-project-file')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (file) await this._handleImportProject(file);
+      e.target.value = '';
     });
 
     // --- Book structure inputs (live update) ---
