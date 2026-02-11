@@ -361,6 +361,81 @@ body.no-bounce {
   .chapter-delete-btn {
     display: inline-flex;
   }
+  .chapter-menu-btn {
+    display: inline-flex;
+  }
+}
+
+/* Chapter action menu (⋮ button and dropdown) */
+.chapter-menu-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 4px;
+  margin-left: 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chapter-menu-btn:hover {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+}
+
+.tree-item.chapter:hover .chapter-menu-btn {
+  display: inline-flex;
+}
+
+.chapter-menu {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 100%;
+  z-index: 9999;
+  min-width: 180px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  padding: 4px 0;
+  overflow: hidden;
+}
+
+.tree-item.chapter {
+  position: relative;
+}
+
+.chapter-menu.open {
+  display: block;
+}
+
+.chapter-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chapter-menu button:hover {
+  background: var(--accent-subtle);
+}
+
+.chapter-menu button.danger {
+  color: var(--danger);
+}
+
+.chapter-menu button.danger:hover {
+  background: rgba(231, 76, 60, 0.1);
 }
 
 /* Chapter Toolbar (Select All, Delete Selected, Accept Outline) — moved to chapter nav toolbar */
