@@ -7382,59 +7382,73 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
   // ========================================
 
   /**
-   * Export the currently-viewed translation from the split view as Vellum-ready DOCX.
-   * Exports ONLY the translated version (not side-by-side).
+   * Export the selected translation from split view as Vellum-ready DOCX.
    */
   async _exportTranslationDocx() {
     try {
       const docx = window.docx;
-      if (!docx) { alert('DOCX library not loaded. Please refresh the page.'); return; }
+      if (!docx) { alert('DOCX library not loaded.'); return; }
 
-      const { Document, Packer, Paragraph, TextRun, PageBreak, HeadingLevel, AlignmentType } = docx;
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
 
       const langSelect = document.getElementById('translation-lang-select');
       const selectedLang = langSelect?.value;
-      if (!selectedLang || !this._translationResults?.[selectedLang]?.success) {
-        alert('No translation selected to export.');
+      if (!selectedLang || !this._translationResults?.[selectedLang]) {
+        alert('No translation selected.');
         return;
       }
 
       const result = this._translationResults[selectedLang];
       const translatedText = result.translatedProse || '';
-      const translatedTitle = (result.translatedTitle || 'Untitled').replace(/^[\uD83C][\uDDE6-\uDDFF][\uD83C][\uDDE6-\uDDFF]\s*/, '');
-      const lc = result.langConfig;
+      const translatedTitle = (result.translatedTitle || 'Untitled')
+        .replace(/^[\uD83C][\uDDE6-\uDDFF][\uD83C][\uDDE6-\uDDFF]\s*/, '');
 
       const children = [];
 
-      // Chapter title as Heading 1 (Vellum chapter detection)
-      children.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_1,
-          spacing: { after: 400 },
-          children: [
-            new TextRun({ text: translatedTitle, bold: true, size: 32, font: 'Times New Roman' })
-          ]
-        })
-      );
+      // Chapter title
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 0, after: 200 },
+        children: [new TextRun({
+          text: translatedTitle,
+          bold: true,
+          size: 32,
+          font: 'Times New Roman'
+        })]
+      }));
 
-      // Prose paragraphs
-      const blocks = translatedText.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+      // For translated content: it's plain text (from API), not HTML
+      // Split on double newlines first, then single newlines
+      const blocks = translatedText.split(/\n\s*\n/).filter(s => s.trim());
+
       for (const block of blocks) {
-        if (/^\*\s*\*\s*\*$/.test(block) || block === '***' || block === '* * *' || /^[-\u2013\u2014]{3,}$/.test(block)) {
+        const trimmed = block.trim();
+
+        if (this._isSceneBreak(trimmed)) {
           children.push(new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { before: 200, after: 200 },
+            spacing: { before: 240, after: 240 },
             children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
           }));
           continue;
         }
 
-        const lines = block.split(/\n/).map(l => l.trim()).filter(Boolean);
+        // Split on single newlines for sub-paragraphs
+        const lines = trimmed.split(/\n/).filter(s => s.trim());
         for (const line of lines) {
-          children.push(new Paragraph({
-            spacing: { after: 0, before: 0, line: 276 },
-            children: [new TextRun({ text: line, font: 'Times New Roman', size: 24 })]
-          }));
+          const t = line.trim();
+          if (this._isSceneBreak(t)) {
+            children.push(new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 240, after: 240 },
+              children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
+            }));
+          } else if (t) {
+            children.push(new Paragraph({
+              spacing: { before: 0, after: 200, line: 276 },
+              children: [new TextRun({ text: t, font: 'Times New Roman', size: 24 })]
+            }));
+          }
         }
       }
 
@@ -7461,9 +7475,12 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         }]
       });
 
-      const buffer = await Packer.toBlob(doc);
+      const buffer = await Packer.toBuffer(doc);
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      });
       const filename = translatedTitle.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_') + '_Vellum.docx';
-      const url = URL.createObjectURL(buffer);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
@@ -7479,46 +7496,9 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
   }
 
   /**
-   * Convert HTML prose to an array of TextRun objects preserving bold/italic.
-   * For Vellum: only bold and italic matter, everything else is stripped.
-   */
-  _htmlToTextRuns(html) {
-    const { TextRun } = window.docx;
-    if (!html) return [new TextRun({ text: '', font: 'Times New Roman', size: 24 })];
-
-    const runs = [];
-    const pattern = /(<\/?(?:b|strong|i|em)>)/gi;
-    const parts = html.split(pattern).filter(Boolean);
-
-    let isBold = false;
-    let isItalic = false;
-
-    for (const part of parts) {
-      const lower = part.toLowerCase();
-      if (lower === '<b>' || lower === '<strong>') { isBold = true; continue; }
-      if (lower === '</b>' || lower === '</strong>') { isBold = false; continue; }
-      if (lower === '<i>' || lower === '<em>') { isItalic = true; continue; }
-      if (lower === '</i>' || lower === '</em>') { isItalic = false; continue; }
-
-      // Strip any remaining HTML tags
-      const cleanText = part.replace(/<[^>]+>/g, '');
-      if (cleanText) {
-        runs.push(new TextRun({
-          text: cleanText,
-          font: 'Times New Roman',
-          size: 24,
-          bold: isBold || undefined,
-          italics: isItalic || undefined
-        }));
-      }
-    }
-
-    return runs.length > 0 ? runs : [new TextRun({ text: '', font: 'Times New Roman', size: 24 })];
-  }
-
-  /**
    * Export manuscript as Vellum-ready DOCX.
-   * @param {string|null} languageCode - null for original, 'it'/'es'/etc. for translation
+   * Parses editor HTML to preserve paragraph structure, bold/italic, and scene breaks.
+   * @param {string|null} languageCode - null for original English, 'it'/'es'/etc. for translation
    */
   async _exportFullManuscriptDocx(languageCode = null) {
     try {
@@ -7528,7 +7508,10 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         return;
       }
 
-      const { Document, Packer, Paragraph, TextRun, PageBreak, HeadingLevel, AlignmentType } = docx;
+      const {
+        Document, Packer, Paragraph, TextRun, PageBreak,
+        HeadingLevel, AlignmentType
+      } = docx;
 
       // Fetch all chapters for this project
       const allProjectChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
@@ -7554,88 +7537,68 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       const bookTitle = project.title || 'Untitled';
       const authorName = project.authorName || project.author || '';
 
-      // Build all chapter content into a single section
+      // Build document content
       const children = [];
 
       for (let i = 0; i < chaptersToExport.length; i++) {
         const chapter = chaptersToExport[i];
-        const chapterTitle = chapter.title || `Chapter ${i + 1}`;
-        const chapterContent = chapter.content || '';
+        const chapterTitle = (chapter.title || `Chapter ${i + 1}`)
+          .replace(/^[\uD83C][\uDDE6-\uDDFF][\uD83C][\uDDE6-\uDDFF]\s*/, '');
 
         // Page break before each chapter (except the first)
         if (i > 0) {
           children.push(new Paragraph({ children: [new PageBreak()] }));
         }
 
-        // Chapter title as Heading 1 (triggers Vellum chapter detection)
-        children.push(
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            spacing: { after: 400 },
-            children: [
-              new TextRun({ text: chapterTitle, bold: true, size: 32, font: 'Times New Roman' })
-            ]
-          })
-        );
+        // Chapter title as Heading 1 — this is how Vellum detects chapters
+        children.push(new Paragraph({
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 0, after: 200 },
+          children: [new TextRun({
+            text: chapterTitle,
+            bold: true,
+            size: 32,
+            font: 'Times New Roman'
+          })]
+        }));
 
-        // Check if content has HTML formatting worth preserving
-        const hasFormatting = /<(b|strong|i|em)\b/i.test(chapterContent);
+        // Parse the chapter content HTML into paragraphs
+        const htmlContent = chapter.content || '';
+        const paragraphs = this._parseHTMLToParagraphs(htmlContent);
 
-        // Split prose into blocks
-        const plainContent = chapterContent.replace(/<[^>]+>/g, '').trim();
-        const blocks = plainContent.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+        for (const para of paragraphs) {
+          if (para.type === 'empty') continue;
 
-        // If content has bold/italic, process with HTML-aware parser
-        // Otherwise use plain text for cleaner output
-        if (hasFormatting) {
-          // Split HTML content on double-newlines / block-level tags
-          const htmlBlocks = chapterContent.split(/(?:<\/p>\s*<p[^>]*>)|(?:\n\s*\n)/)
-            .map(b => b.trim()).filter(Boolean);
-
-          for (const block of htmlBlocks) {
-            const stripped = block.replace(/<[^>]+>/g, '').trim();
-            if (!stripped) continue;
-
-            // Scene break detection
-            if (/^\*\s*\*\s*\*$/.test(stripped) || stripped === '***' || stripped === '* * *') {
-              children.push(new Paragraph({
-                alignment: AlignmentType.CENTER,
-                spacing: { before: 200, after: 200 },
-                children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
-              }));
-              continue;
-            }
-
+          if (para.type === 'scene-break') {
             children.push(new Paragraph({
-              spacing: { after: 0, before: 0, line: 276 },
-              children: this._htmlToTextRuns(block)
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 240, after: 240 },
+              children: [new TextRun({
+                text: '***',
+                font: 'Times New Roman',
+                size: 24
+              })]
             }));
+            continue;
           }
-        } else {
-          for (const block of blocks) {
-            // Scene break markers
-            if (/^\*\s*\*\s*\*$/.test(block) || block === '***' || block === '* * *' ||
-                /^[-\u2013\u2014]{3,}$/.test(block) || /^#\s*#\s*#$/.test(block)) {
-              children.push(new Paragraph({
-                alignment: AlignmentType.CENTER,
-                spacing: { before: 200, after: 200 },
-                children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
-              }));
-              continue;
-            }
 
-            const lines = block.split(/\n/).map(l => l.trim()).filter(Boolean);
-            for (const line of lines) {
-              children.push(new Paragraph({
-                spacing: { after: 0, before: 0, line: 276 },
-                children: [new TextRun({ text: line, font: 'Times New Roman', size: 24 })]
-              }));
-            }
-          }
+          // Regular paragraph — create TextRuns preserving bold/italic
+          const textRuns = para.runs.map(run => new TextRun({
+            text: run.text,
+            font: 'Times New Roman',
+            size: 24,
+            bold: run.bold || undefined,
+            italics: run.italic || undefined
+          }));
+
+          children.push(new Paragraph({
+            spacing: { before: 0, after: 200, line: 276 },
+            children: textRuns
+          }));
         }
       }
 
-      // Build Vellum-ready document
+      // Create the document
       const doc = new Document({
         title: bookTitle,
         creator: authorName,
@@ -7664,12 +7627,16 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
               margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
             }
           },
-          children: children
+          children
         }]
       });
 
-      // Generate and download
-      const buffer = await Packer.toBlob(doc);
+      // Export and download
+      const buffer = await Packer.toBuffer(doc);
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      });
+
       let filename = bookTitle.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '_');
       if (languageCode) {
         const langNames = { es: 'Spanish', fr: 'French', it: 'Italian', de: 'German', pt: 'Portuguese', ja: 'Japanese' };
@@ -7677,7 +7644,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       }
       filename += '_Vellum.docx';
 
-      const url = URL.createObjectURL(buffer);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
@@ -7687,9 +7654,172 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       URL.revokeObjectURL(url);
 
     } catch (err) {
-      console.error('Manuscript export failed:', err);
+      console.error('DOCX export failed:', err);
       alert('Export failed: ' + err.message);
     }
+  }
+
+  /**
+   * Parse editor HTML content into an array of paragraph objects.
+   * Each paragraph contains typed runs preserving bold/italic formatting.
+   *
+   * TipTap/ContentEditable outputs HTML like:
+   *   <p>Regular text <em>italic text</em> more text <strong>bold</strong></p>
+   *   <p>* * *</p>
+   *   <p>Next paragraph</p>
+   *
+   * Returns: [
+   *   { type: 'paragraph', runs: [{text, bold, italic}, ...] },
+   *   { type: 'scene-break' },
+   *   { type: 'paragraph', runs: [{text, bold, italic}] },
+   * ]
+   */
+  _parseHTMLToParagraphs(html) {
+    if (!html || typeof html !== 'string') return [];
+
+    const results = [];
+
+    // Use DOMParser to properly parse the HTML
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+
+    // Get all block-level elements
+    const blocks = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, blockquote');
+
+    // If no block elements found, treat the entire content as plain text
+    if (blocks.length === 0) {
+      const text = doc.body.textContent?.trim() || '';
+      if (!text) return results;
+
+      // Try splitting on double newlines as fallback
+      const chunks = text.split(/\n\s*\n/).filter(s => s.trim());
+      if (chunks.length > 1) {
+        for (const chunk of chunks) {
+          const trimmed = chunk.trim();
+          if (this._isSceneBreak(trimmed)) {
+            results.push({ type: 'scene-break' });
+          } else {
+            const subLines = trimmed.split(/\n/).filter(s => s.trim());
+            for (const line of subLines) {
+              if (this._isSceneBreak(line.trim())) {
+                results.push({ type: 'scene-break' });
+              } else {
+                results.push({ type: 'paragraph', runs: [{ text: line.trim(), bold: false, italic: false }] });
+              }
+            }
+          }
+        }
+      } else {
+        results.push({ type: 'paragraph', runs: [{ text: text, bold: false, italic: false }] });
+      }
+      return results;
+    }
+
+    // Process each block element
+    for (const block of blocks) {
+      const textContent = block.textContent?.trim() || '';
+
+      // Skip truly empty elements
+      if (!textContent) {
+        results.push({ type: 'empty' });
+        continue;
+      }
+
+      // Detect scene breaks
+      if (this._isSceneBreak(textContent)) {
+        results.push({ type: 'scene-break' });
+        continue;
+      }
+
+      // Extract formatted runs from this paragraph
+      const runs = this._extractTextRuns(block);
+
+      if (runs.length > 0) {
+        results.push({ type: 'paragraph', runs });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Check if text is a scene break marker.
+   */
+  _isSceneBreak(text) {
+    if (!text) return false;
+    const t = text.trim();
+    return (
+      t === '***' ||
+      t === '* * *' ||
+      t === '---' ||
+      t === '\u2013 \u2013 \u2013' ||
+      t === '\u2014 \u2014 \u2014' ||
+      t === '###' ||
+      t === '# # #' ||
+      t === '+++' ||
+      /^\*\s*\*\s*\*$/.test(t) ||
+      /^[-\u2013\u2014]{3,}$/.test(t) ||
+      /^#\s*#\s*#$/.test(t)
+    );
+  }
+
+  /**
+   * Walk the DOM of a paragraph element and extract text runs
+   * preserving bold and italic formatting.
+   *
+   * Handles nested tags like: <p>Text <em>italic <strong>bold-italic</strong></em> more</p>
+   */
+  _extractTextRuns(element) {
+    const runs = [];
+
+    function walk(node, inherited) {
+      const state = {
+        bold: inherited.bold,
+        italic: inherited.italic
+      };
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent;
+        if (text) {
+          runs.push({ text, bold: state.bold, italic: state.italic });
+        }
+        return;
+      }
+
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = node.tagName.toLowerCase();
+
+        if (tag === 'b' || tag === 'strong') state.bold = true;
+        if (tag === 'i' || tag === 'em') state.italic = true;
+
+        // Handle <br> as a space
+        if (tag === 'br') {
+          runs.push({ text: ' ', bold: state.bold, italic: state.italic });
+          return;
+        }
+
+        for (const child of node.childNodes) {
+          walk(child, state);
+        }
+      }
+    }
+
+    walk(element, { bold: false, italic: false });
+
+    // Merge adjacent runs with same formatting to reduce XML size
+    const merged = [];
+    for (const run of runs) {
+      if (merged.length > 0) {
+        const last = merged[merged.length - 1];
+        if (last.bold === run.bold && last.italic === run.italic) {
+          last.text += run.text;
+          continue;
+        }
+      }
+      merged.push({ ...run });
+    }
+
+    return merged;
   }
 
   // ========================================
