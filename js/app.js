@@ -1790,6 +1790,11 @@ class App {
   }
 
   _showPanel(panelId) {
+    // Auto-save API key and HF token if leaving settings panel
+    const settingsPanel = document.getElementById('panel-settings');
+    if (settingsPanel?.classList.contains('visible') && panelId !== 'settings') {
+      this._autoSaveSettingsKeys();
+    }
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
     document.getElementById('panel-overlay').classList.remove('visible');
 
@@ -1801,8 +1806,41 @@ class App {
   }
 
   _closeAllPanels() {
+    // Auto-save API key and HF token if settings panel is open
+    const settingsPanel = document.getElementById('panel-settings');
+    if (settingsPanel?.classList.contains('visible')) {
+      this._autoSaveSettingsKeys();
+    }
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
     document.getElementById('panel-overlay').classList.remove('visible');
+  }
+
+  async _autoSaveSettingsKeys() {
+    // Auto-save API key if present in the unlocked field
+    const apiKeyEl = document.getElementById('setting-api-key');
+    if (apiKeyEl) {
+      const key = (apiKeyEl.value || '').trim();
+      if (key && key !== (this.generator?.apiKey || '')) {
+        await this.generator.setApiKey(key);
+      }
+    }
+    // Auto-save AI model
+    const modelEl = document.getElementById('setting-ai-model');
+    if (modelEl) {
+      const model = modelEl.value || 'claude-sonnet-4-5-20250929';
+      if (model !== (this.generator?.model || '')) {
+        await this.generator.setModel(model);
+      }
+    }
+    // Auto-save HF token
+    const hfEl = document.getElementById('setting-hf-token');
+    if (hfEl) {
+      const token = (hfEl.value || '').trim();
+      if (token !== (this._hfToken || '')) {
+        this._hfToken = token;
+        await this.localStorage.setSetting('hfToken', token);
+      }
+    }
   }
 
   // ========================================
@@ -4833,6 +4871,7 @@ class App {
     // --- Before unload save ---
     window.addEventListener('beforeunload', () => {
       this._saveCurrentChapter();
+      this._autoSaveSettingsKeys();
     });
 
     // --- Flyout Tooltip System ---
