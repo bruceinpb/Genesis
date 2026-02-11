@@ -5269,16 +5269,39 @@ class App {
     }, { passive: true });
 
     // Mouse: hover shows tooltip after 400ms delay
+    // Keep tooltip open while cursor is over the trigger element OR the flyout itself
+    let hideTimer = null;
+
+    const scheduleHide = () => {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        hide();
+      }, 200);
+    };
+
+    const cancelHide = () => {
+      clearTimeout(hideTimer);
+    };
+
     document.addEventListener('mouseover', (e) => {
+      // If entering the flyout itself, cancel any pending hide
+      if (e.target.closest('#tooltip-flyout')) {
+        cancelHide();
+        return;
+      }
       const el = e.target.closest('[data-tooltip]');
-      if (!el || el === activeEl) return;
+      if (!el || el === activeEl) { return; }
+      cancelHide();
       hide();
       hoverTimer = setTimeout(() => show(el), 400);
     });
 
     document.addEventListener('mouseout', (e) => {
-      const el = e.target.closest('[data-tooltip]');
-      if (el) hide();
+      // Leaving a tooltip trigger or the flyout — schedule a delayed hide
+      if (e.target.closest('[data-tooltip]') || e.target.closest('#tooltip-flyout')) {
+        clearTimeout(hoverTimer);
+        scheduleHide();
+      }
     });
   }
 
