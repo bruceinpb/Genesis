@@ -88,8 +88,7 @@
     </div>
 
     <nav class="sidebar-nav">
-      <button class="active" data-tab="chapters" data-tooltip="Chapters — View and manage your book's chapters. Tap a chapter to edit it. Use '+ Chapter' at the bottom to add new chapters. Drag to reorder.">Chapters</button>
-      <button data-tab="characters" data-tooltip="Characters — Create and manage character profiles with names, roles, descriptions, and personality traits. Character details are automatically used as context when generating AI prose.">Characters</button>
+      <button class="active" data-tab="characters" data-tooltip="Characters — Create and manage character profiles with names, roles, descriptions, and personality traits. Character details are automatically used as context when generating AI prose.">Characters</button>
       <button data-tab="notes" data-tooltip="Notes — Keep research notes, plot outlines, world-building details, and reference material organized alongside your manuscript. Notes are saved per project.">Notes</button>
     </nav>
 
@@ -107,15 +106,7 @@
     </div>
 
     <div class="sidebar-content">
-      <div class="chapter-filter" id="chapter-filter-bar" style="padding:4px 8px;display:none;gap:6px;flex-wrap:wrap;">
-        <button class="btn btn-xs chapter-filter-btn active" data-filter="all">All</button>
-        <button class="btn btn-xs chapter-filter-btn" data-filter="original">Original</button>
-        <button class="btn btn-xs chapter-filter-btn" data-filter="translations">Translations</button>
-      </div>
-      <div class="sidebar-panel" id="sidebar-chapters" style="display:block;">
-        <!-- Chapter list rendered by JS -->
-      </div>
-      <div class="sidebar-panel" id="sidebar-characters" style="display:none;">
+      <div class="sidebar-panel" id="sidebar-characters" style="display:block;">
         <!-- Characters list rendered by JS -->
       </div>
       <div class="sidebar-panel" id="sidebar-notes" style="display:none;">
@@ -131,17 +122,11 @@
         &#8681; Import Project
       </button>
       <input type="file" id="import-project-file-sidebar" accept=".md,.docx,.epub" style="display:none;">
-      <button class="btn btn-sm" id="btn-error-database-sidebar" data-tooltip="Error Database — View and manage the cross-project error pattern database. Tracks common prose errors found during scoring and uses them as negative prompts during future AI generation. Watch tutorial: https://youtu.be/5KOWX_XHqV8" style="flex:1; margin-bottom:6px;">
-        &#x1F5C3; Error Database
-      </button>
       <button class="btn btn-sm" id="btn-switch-user-sidebar" data-tooltip="Switch User — Sign out of the current user profile and return to the user selection screen. All your work is saved automatically to the cloud." style="flex:1; margin-bottom:6px;">
         &#x1F464; Switch User
       </button>
-      <button class="btn btn-sm" id="btn-back-to-projects-sidebar" data-tooltip="All Projects — Return to the project list where you can open a different project, create a new one, or see projects from other users." style="flex:1; margin-bottom:6px;">
+      <button class="btn btn-sm" id="btn-back-to-projects-sidebar" data-tooltip="All Projects — Return to the project list where you can open a different project, create a new one, or see projects from other users." style="flex:1;">
         &#8592; All Projects
-      </button>
-      <button class="btn btn-sm" id="btn-delete-project-sidebar" data-tooltip="Delete Project — Permanently delete this entire project and all its chapters, characters, notes, and cover image. This cannot be undone." style="flex:1; border-color:var(--danger); color:var(--danger);">
-        &#x2715; Delete Project
       </button>
     </div>
   </aside>
@@ -232,13 +217,9 @@
     <div class="toolbar-spacer"></div>
 
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-generate" data-tooltip="AI Prose Generator — Open the AI writing assistant. Describe your scene and Claude will generate quality-scored prose that matches your story's voice, style, and characters. Each chunk is scored and refined to meet your quality threshold. Em dashes are automatically removed. Scene breaks and chapter headings are formatted for KDP." style="color:var(--accent-primary);font-weight:700;">AI</button>
       <button class="toolbar-btn" id="btn-analysis" data-tooltip="Prose Analysis — Analyze your current chapter for writing quality, pacing, dialogue balance, sentence variety, and prose style. Provides detailed feedback and suggestions from Claude AI.">&#9874;</button>
-      <button class="toolbar-btn" id="btn-error-database" data-tooltip="Error Database — View and manage the cross-project error pattern database. Tracks common prose errors found during scoring (PET phrases, AI patterns, weak words, etc.) and uses them as negative prompts during future prose generation to avoid repeating the same mistakes. Watch tutorial: https://youtu.be/5KOWX_XHqV8">&#9888;</button>
-      <button class="toolbar-btn" id="btn-export" data-tooltip="Export — Export your manuscript in multiple formats: Standard Manuscript (Shunn format with H1 chapter headings for KDP table of contents), Styled HTML, Plain Text, Full JSON Backup, or download your cover image.">&#8681;</button>
       <button class="toolbar-btn" id="btn-focus-mode" data-tooltip="Focus Mode — Enter distraction-free writing mode. Hides the sidebar, toolbar, and status bar so you can concentrate entirely on your prose. Tap the menu icon to exit.">&#9673;</button>
       <button class="toolbar-btn" id="btn-help" data-tooltip="Help — View a detailed guide to all features, tools, and workflows available in Genesis 2.">?</button>
-      <button class="toolbar-btn" id="btn-settings" data-tooltip="Settings — Configure your writing environment: appearance themes, AI model selection, API keys, daily writing goals, and project-specific settings like title, genre, and word count targets.">&#9881;</button>
     </div>
   </header>
 
@@ -329,11 +310,6 @@
     </div>
 
     <div class="status-spacer"></div>
-
-    <div class="status-item" data-tooltip="Today's Writing — Words written today versus your daily writing goal. Resets at midnight. Set your daily goal in Settings.">
-      <span class="label">Today:</span>
-      <span class="value" id="status-daily">0 / 1,000</span>
-    </div>
   </footer>
 
 </div>
@@ -355,389 +331,447 @@
   </div>
 </div>
 
-<!-- ===== Export Panel ===== -->
-<div class="panel" id="panel-export">
-  <div class="panel-header">
-    <h2>Export Manuscript</h2>
-    <button class="panel-close" aria-label="Close">&times;</button>
-  </div>
-  <div class="panel-body">
-    <div class="analysis-section">
-      <h3>Export Formats</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">
-        Export your manuscript in various formats for submission, sharing, or backup.
-      </p>
-
-      <button class="btn" id="export-manuscript" data-tooltip="Export in standard Shunn manuscript format: Courier 12pt, double-spaced, with H1 chapter headings for KDP table of contents, scene break markers, and proper page breaks. Industry-standard format for agents, publishers, and self-publishing." style="width:100%;margin-bottom:8px;">
-        Standard Manuscript Format (HTML)
-        <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
-      </button>
-
-      <button class="btn" id="export-html" data-tooltip="Export as a beautifully formatted HTML document with clean typography. Ideal for reading on screen, sharing with beta readers, or printing a polished copy." style="width:100%;margin-bottom:8px;">
-        Styled HTML
-        <br><span style="font-size:0.75rem;color:var(--text-muted);">Beautiful reading format</span>
-      </button>
-
-      <button class="btn" id="export-plain" data-tooltip="Export as a universal plain text (.txt) file. Compatible with any text editor, word processor, or e-reader. All formatting is stripped to just raw text." style="width:100%;margin-bottom:8px;">
-        Plain Text
-        <br><span style="font-size:0.75rem;color:var(--text-muted);">Universal .txt format</span>
-      </button>
-
-      <button class="btn" id="export-json" data-tooltip="Export a complete JSON backup of your entire project: all chapters, characters, notes, cover image, and project settings. Use this to create full backups or transfer your project between devices." style="width:100%;margin-bottom:8px;">
-        Full Backup (JSON)
-        <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
-      </button>
+<!-- ===== Setup Book Central Modal ===== -->
+<div class="modal-overlay" id="setup-book-overlay">
+  <div class="modal setup-book-modal">
+    <div class="setup-book-header">
+      <h2>Setup Book</h2>
+      <button class="panel-close" id="btn-close-setup-book" aria-label="Close">&times;</button>
     </div>
-
-    <div class="analysis-section" id="export-cover-section" style="display:none;">
-      <h3>Cover Image</h3>
-      <img id="export-cover-preview" class="export-cover-preview" style="display:none;" alt="Cover preview">
-      <button class="btn" id="export-cover-download" data-tooltip="Download your AI-generated book cover as a high-resolution image file. Suitable for use in e-book publishing, print covers, or promotional materials." style="width:100%;margin-bottom:8px;">
-        Download Cover Image (PNG)
-        <br><span style="font-size:0.75rem;color:var(--text-muted);">High resolution book cover</span>
-      </button>
+    <div class="setup-book-tabs">
+      <button class="setup-tab active" data-setup-tab="book">Book Setup</button>
+      <button class="setup-tab" data-setup-tab="ai-writer">AI Writer</button>
+      <button class="setup-tab" data-setup-tab="translation">Translation</button>
+      <button class="setup-tab" data-setup-tab="export">Export</button>
+      <button class="setup-tab" data-setup-tab="settings">Settings</button>
     </div>
+    <div class="setup-book-body">
 
-    <div class="analysis-section">
-      <h3>Print</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        Use your browser's print function (Cmd+P) for a clean manuscript printout.
-      </p>
-    </div>
-  </div>
-</div>
+      <!-- ═══ Tab: Book Setup ═══ -->
+      <div class="setup-tab-content active" id="setup-tab-book">
+        <div class="analysis-section">
+          <h3>Book Details</h3>
+          <div class="form-group">
+            <label>Book Title</label>
+            <input type="text" class="form-input" id="bs-title" placeholder="Your book title">
+          </div>
+          <div class="form-group">
+            <label>Subtitle (optional)</label>
+            <input type="text" class="form-input" id="bs-subtitle" placeholder="A subtitle for your book">
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">If set, the subtitle appears on the cover image below the title in smaller text.</p>
+          </div>
+        </div>
 
-<!-- ===== Generate Panel ===== -->
-<div class="panel" id="panel-generate">
-  <div class="panel-header">
-    <h2>AI Prose Generator</h2>
-    <button class="panel-close" aria-label="Close">&times;</button>
-  </div>
-  <div class="panel-body" id="panel-generate-body">
-    <div class="analysis-section">
-      <h3>Story Plot / Prompt</h3>
-      <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
-        Describe what should happen in this scene. The more detail you provide, the better the output.
-      </p>
-      <textarea class="form-input" id="generate-plot" rows="6" data-tooltip="Describe what happens in this scene. Include character actions, dialogue hints, emotional beats, and setting details. The more specific and detailed your description, the better the AI-generated prose will be." placeholder="This field will be automatically populated when you generate chapters. You may modify the prompt here once chapter outlines are created."></textarea>
-    </div>
+        <div class="analysis-section">
+          <h3>Genre &amp; Voice</h3>
+          <div class="form-group">
+            <label>Genre</label>
+            <select class="form-input" id="bs-genre">
+              <option value="">-- Select Genre --</option>
+            </select>
+          </div>
+          <div class="form-group" id="bs-subgenre-group" style="display:none;">
+            <label>Subgenre</label>
+            <select class="form-input" id="bs-subgenre">
+              <option value="">-- None (use main genre rules) --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Narrative Voice / POV</label>
+            <select class="form-input" id="bs-voice">
+              <option value="auto">Auto (AI chooses based on context)</option>
+              <option value="first-person">First Person (I/me/my)</option>
+              <option value="third-limited">Third-Person Limited</option>
+              <option value="third-omniscient">Third-Person Omniscient</option>
+              <option value="third-objective">Third-Person Objective (camera eye)</option>
+              <option value="deep-pov">Deep POV (close third-person)</option>
+              <option value="second-person">Second Person (you/your)</option>
+              <option value="unreliable">Unreliable Narrator</option>
+              <option value="multiple-pov">Multiple POV (rotating perspectives)</option>
+              <option value="stream-of-consciousness">Stream of Consciousness</option>
+              <option value="epistolary">Epistolary (letters/documents/diary)</option>
+            </select>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls the narrative perspective for all AI-generated prose in this project.</p>
+          </div>
+        </div>
 
-    <div class="analysis-section">
-      <h3>Options</h3>
-      <div class="form-group">
-        <label>Approximate Words</label>
-        <select class="form-input" id="generate-word-target" data-tooltip="Choose how much prose to generate. Short scenes (~250 words) for brief moments or transitions. Standard (~1,000) for typical scenes. Long (~2,000) for detailed, multi-beat scenes. Full chapter (~3,000) for complete chapter drafts.">
-          <option value="250">~250 (short scene)</option>
-          <option value="500">~500 (short scene)</option>
-          <option value="1000" selected>~1,000 (standard scene)</option>
-          <option value="2000">~2,000 (long scene)</option>
-          <option value="3000">~3,000 (full chapter)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Tone (optional)</label>
-        <input type="text" class="form-input" id="generate-tone" data-tooltip="Set the emotional tone for this scene. Examples: dark and foreboding, lighthearted and humorous, tense and suspenseful, melancholic, lyrical and literary. Leave blank to let the AI match your existing tone." placeholder="e.g. dark, humorous, suspenseful, literary">
-      </div>
-      <div class="form-group">
-        <label>Style Inspiration (optional)</label>
-        <input type="text" class="form-input" id="generate-style" data-tooltip="Name an author whose writing style you'd like the AI to emulate. The AI will adapt its prose style, sentence structure, and vocabulary to match. Examples: Cormac McCarthy, Donna Tartt, Stephen King. Leave blank for a neutral literary style." placeholder="e.g. Cormac McCarthy, Donna Tartt, Stephen King">
-      </div>
-      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
-        <input type="checkbox" id="generate-continue" checked style="width:20px;height:20px;">
-        <label for="generate-continue" style="margin:0;" data-tooltip="When checked, the AI reads your existing text in the editor and continues seamlessly from where you left off, matching your established voice and narrative flow. Uncheck to generate a standalone passage.">Continue from existing text in editor</label>
-      </div>
-      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
-        <input type="checkbox" id="generate-use-characters" checked style="width:20px;height:20px;">
-        <label for="generate-use-characters" style="margin:0;" data-tooltip="When checked, the AI uses your character profiles (names, descriptions, roles, and personalities from the Characters tab) to keep characters consistent and in-character throughout the generated prose.">Include character profiles as context</label>
-      </div>
-      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
-        <input type="checkbox" id="generate-use-notes" checked style="width:20px;height:20px;">
-        <label for="generate-use-notes" style="margin:0;" data-tooltip="When checked, the AI reads all your project notes (research, worldbuilding, plot notes) from the Notes tab and uses them as context to produce more accurate, on-topic prose.">Include project notes as context</label>
-      </div>
-    </div>
+        <div class="analysis-section">
+          <h3>Book Size</h3>
+          <div class="form-group">
+            <label>Total Word Count Goal</label>
+            <input type="number" class="form-input" id="bs-total-words" value="80000" min="5000" step="1000" placeholder="80000">
+          </div>
+          <div class="form-group">
+            <label>Number of Chapters</label>
+            <input type="number" class="form-input" id="bs-num-chapters" value="20" min="1" max="200" placeholder="20">
+          </div>
+          <div class="form-group" style="margin-top:12px;">
+            <div class="stat-card" style="text-align:center;">
+              <div class="stat-value" id="bs-words-per-chapter">4,000</div>
+              <div class="stat-label">Approximate Words per Chapter</div>
+            </div>
+          </div>
+        </div>
 
-    <div class="analysis-section">
-      <h3>AI Instructions</h3>
-      <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
-        Persistent rules the AI must follow for every generation in this project. These are given high priority in the prompt.
-      </p>
-      <textarea class="form-input" id="generate-ai-instructions" rows="4" data-tooltip="Enter rules or constraints the AI must follow for every prose generation. Examples: 'Each chapter covers 10 years of the protagonist's life', 'Write in first person present tense', 'Never use flashbacks'. These instructions are saved with the project and strongly emphasized in the AI prompt. Note: Em dashes are automatically banned from all generated prose." placeholder="e.g. Each chapter covers exactly 10 years. Chapter 1 covers 1863-1873. Write in a formal, historical narrative style. Focus on factual events and real historical details."></textarea>
-      <button class="btn btn-sm" id="btn-save-ai-instructions" data-tooltip="Save these AI instructions to your project so they persist across sessions." style="width:100%;margin-top:6px;">Save Instructions</button>
-    </div>
+        <div class="analysis-section">
+          <h3>Story Structure</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:10px;">
+            Select a narrative structure template to guide your story's pacing and beat progression.
+          </p>
+          <div id="bs-structure-container"></div>
+        </div>
 
-    <div id="generate-status" style="display:none;margin-bottom:16px;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div class="generate-spinner"></div>
-        <span id="generate-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating...</span>
-      </div>
-    </div>
+        <div class="analysis-section">
+          <h3>&#128214; Front Matter</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Select pages to include before Chapter 1. These will be AI-generated based on your book details.
+          </p>
+          <div class="matter-grid" id="bs-front-matter-grid">
+            <label class="matter-option">
+              <input type="checkbox" id="bs-fm-title-page" value="title-page" checked>
+              <div class="matter-info">
+                <span class="matter-name">Title Page</span>
+                <span class="matter-desc">Title, subtitle, and author name</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-fm-copyright" value="copyright" checked>
+              <div class="matter-info">
+                <span class="matter-name">Copyright Page</span>
+                <span class="matter-desc">Copyright notice, ISBN, publisher info</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-fm-dedication" value="dedication">
+              <div class="matter-info">
+                <span class="matter-name">Dedication</span>
+                <span class="matter-desc">Personal dedication page</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-fm-epigraph" value="epigraph">
+              <div class="matter-info">
+                <span class="matter-name">Epigraph</span>
+                <span class="matter-desc">Opening quotation or excerpt</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-fm-table-of-contents" value="table-of-contents" checked>
+              <div class="matter-info">
+                <span class="matter-name">Table of Contents</span>
+                <span class="matter-desc">Auto-generated from chapter titles</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-fm-prologue" value="prologue">
+              <div class="matter-info">
+                <span class="matter-name">Prologue</span>
+                <span class="matter-desc">Story preface or prologue chapter</span>
+              </div>
+            </label>
+          </div>
+        </div>
 
-    <div id="generate-error" style="display:none;margin-bottom:16px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
+        <div class="analysis-section">
+          <h3>&#128218; Back Matter</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Select pages to include after the final chapter.
+          </p>
+          <div class="matter-grid" id="bs-back-matter-grid">
+            <label class="matter-option">
+              <input type="checkbox" id="bs-bm-epilogue" value="epilogue">
+              <div class="matter-info">
+                <span class="matter-name">Epilogue</span>
+                <span class="matter-desc">Story closing or aftermath</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-bm-acknowledgments" value="acknowledgments">
+              <div class="matter-info">
+                <span class="matter-name">Acknowledgments</span>
+                <span class="matter-desc">Thank-you page for contributors</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-bm-about-author" value="about-author" checked>
+              <div class="matter-info">
+                <span class="matter-name">About the Author</span>
+                <span class="matter-desc">Author bio and background</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-bm-also-by" value="also-by">
+              <div class="matter-info">
+                <span class="matter-name">Also By This Author</span>
+                <span class="matter-desc">List of other published works</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-bm-glossary" value="glossary">
+              <div class="matter-info">
+                <span class="matter-name">Glossary</span>
+                <span class="matter-desc">Terms and definitions</span>
+              </div>
+            </label>
+            <label class="matter-option">
+              <input type="checkbox" id="bs-bm-appendix" value="appendix">
+              <div class="matter-info">
+                <span class="matter-name">Appendix</span>
+                <span class="matter-desc">Supplementary material, maps, timelines</span>
+              </div>
+            </label>
+          </div>
+        </div>
 
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI. Prose is generated in scored chunks, with each chunk rewritten if it falls below your quality threshold. Em dashes are stripped, scene breaks are inserted between beats, and chapters begin with H1 headings for KDP." style="flex:1;">Generate Prose</button>
-      <button class="btn" id="btn-iterative-write" data-tooltip="Iterative Write — Generate ~100 words at a time, automatically scoring and refining each paragraph until it meets your quality threshold (set in Setup Book). Each chunk is rewritten and rescored if it falls below the threshold. You approve each paragraph before moving to the next." style="flex:1;color:var(--accent-primary);border-color:var(--accent-primary);">Iterative Write</button>
-      <button class="btn" id="btn-generate-cancel" data-tooltip="Stop — Cancel the current AI generation. Any prose already received will remain in the editor." style="display:none;">Stop</button>
-    </div>
+        <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
+        <button class="btn" id="btn-ai-populate-matter" style="width:100%;margin-top:8px;" data-tooltip="AI Populate — Use AI to auto-generate content for all selected front and back matter pages based on your manuscript prose, characters, and project details.">
+          &#x2728; AI Populate Front &amp; Back Matter
+        </button>
 
-    <div id="generate-no-key" style="display:none;margin-top:16px;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md);text-align:center;">
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        You need an Anthropic API key to generate prose.
-      </p>
-      <button class="btn btn-sm btn-primary" id="btn-generate-open-settings">Open Settings to Add Key</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== Book Structure Panel ===== -->
-<div class="panel" id="panel-book-structure">
-  <div class="panel-header">
-    <h2>Book Structure</h2>
-    <button class="panel-close" aria-label="Close">&times;</button>
-  </div>
-  <div class="panel-body" id="panel-book-structure-body">
-    <div class="analysis-section">
-      <h3>Book Details</h3>
-      <div class="form-group">
-        <label>Book Title</label>
-        <input type="text" class="form-input" id="bs-title" placeholder="Your book title">
-      </div>
-      <div class="form-group">
-        <label>Subtitle (optional)</label>
-        <input type="text" class="form-input" id="bs-subtitle" placeholder="A subtitle for your book">
-        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">If set, the subtitle appears on the cover image below the title in smaller text.</p>
-      </div>
-    </div>
-
-    <div class="analysis-section">
-      <h3>Book Size</h3>
-      <div class="form-group">
-        <label>Total Word Count Goal</label>
-        <input type="number" class="form-input" id="bs-total-words" value="80000" min="5000" step="1000" placeholder="80000">
-      </div>
-      <div class="form-group">
-        <label>Number of Chapters</label>
-        <input type="number" class="form-input" id="bs-num-chapters" value="20" min="1" max="200" placeholder="20">
-      </div>
-      <div class="form-group" style="margin-top:12px;">
-        <div class="stat-card" style="text-align:center;">
-          <div class="stat-value" id="bs-words-per-chapter">4,000</div>
-          <div class="stat-label">Approximate Words per Chapter</div>
+        <div class="analysis-section" style="margin-top:20px;">
+          <h3>AI Outline Generation</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Generate a detailed outline for each chapter based on your notes, characters, and book structure.
+            The AI will analyze all your project information and create ~200-250 word outlines per chapter,
+            auto-name each chapter, and populate the sidebar. Review and edit outlines before generating prose.
+          </p>
+          <div id="bs-outline-status" style="display:none;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="generate-spinner"></div>
+              <span id="bs-outline-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating outlines...</span>
+            </div>
+          </div>
+          <div id="bs-outline-error" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
+          <button class="btn btn-primary" id="btn-generate-outlines" style="width:100%;">Generate Outlines</button>
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:8px;">
+            This will create chapters with outlines. Existing chapters will not be affected. Make sure you have entered notes, characters, and book structure information first.
+          </p>
         </div>
       </div>
-    </div>
 
-    <div class="analysis-section">
-      <h3>Quality Settings</h3>
-      <div class="form-group">
-        <label data-tooltip="Quality Threshold -- Set the minimum quality score (out of 100) that AI-generated prose must achieve before the system moves to the next chunk. Higher values produce better prose but require more iterations and API calls. Lower values generate faster with fewer rewrites. Recommended: 70-90.">Quality Threshold (%)</label>
-        <input type="number" class="form-input" id="bs-quality-threshold" value="90" min="50" max="100" step="5" placeholder="90">
-        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Minimum score prose must reach before continuing. Lower = faster generation, higher = better quality. Default: 90%.</p>
-      </div>
-    </div>
+      <!-- ═══ Tab: AI Writer ═══ -->
+      <div class="setup-tab-content" id="setup-tab-ai-writer">
+        <div class="analysis-section">
+          <h3>Quality Settings</h3>
+          <div class="form-group">
+            <label data-tooltip="Quality Threshold -- Set the minimum quality score (out of 100) that AI-generated prose must achieve before the system moves to the next chunk.">Quality Threshold (%)</label>
+            <input type="number" class="form-input" id="bs-quality-threshold" value="90" min="50" max="100" step="5" placeholder="90">
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Minimum score prose must reach before continuing. Lower = faster generation, higher = better quality. Default: 90%.</p>
+          </div>
+        </div>
 
-    <div class="analysis-section">
-      <h3>Prose Generation Style</h3>
-      <div class="form-group">
-        <label data-tooltip="Poetry Level -- Controls prose density and ornamentation. Level 1 is clean/invisible (Hemingway). Level 5 is lyrical/prose-poetry territory.">Poetry Level</label>
-        <select class="form-input" id="bs-poetry-level">
-          <option value="1">1 — Clean, invisible (Hemingway)</option>
-          <option value="2">2 — Modest detail</option>
-          <option value="3" selected>3 — Literary (default)</option>
-          <option value="4">4 — Heightened, rich</option>
-          <option value="5">5 — Lyrical / prose-poetry</option>
-        </select>
-        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls prose density and ornamentation. Default: 3 (Literary).</p>
-      </div>
-      <div class="form-group">
-        <label data-tooltip="Author Palette -- Style influences for the AI to channel. List authors and their strengths, one per line.">Author Palette (style influences)</label>
-        <textarea class="form-input" id="bs-author-palette" rows="3"
-          placeholder="Morrison: elemental weight&#10;Tyler: domestic warmth&#10;Russo: working-class dignity&#10;Saunders: absurdist heart&#10;Strout: plainspoken power"></textarea>
-        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">List authors and their strengths to channel, one per line. Leave blank for defaults.</p>
-      </div>
-    </div>
+        <div class="analysis-section">
+          <h3>Prose Generation Style</h3>
+          <div class="form-group">
+            <label data-tooltip="Poetry Level -- Controls prose density and ornamentation. Level 1 is clean/invisible (Hemingway). Level 5 is lyrical/prose-poetry territory.">Poetry Level</label>
+            <select class="form-input" id="bs-poetry-level">
+              <option value="1">1 -- Clean, invisible (Hemingway)</option>
+              <option value="2">2 -- Modest detail</option>
+              <option value="3" selected>3 -- Literary (default)</option>
+              <option value="4">4 -- Heightened, rich</option>
+              <option value="5">5 -- Lyrical / prose-poetry</option>
+            </select>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls prose density and ornamentation. Default: 3 (Literary).</p>
+          </div>
+          <div class="form-group">
+            <label data-tooltip="Author Palette -- Style influences for the AI to channel. List authors and their strengths, one per line.">Author Palette (style influences)</label>
+            <textarea class="form-input" id="bs-author-palette" rows="3"
+              placeholder="Morrison: elemental weight&#10;Tyler: domestic warmth&#10;Russo: working-class dignity&#10;Saunders: absurdist heart&#10;Strout: plainspoken power"></textarea>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">List authors and their strengths to channel, one per line. Leave blank for defaults.</p>
+          </div>
+        </div>
 
-    <div class="analysis-section">
-      <h3>&#127760; Translation</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        Select languages for translation. When enabled, completed prose will be translated and saved as additional manuscript versions.
-      </p>
-      <div class="translation-grid" id="bs-translation-grid">
-        <label class="translation-option">
-          <input type="checkbox" id="bs-translate-spanish" value="spanish">
-          <span>🇪🇸 Spanish</span>
-        </label>
-        <label class="translation-option">
-          <input type="checkbox" id="bs-translate-french" value="french">
-          <span>🇫🇷 French</span>
-        </label>
-        <label class="translation-option">
-          <input type="checkbox" id="bs-translate-italian" value="italian">
-          <span>🇮🇹 Italian</span>
-        </label>
-        <label class="translation-option">
-          <input type="checkbox" id="bs-translate-german" value="german">
-          <span>🇩🇪 German</span>
-        </label>
-        <label class="translation-option">
-          <input type="checkbox" id="bs-translate-portuguese" value="portuguese">
-          <span>🇧🇷 Portuguese</span>
-        </label>
-        <label class="translation-option">
-          <input type="checkbox" id="bs-translate-japanese" value="japanese">
-          <span>🇯🇵 Japanese</span>
-        </label>
-      </div>
-      <button class="btn" id="btn-perform-translation" style="width:100%;margin-top:12px;" disabled>
-        Perform Translation
-      </button>
-      <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
-        Select at least one language, then click to translate the current chapter's prose. Translation uses Claude AI and preserves narrative voice.
-      </p>
-    </div>
+        <div class="analysis-section">
+          <h3>AI Instructions</h3>
+          <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
+            Persistent rules the AI must follow for every generation in this project. These are given high priority in the prompt.
+          </p>
+          <textarea class="form-input" id="generate-ai-instructions" rows="4" data-tooltip="Enter rules or constraints the AI must follow for every prose generation." placeholder="e.g. Each chapter covers exactly 10 years. Write in a formal, historical narrative style."></textarea>
+          <button class="btn btn-sm" id="btn-save-ai-instructions" data-tooltip="Save these AI instructions to your project so they persist across sessions." style="width:100%;margin-top:6px;">Save Instructions</button>
+        </div>
 
-    <!-- ═══ Export Section ═══ -->
-    <div class="analysis-section">
-      <h3>&#128196; Export Manuscript</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        Export chapters as a formatted DOCX file for Vellum import.
-      </p>
-      <button class="btn" id="btn-export-original-docx" style="width:100%;margin-bottom:8px;">
-        &#128196; Export Original (English)
-      </button>
-      <div id="export-translation-buttons" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-        <!-- Populated dynamically when translations exist -->
-      </div>
-    </div>
+        <div class="analysis-section">
+          <h3>Story Plot / Prompt</h3>
+          <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">
+            Describe what should happen in this scene. The more detail you provide, the better the output.
+          </p>
+          <textarea class="form-input" id="generate-plot" rows="6" data-tooltip="Describe what happens in this scene. Include character actions, dialogue hints, emotional beats, and setting details." placeholder="This field will be automatically populated when you generate chapters. You may modify the prompt here once chapter outlines are created."></textarea>
+        </div>
 
-    <div class="analysis-section">
-      <h3>&#128214; Front Matter</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        Select pages to include before Chapter 1. These will be AI-generated based on your book details.
-      </p>
-      <div class="matter-grid" id="bs-front-matter-grid">
-        <label class="matter-option">
-          <input type="checkbox" id="bs-fm-title-page" value="title-page" checked>
-          <div class="matter-info">
-            <span class="matter-name">Title Page</span>
-            <span class="matter-desc">Title, subtitle, and author name</span>
+        <div class="analysis-section">
+          <h3>Options</h3>
+          <div class="form-group">
+            <label>Approximate Words</label>
+            <select class="form-input" id="generate-word-target" data-tooltip="Choose how much prose to generate.">
+              <option value="250">~250 (short scene)</option>
+              <option value="500">~500 (short scene)</option>
+              <option value="1000" selected>~1,000 (standard scene)</option>
+              <option value="2000">~2,000 (long scene)</option>
+              <option value="3000">~3,000 (full chapter)</option>
+            </select>
           </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-fm-copyright" value="copyright" checked>
-          <div class="matter-info">
-            <span class="matter-name">Copyright Page</span>
-            <span class="matter-desc">Copyright notice, ISBN, publisher info</span>
+          <div class="form-group">
+            <label>Tone (optional)</label>
+            <input type="text" class="form-input" id="generate-tone" placeholder="e.g. dark, humorous, suspenseful, literary">
           </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-fm-dedication" value="dedication">
-          <div class="matter-info">
-            <span class="matter-name">Dedication</span>
-            <span class="matter-desc">Personal dedication page</span>
+          <div class="form-group">
+            <label>Style Inspiration (optional)</label>
+            <input type="text" class="form-input" id="generate-style" placeholder="e.g. Cormac McCarthy, Donna Tartt, Stephen King">
           </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-fm-epigraph" value="epigraph">
-          <div class="matter-info">
-            <span class="matter-name">Epigraph</span>
-            <span class="matter-desc">Opening quotation or excerpt</span>
+          <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" id="generate-continue" checked style="width:20px;height:20px;">
+            <label for="generate-continue" style="margin:0;">Continue from existing text in editor</label>
           </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-fm-table-of-contents" value="table-of-contents" checked>
-          <div class="matter-info">
-            <span class="matter-name">Table of Contents</span>
-            <span class="matter-desc">Auto-generated from chapter titles</span>
+          <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" id="generate-use-characters" checked style="width:20px;height:20px;">
+            <label for="generate-use-characters" style="margin:0;">Include character profiles as context</label>
           </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-fm-prologue" value="prologue">
-          <div class="matter-info">
-            <span class="matter-name">Prologue</span>
-            <span class="matter-desc">Story preface or prologue chapter</span>
+          <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" id="generate-use-notes" checked style="width:20px;height:20px;">
+            <label for="generate-use-notes" style="margin:0;">Include project notes as context</label>
           </div>
-        </label>
-      </div>
-    </div>
+        </div>
 
-    <div class="analysis-section">
-      <h3>&#128218; Back Matter</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        Select pages to include after the final chapter.
-      </p>
-      <div class="matter-grid" id="bs-back-matter-grid">
-        <label class="matter-option">
-          <input type="checkbox" id="bs-bm-epilogue" value="epilogue">
-          <div class="matter-info">
-            <span class="matter-name">Epilogue</span>
-            <span class="matter-desc">Story closing or aftermath</span>
+        <div id="generate-status" style="display:none;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="generate-spinner"></div>
+            <span id="generate-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating...</span>
           </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-bm-acknowledgments" value="acknowledgments">
-          <div class="matter-info">
-            <span class="matter-name">Acknowledgments</span>
-            <span class="matter-desc">Thank-you page for contributors</span>
-          </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-bm-about-author" value="about-author" checked>
-          <div class="matter-info">
-            <span class="matter-name">About the Author</span>
-            <span class="matter-desc">Author bio and background</span>
-          </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-bm-also-by" value="also-by">
-          <div class="matter-info">
-            <span class="matter-name">Also By This Author</span>
-            <span class="matter-desc">List of other published works</span>
-          </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-bm-glossary" value="glossary">
-          <div class="matter-info">
-            <span class="matter-name">Glossary</span>
-            <span class="matter-desc">Terms and definitions</span>
-          </div>
-        </label>
-        <label class="matter-option">
-          <input type="checkbox" id="bs-bm-appendix" value="appendix">
-          <div class="matter-info">
-            <span class="matter-name">Appendix</span>
-            <span class="matter-desc">Supplementary material, maps, timelines</span>
-          </div>
-        </label>
-      </div>
-    </div>
+        </div>
 
-    <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
-    <button class="btn" id="btn-ai-populate-matter" style="width:100%;margin-top:8px;" data-tooltip="AI Populate — Use AI to auto-generate content for all selected front and back matter pages based on your manuscript prose, characters, and project details.">
-      &#x2728; AI Populate Front &amp; Back Matter
-    </button>
+        <div id="generate-error" style="display:none;margin-bottom:16px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
 
-    <div class="analysis-section">
-      <h3>AI Outline Generation</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-        Generate a detailed outline for each chapter based on your notes, characters, and book structure.
-        The AI will analyze all your project information and create ~200-250 word outlines per chapter,
-        auto-name each chapter, and populate the sidebar. Review and edit outlines before generating prose.
-      </p>
-      <div id="bs-outline-status" style="display:none;margin-bottom:12px;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div class="generate-spinner"></div>
-          <span id="bs-outline-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating outlines...</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI." style="flex:1;">Generate Prose</button>
+          <button class="btn" id="btn-iterative-write" data-tooltip="Iterative Write — Generate ~100 words at a time with quality scoring." style="flex:1;color:var(--accent-primary);border-color:var(--accent-primary);">Iterative Write</button>
+          <button class="btn" id="btn-generate-cancel" style="display:none;">Stop</button>
+        </div>
+
+        <div id="generate-no-key" style="display:none;margin-top:16px;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md);text-align:center;">
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            You need an Anthropic API key to generate prose.
+          </p>
+          <button class="btn btn-sm btn-primary" id="btn-generate-open-settings">Open Settings to Add Key</button>
         </div>
       </div>
-      <div id="bs-outline-error" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
-      <button class="btn btn-primary" id="btn-generate-outlines" style="width:100%;">Generate Outlines</button>
-      <p style="font-size:0.75rem;color:var(--text-muted);margin-top:8px;">
-        This will create chapters with outlines. Existing chapters will not be affected. Make sure you have entered notes, characters, and book structure information first.
-      </p>
+
+      <!-- ═══ Tab: Translation ═══ -->
+      <div class="setup-tab-content" id="setup-tab-translation">
+        <div class="analysis-section">
+          <h3>&#127760; Translation</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Select languages for translation. When enabled, completed prose will be translated and saved as additional manuscript versions.
+          </p>
+          <div class="translation-grid" id="bs-translation-grid">
+            <label class="translation-option">
+              <input type="checkbox" id="bs-translate-spanish" value="spanish">
+              <span>Spanish</span>
+            </label>
+            <label class="translation-option">
+              <input type="checkbox" id="bs-translate-french" value="french">
+              <span>French</span>
+            </label>
+            <label class="translation-option">
+              <input type="checkbox" id="bs-translate-italian" value="italian">
+              <span>Italian</span>
+            </label>
+            <label class="translation-option">
+              <input type="checkbox" id="bs-translate-german" value="german">
+              <span>German</span>
+            </label>
+            <label class="translation-option">
+              <input type="checkbox" id="bs-translate-portuguese" value="portuguese">
+              <span>Portuguese</span>
+            </label>
+            <label class="translation-option">
+              <input type="checkbox" id="bs-translate-japanese" value="japanese">
+              <span>Japanese</span>
+            </label>
+          </div>
+          <button class="btn" id="btn-perform-translation" style="width:100%;margin-top:12px;" disabled>
+            Perform Translation
+          </button>
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+            Select at least one language, then click to translate the current chapter's prose. Translation uses Claude AI and preserves narrative voice.
+          </p>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Export ═══ -->
+      <div class="setup-tab-content" id="setup-tab-export">
+        <div class="analysis-section">
+          <h3>Export Formats</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">
+            Export your manuscript in various formats for submission, sharing, or backup.
+          </p>
+
+          <button class="btn" id="export-manuscript" style="width:100%;margin-bottom:8px;">
+            Standard Manuscript Format (HTML)
+            <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
+          </button>
+
+          <button class="btn" id="export-html" style="width:100%;margin-bottom:8px;">
+            Styled HTML
+            <br><span style="font-size:0.75rem;color:var(--text-muted);">Beautiful reading format</span>
+          </button>
+
+          <button class="btn" id="export-plain" style="width:100%;margin-bottom:8px;">
+            Plain Text
+            <br><span style="font-size:0.75rem;color:var(--text-muted);">Universal .txt format</span>
+          </button>
+
+          <button class="btn" id="export-json" style="width:100%;margin-bottom:8px;">
+            Full Backup (JSON)
+            <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
+          </button>
+        </div>
+
+        <div class="analysis-section">
+          <h3>&#128196; DOCX Export</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Export chapters as a formatted DOCX file for Vellum import.
+          </p>
+          <button class="btn" id="btn-export-original-docx" style="width:100%;margin-bottom:8px;">
+            &#128196; Export Original (English)
+          </button>
+          <div id="export-translation-buttons" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+            <!-- Populated dynamically when translations exist -->
+          </div>
+        </div>
+
+        <div class="analysis-section" id="export-cover-section" style="display:none;">
+          <h3>Cover Image</h3>
+          <img id="export-cover-preview" class="export-cover-preview" style="display:none;" alt="Cover preview">
+          <button class="btn" id="export-cover-download" style="width:100%;margin-bottom:8px;">
+            Download Cover Image (PNG)
+            <br><span style="font-size:0.75rem;color:var(--text-muted);">High resolution book cover</span>
+          </button>
+        </div>
+
+        <div class="analysis-section">
+          <h3>Print</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Use your browser's print function (Cmd+P) for a clean manuscript printout.
+          </p>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Settings ═══ -->
+      <div class="setup-tab-content" id="setup-tab-settings">
+        <div id="panel-settings-body">
+          <!-- Rendered dynamically by JS -->
+        </div>
+        <div style="margin-top:16px;">
+          <button class="btn btn-sm" id="btn-error-database-popup" data-tooltip="View and manage the cross-project error pattern database." style="width:100%;margin-bottom:8px;">
+            &#9888; Error Pattern Database
+          </button>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
+
 
 <!-- ===== Prose Review Modal ===== -->
 <div class="modal-overlay" id="prose-review-overlay">
@@ -1258,7 +1292,7 @@
   </div>
 </div>
 
-<!-- ===== Error Pattern Database Panel ===== -->
+<!-- Error Pattern Database Panel (kept for popup access) -->
 <div class="panel" id="panel-error-database">
   <div class="panel-header">
     <h2>Error Pattern Database</h2>
@@ -1266,17 +1300,6 @@
   </div>
   <div class="panel-body" id="panel-error-database-body">
     <!-- Rendered dynamically by app.js -->
-  </div>
-</div>
-
-<!-- ===== Settings Panel ===== -->
-<div class="panel" id="panel-settings">
-  <div class="panel-header">
-    <h2>Settings</h2>
-    <button class="panel-close" aria-label="Close">&times;</button>
-  </div>
-  <div class="panel-body" id="panel-settings-body">
-    <!-- Rendered dynamically -->
   </div>
 </div>
 
