@@ -4383,7 +4383,21 @@ class App {
         // Close modal and reload chapter
         document.getElementById('rethink-overlay').classList.remove('visible');
         await this._loadChapter(this.state.currentChapterId);
-        alert('Chapter outline has been revised.');
+        this._currentChapterOutline = revisedOutline;
+
+        // Ask user if they want to regenerate the prose with the new outline
+        const regenerate = confirm(
+          'Chapter outline has been revised.\n\n' +
+          'Would you like to regenerate the prose for this chapter using the new outline?\n' +
+          '(The existing prose will be replaced.)'
+        );
+        if (regenerate) {
+          // Clear existing prose and regenerate
+          this.editor.setContent('');
+          await this.fs.updateChapter(this.state.currentChapterId, { content: '' });
+          this._showContinueBar(false);
+          await this._runGeneration({ wordTarget: this._lastGenSettings?.wordTarget || 500 });
+        }
       }
     } catch (err) {
       console.error('Rethink failed:', err);
@@ -7730,17 +7744,31 @@ class App {
     if (navBody) {
       // Single click
       navBody.addEventListener('click', async (e) => {
-        // Checkbox click
+        // Checkbox click — also activate/highlight the chapter
         const checkbox = e.target.closest('.nav-item-checkbox');
         if (checkbox) {
           const item = checkbox.closest('.nav-item');
           const id = item?.dataset.navId;
+          const type = item?.dataset.navType;
           if (id) {
             if (checkbox.checked) this._navSelectedIds.add(id);
             else this._navSelectedIds.delete(id);
             item?.classList.toggle('selected', checkbox.checked);
           }
           this._updateNavDeleteButton();
+          // Also activate (load + highlight) the chapter so checkbox and focus stay in sync
+          if (id && type === 'chapter') {
+            await this._loadChapter(id);
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
+            document.querySelectorAll('.tree-item.chapter').forEach(el => el.classList.remove('active'));
+            const oldItem = document.querySelector(`.tree-item.chapter[data-id="${id}"]`);
+            if (oldItem) oldItem.classList.add('active');
+          } else if (id && (type === 'front-matter' || type === 'back-matter')) {
+            await this._loadMatterPage(id, type);
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
+          }
           return;
         }
 

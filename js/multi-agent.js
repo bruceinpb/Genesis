@@ -496,8 +496,14 @@ Output valid JSON only:
   "expectedScoreImpact": "<estimated score improvement>"
 }`;
 
+    // Include the judge's scoring data so fixes can target the weakest dimensions
+    const winnerScores = judgeReport.scores?.find(s => s.agentId === judgeReport.selectedCandidate);
+    const scoreContext = winnerScores
+      ? `\n\nJudge's sub-scores for the winning candidate:\n  Voice Authenticity: ${winnerScores.voiceAuthenticity}/100\n  Prose Quality: ${winnerScores.proseQuality}/100\n  Genre Adherence: ${winnerScores.genreAdherence}/100\n  Emotional Resonance: ${winnerScores.emotionalResonance}/100\n  Originality: ${winnerScores.originality}/100\n  Total: ${winnerScores.totalScore}/100\nFocus fixes on the WEAKEST scoring dimensions.`
+      : '';
+
     const text = await this._callApi(systemPrompt,
-      `Improve this prose:\n\n"""${selectedProse}"""\n\nJudge's fixes: ${JSON.stringify(existingFixes)}\nElements to borrow: ${JSON.stringify(borrowElements)}\nStrengths to preserve: ${JSON.stringify(preserveList)}`,
+      `Improve this prose:\n\n"""${selectedProse}"""\n\nJudge's fixes: ${JSON.stringify(existingFixes)}\nElements to borrow: ${JSON.stringify(borrowElements)}\nStrengths to preserve: ${JSON.stringify(preserveList)}${scoreContext}`,
       { maxTokens: 4096, temperature: 0.2 }
     );
 
@@ -529,42 +535,127 @@ Output valid JSON only:
       return prose;
     }
 
-    const systemPrompt = `You are a meticulous prose editor. Apply the following fixes EXACTLY as specified.
+    const systemPrompt = `You are a meticulous prose editor. Apply ONLY the specified fixes to the original prose.
 
-RULES:
-- Apply each fix precisely — find the original text and replace it
-- If you cannot find the exact original text, find the closest match and apply the fix intent
-- DO NOT make any other changes beyond the specified fixes
-- DO NOT add commentary, labels, or meta-text
-- Preserve all paragraph breaks and formatting
-- Output ONLY the complete fixed prose text — nothing else
+CRITICAL RULES:
+1. Copy the ENTIRE original prose first, then make ONLY the specified changes
+2. For each fix: find the original text, replace it with the replacement text
+3. If the original text doesn't match exactly, locate the closest matching passage and apply the fix intent
+4. Do NOT rewrite, rephrase, or "improve" any text beyond the specified fixes
+5. Do NOT add commentary, labels, or meta-text
+6. Preserve ALL paragraph breaks, formatting, and whitespace
+7. Output ONLY the complete prose — nothing else
 
-PRESERVE THESE QUALITIES: ${warnings.join('; ')}`;
+APPROACH: Think of yourself as doing find-and-replace operations, one at a time.
+Start with the full original text. Apply fix 1. Then fix 2. And so on.
+
+PRESERVE THESE QUALITIES: ${warnings.join('; ')}
+
+WORD COUNT: The output MUST be within 25% of the original word count. If a fix adds text, keep it concise. If a fix removes text, that's fine.`;
 
     const fixInstructions = fixes.map((f, i) =>
-      `FIX ${i + 1} (${f.type}): ${f.description}\n  FIND: "${f.originalText}"\n  REPLACE WITH: "${f.replacementText}"`
+      `FIX ${i + 1} [${f.type}]:\n  WHY: ${f.description}\n  FIND: "${f.originalText}"\n  REPLACE WITH: "${f.replacementText}"\n  RATIONALE: ${f.rationale || 'Improves prose quality'}`
     ).join('\n\n');
 
     const text = await this._callApi(systemPrompt,
-      `Apply these fixes:\n\n${fixInstructions}\n\nORIGINAL PROSE:\n"""\n${prose}\n"""`,
+      `Apply these ${fixes.length} fixes to the prose below. Copy unchanged text VERBATIM.\n\n${fixInstructions}\n\n=== ORIGINAL PROSE (copy this, then apply fixes) ===\n${prose}\n=== END ORIGINAL PROSE ===`,
       { maxTokens: 8192, temperature: 0.1 }
     );
 
-    // Validate word count drift
+    // Validate word count drift — graduated tolerance
     const origWords = (prose.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
     const fixedWords = (text.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
     const drift = Math.abs(fixedWords - origWords) / Math.max(origWords, 1);
 
-    if (drift > 0.20) {
+    if (drift > 0.35) {
+      // Extreme drift — definitely reject
       this._emit('editing-warning',
-        `Editor output has ${Math.round(drift * 100)}% word count drift. Using original.`);
+        `Editor output has ${Math.round(drift * 100)}% word count drift (>35%). Using original.`);
       return prose;
+    }
+
+    if (drift > 0.25) {
+      // Moderate drift — warn but accept if the fixes were applied
+      this._emit('editing-warning',
+        `Editor output has ${Math.round(drift * 100)}% word count drift (>25%). Accepting with caution.`);
     }
 
     this._emit('editing-complete',
       `Editor applied ${fixes.length} fixes. Words: ${origWords} -> ${fixedWords}`,
       { fixCount: fixes.length, wordsBefore: origWords, wordsAfter: fixedWords }
     );
+
+    return text;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 2.5: SYNTHESIS — MERGE BEST ELEMENTS FROM CANDIDATES
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Synthesize the winning prose with the best elements from other candidates.
+   * The judge's borrowFromOthers list specifies what to take from runner-ups.
+   * Returns the synthesized prose.
+   */
+  async synthesizeProse(winnerProse, candidates, judgeReport, { genre, voice }) {
+    const borrowElements = judgeReport.borrowFromOthers || [];
+    if (borrowElements.length === 0) return winnerProse;
+
+    this._emit('synthesizing', `Synthesizing best elements from ${borrowElements.length} sources...`);
+
+    // Build a reference of the donor passages
+    const donorBlocks = [];
+    for (const borrow of borrowElements) {
+      // Map fromCandidate (letter) or fromAgent (number) to actual candidate text
+      const label = String(borrow.fromCandidate || borrow.fromAgent || '').trim();
+      const donor = candidates.find(c =>
+        String(c.agentId) === label || c.label?.includes(label)
+      );
+      if (donor) {
+        donorBlocks.push({
+          element: borrow.element,
+          reason: borrow.reason,
+          sourceText: donor.text.slice(0, 2000) // limit for token budget
+        });
+      }
+    }
+
+    if (donorBlocks.length === 0) return winnerProse;
+
+    const systemPrompt = `You are a master literary synthesizer. You have a winning prose passage and specific elements to borrow from other candidates. Your job is to seamlessly weave those elements into the winning prose.
+
+RULES:
+1. The winning prose is your FOUNDATION — keep its voice, structure, and 90%+ of its text
+2. For each "borrow" element, find the right place in the winning prose to integrate it
+3. Integration must be SEAMLESS — it should read as if it was always there
+4. Do NOT change the voice, tense, or POV of the winning prose
+5. Do NOT add your own material — only integrate the specified elements
+6. Keep the output within 15% of the original word count
+7. Output ONLY the synthesized prose — no labels or commentary
+${genre ? `\nGenre: ${genre}` : ''}${voice ? `\nVoice: ${voice}` : ''}`;
+
+    const borrowInstructions = donorBlocks.map((d, i) =>
+      `BORROW ${i + 1}:\n  Element: ${d.element}\n  Reason: ${d.reason}\n  Source passage (for reference): "${d.sourceText.slice(0, 500)}..."`
+    ).join('\n\n');
+
+    const text = await this._callApi(systemPrompt,
+      `Integrate these elements into the winning prose:\n\n${borrowInstructions}\n\n=== WINNING PROSE (your foundation) ===\n${winnerProse}\n=== END WINNING PROSE ===`,
+      { maxTokens: 8192, temperature: 0.3 }
+    );
+
+    // Word count validation
+    const origWords = (winnerProse.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+    const synthWords = (text.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+    const drift = Math.abs(synthWords - origWords) / Math.max(origWords, 1);
+
+    if (drift > 0.30) {
+      this._emit('synthesizing-warning',
+        `Synthesis drift ${Math.round(drift * 100)}% exceeds 30%. Keeping original.`);
+      return winnerProse;
+    }
+
+    this._emit('synthesizing-complete',
+      `Synthesis complete. ${donorBlocks.length} elements merged. Words: ${origWords} -> ${synthWords}`);
 
     return text;
   }
@@ -871,6 +962,13 @@ Output valid JSON only:
       });
 
       let finalProse = winner.text;
+
+      // Phase 2.5: Synthesis — merge best elements from runner-up into the winner
+      const borrowElements = report.borrowFromOthers || [];
+      if (borrowElements.length > 0 && candidates.length >= 2) {
+        this._emit('pipeline', '=== PHASE 2.5: Prose Synthesis (merging best elements) ===');
+        finalProse = await this.synthesizeProse(finalProse, candidates, report, { genre, voice });
+      }
 
       // Phase 3
       this._emit('pipeline', '=== PHASE 3: Collaborative Fix Planning ===');
