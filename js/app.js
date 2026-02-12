@@ -859,13 +859,6 @@ class App {
       this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
-      // Show chapter outline popup whenever chapter has an outline
-      console.log('[Genesis] _loadChapter: outline =', !!this._currentChapterOutline, 'chapterId =', chapterId);
-      if (this._currentChapterOutline) {
-        console.log('[Genesis] Showing chapter outline popup for:', chapter.title);
-        this._showChapterOutlinePopup(chapter.title);
-      }
-
       // Update active state in tree
       document.querySelectorAll('.tree-item').forEach(el => {
         el.classList.toggle('active', el.dataset.id === chapterId);
@@ -1145,8 +1138,8 @@ class App {
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
 
-    // Hide chapter outline popup once generation begins
-    this._hideChapterOutlinePopup();
+    // Close the Before You Generate dialog if open
+    this._closeAcceptOutlineDialog();
 
     this._closeAllPanels();
     this._hideWelcome();
@@ -3255,147 +3248,6 @@ class App {
   }
 
   // ========================================
-  //  Chapter Outline Popup (fixed-position modal, same as outline-review-overlay)
-  // ========================================
-
-  /**
-   * Show the chapter outline popup when a chapter with an outline is clicked.
-   * Uses the proven fixed-position modal pattern (same as outline-review-overlay).
-   */
-  _showChapterOutlinePopup(chapterTitle) {
-    console.log('[Genesis] _showChapterOutlinePopup called for:', chapterTitle);
-    const popup = document.getElementById('ch-outline-popup');
-    console.log('[Genesis] popup element found:', !!popup);
-    if (!popup) {
-      console.error('[Genesis] CRITICAL: #ch-outline-popup not found in DOM!');
-      // Fallback: use a native alert to prove the code is running
-      alert('Chapter Outline:\n\n' + (this._currentChapterOutline || '(no outline)').substring(0, 500));
-      return;
-    }
-
-    // Set title
-    const titleEl = document.getElementById('ch-outline-popup-title');
-    if (titleEl) titleEl.textContent = chapterTitle ? `Outline: ${chapterTitle}` : 'Chapter Outline';
-
-    // Fill the editable textarea with the outline
-    const textEl = document.getElementById('ch-outline-popup-text');
-    if (textEl) textEl.value = this._currentChapterOutline || '';
-
-    // Reset rethink area
-    const rethinkArea = document.getElementById('ch-outline-rethink-area');
-    if (rethinkArea) rethinkArea.style.display = 'none';
-    const rethinkStatus = document.getElementById('ch-outline-rethink-status');
-    if (rethinkStatus) rethinkStatus.style.display = 'none';
-    const rethinkSubmit = document.getElementById('btn-ch-outline-rethink-submit');
-    if (rethinkSubmit) rethinkSubmit.disabled = false;
-
-    // Show the popup
-    popup.classList.add('visible');
-    console.log('[Genesis] popup classList after add:', popup.classList.toString());
-  }
-
-  _hideChapterOutlinePopup() {
-    const popup = document.getElementById('ch-outline-popup');
-    if (popup) popup.classList.remove('visible');
-  }
-
-  /**
-   * Called when user clicks "Accept Outline" — saves any edits, closes popup,
-   * then starts prose generation using the outline.
-   */
-  async _acceptChapterOutline() {
-    // Save any edits the user made to the outline text
-    const textEl = document.getElementById('ch-outline-popup-text');
-    const editedOutline = textEl?.value?.trim();
-    if (editedOutline && editedOutline !== this._currentChapterOutline) {
-      this._currentChapterOutline = editedOutline;
-      if (this.state.currentChapterId) {
-        await this.fs.updateChapter(this.state.currentChapterId, { outline: editedOutline });
-      }
-    }
-
-    this._hideChapterOutlinePopup();
-
-    if (!this.state.currentChapterId || !this._currentChapterOutline) return;
-    if (!this.generator.hasApiKey()) {
-      alert('Set your Anthropic API key in Settings first.');
-      return;
-    }
-
-    // Open the generate panel, fill the plot with the outline, trigger generation
-    await this.openGeneratePanel();
-    const plotEl = document.getElementById('generate-plot');
-    if (plotEl && !plotEl.value?.trim()) {
-      plotEl.value = this._currentChapterOutline;
-    }
-    this._closeSetupBookModal();
-    await this._runGeneration();
-  }
-
-  /**
-   * Called when user clicks "Finished" in the rethink area — sends the user's
-   * instructions to the AI to revise the chapter outline, then updates the popup.
-   */
-  async _submitChapterOutlineRethink() {
-    const promptEl = document.getElementById('ch-outline-rethink-prompt');
-    const userInstructions = promptEl?.value?.trim();
-    if (!userInstructions) {
-      alert('Please enter instructions for how to revise the outline.');
-      return;
-    }
-
-    if (!this.state.currentChapterId) return;
-    const chapter = await this.fs.getChapter(this.state.currentChapterId);
-    if (!chapter?.outline) return;
-
-    const project = this._currentProject;
-    const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
-    const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId) || [];
-    let notes = projectNotes.map(n => {
-      let entry = n.title;
-      if (n.content) entry += '\n' + n.content;
-      return entry;
-    }).join('\n\n');
-
-    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
-
-    // Show spinner, disable button
-    document.getElementById('ch-outline-rethink-status').style.display = '';
-    document.getElementById('btn-ch-outline-rethink-submit').disabled = true;
-
-    try {
-      const revisedOutline = await this.generator.rethinkOutline({
-        currentOutline: chapter.outline,
-        chapterTitle: chapter.title,
-        userInstructions,
-        bookTitle: project?.title || '',
-        genre: genreInfo?.label || '',
-        characters,
-        notes
-      });
-
-      if (revisedOutline) {
-        await this.fs.updateChapter(this.state.currentChapterId, { outline: revisedOutline });
-        this._currentChapterOutline = revisedOutline;
-
-        // Update the editable textarea with the revised outline
-        const textEl = document.getElementById('ch-outline-popup-text');
-        if (textEl) textEl.value = revisedOutline;
-
-        // Hide rethink area so user can review the new outline
-        document.getElementById('ch-outline-rethink-area').style.display = 'none';
-        document.getElementById('ch-outline-rethink-prompt').value = '';
-      }
-    } catch (err) {
-      console.error('Outline rethink failed:', err);
-      alert('Rethink failed: ' + err.message);
-    } finally {
-      document.getElementById('ch-outline-rethink-status').style.display = 'none';
-      document.getElementById('btn-ch-outline-rethink-submit').disabled = false;
-    }
-  }
-
-  // ========================================
   //  Prose Quality Scoring
   // ========================================
 
@@ -4872,7 +4724,6 @@ class App {
     const editorEl = document.getElementById('editor');
     if (overlay) overlay.style.display = '';
     if (editorEl) editorEl.style.display = 'none';
-    this._hideChapterOutlinePopup();
     document.getElementById('project-title').textContent = 'Genesis 2';
   }
 
@@ -4920,27 +4771,20 @@ class App {
       this._createNewProject();
     });
 
-    // --- Chapter Outline Popup buttons ---
-    document.getElementById('btn-ch-outline-close')?.addEventListener('click', () => {
-      this._hideChapterOutlinePopup();
+    // --- Before You Generate: outline buttons ---
+    document.getElementById('btn-accept-outline-accept')?.addEventListener('click', () => {
+      this._acceptEditedOutlineAndGenerate();
     });
-    document.getElementById('btn-ch-outline-accept')?.addEventListener('click', () => {
-      this._acceptChapterOutline();
-    });
-    document.getElementById('btn-ch-outline-rethink')?.addEventListener('click', () => {
-      const area = document.getElementById('ch-outline-rethink-area');
+    document.getElementById('btn-accept-outline-rethink')?.addEventListener('click', () => {
+      const area = document.getElementById('accept-outline-rethink-area');
       if (area) {
         area.style.display = area.style.display === 'none' ? '' : 'none';
-        const prompt = document.getElementById('ch-outline-rethink-prompt');
+        const prompt = document.getElementById('accept-outline-rethink-prompt');
         if (prompt) { prompt.value = ''; prompt.focus(); }
       }
     });
-    document.getElementById('btn-ch-outline-rethink-submit')?.addEventListener('click', () => {
-      this._submitChapterOutlineRethink();
-    });
-    // Close popup when clicking the dark backdrop
-    document.getElementById('ch-outline-popup')?.addEventListener('click', (e) => {
-      if (e.target.id === 'ch-outline-popup') this._hideChapterOutlinePopup();
+    document.getElementById('btn-accept-outline-rethink-submit')?.addEventListener('click', () => {
+      this._submitAcceptOutlineRethink();
     });
 
     // Import project — landing page
@@ -6078,42 +5922,134 @@ class App {
 
   _showAcceptOutlineConfirmation() {
     const overlay = document.getElementById('accept-outline-overlay');
-    if (overlay) overlay.classList.add('visible');
+    if (!overlay) return;
+
+    // Populate the chapter outline in the right column
+    const titleEl = document.getElementById('accept-outline-ch-title');
+    const textEl = document.getElementById('accept-outline-text');
+    const sceneTitleEl = document.getElementById('scene-title');
+    const chTitle = sceneTitleEl?.textContent || 'Current Chapter';
+
+    if (titleEl) titleEl.textContent = `Outline: ${chTitle}`;
+    if (textEl) textEl.value = this._currentChapterOutline || '(No outline for this chapter)';
+
+    // Reset rethink area
+    const rethinkArea = document.getElementById('accept-outline-rethink-area');
+    if (rethinkArea) rethinkArea.style.display = 'none';
+
+    overlay.classList.add('visible');
   }
 
-  async _acceptChapterOutlineAndGenerate() {
-    // Close the confirmation modal
+  _closeAcceptOutlineDialog() {
     const overlay = document.getElementById('accept-outline-overlay');
     if (overlay) overlay.classList.remove('visible');
+  }
 
-    // Ensure we have a current chapter with an outline
+  /**
+   * "Accept Outline" button inside the Before You Generate dialog.
+   * Saves any edits the user made to the outline, then triggers generation.
+   */
+  async _acceptEditedOutlineAndGenerate() {
+    // Save any edits from the textarea
+    const textEl = document.getElementById('accept-outline-text');
+    const editedOutline = textEl?.value?.trim();
+    if (editedOutline && editedOutline !== this._currentChapterOutline) {
+      this._currentChapterOutline = editedOutline;
+      if (this.state.currentChapterId) {
+        await this.fs.updateChapter(this.state.currentChapterId, { outline: editedOutline });
+      }
+    }
+
+    this._closeAcceptOutlineDialog();
+
     if (!this.state.currentChapterId) {
       alert('Please select a chapter first.');
       return;
     }
-
     if (!this._currentChapterOutline) {
       alert('The current chapter has no outline. Generate outlines first via Structure.');
       return;
     }
-
     if (!this.generator.hasApiKey()) {
       alert('Set your Anthropic API key in Settings first.');
       return;
     }
 
-    // Open the generate panel with outline pre-filled, then auto-trigger generation
     await this.openGeneratePanel();
-
-    // Auto-fill the plot field with the chapter outline if not already set
     const plotEl = document.getElementById('generate-plot');
     if (plotEl && !plotEl.value?.trim()) {
       plotEl.value = this._currentChapterOutline;
     }
-
-    // Close the modal and trigger generation
     this._closeSetupBookModal();
     await this._runGeneration();
+  }
+
+  async _acceptChapterOutlineAndGenerate() {
+    // Legacy: "Continue" button — same behavior as Accept Outline
+    await this._acceptEditedOutlineAndGenerate();
+  }
+
+  /**
+   * "Rethink" flow inside the Before You Generate dialog.
+   * Sends user instructions to the AI to revise the chapter outline.
+   */
+  async _submitAcceptOutlineRethink() {
+    const promptEl = document.getElementById('accept-outline-rethink-prompt');
+    const userInstructions = promptEl?.value?.trim();
+    if (!userInstructions) {
+      alert('Please enter instructions for how to revise the outline.');
+      return;
+    }
+
+    if (!this.state.currentChapterId) return;
+    const chapter = await this.fs.getChapter(this.state.currentChapterId);
+    if (!chapter?.outline) return;
+
+    const project = this._currentProject;
+    const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
+    const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId) || [];
+    let notes = projectNotes.map(n => {
+      let entry = n.title;
+      if (n.content) entry += '\n' + n.content;
+      return entry;
+    }).join('\n\n');
+
+    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+
+    // Show spinner, disable button
+    document.getElementById('accept-outline-rethink-status').style.display = '';
+    document.getElementById('btn-accept-outline-rethink-submit').disabled = true;
+
+    try {
+      const revisedOutline = await this.generator.rethinkOutline({
+        currentOutline: chapter.outline,
+        chapterTitle: chapter.title,
+        userInstructions,
+        bookTitle: project?.title || '',
+        genre: genreInfo?.label || '',
+        characters,
+        notes
+      });
+
+      if (revisedOutline) {
+        await this.fs.updateChapter(this.state.currentChapterId, { outline: revisedOutline });
+        this._currentChapterOutline = revisedOutline;
+
+        // Update the textarea with the revised outline
+        const textEl = document.getElementById('accept-outline-text');
+        if (textEl) textEl.value = revisedOutline;
+
+        // Hide rethink area, clear prompt
+        document.getElementById('accept-outline-rethink-area').style.display = 'none';
+        promptEl.value = '';
+      }
+    } catch (err) {
+      console.error('Outline rethink failed:', err);
+      alert('Rethink failed: ' + err.message);
+    } finally {
+      document.getElementById('accept-outline-rethink-status').style.display = 'none';
+      document.getElementById('btn-accept-outline-rethink-submit').disabled = false;
+    }
   }
 
   async _openCharacterEditor(charId) {

@@ -956,39 +956,6 @@
   </div>
 </div>
 
-<!-- ===== Single Chapter Outline Popup ===== -->
-<div class="ch-outline-popup-overlay" id="ch-outline-popup">
-  <div class="ch-outline-popup-modal">
-    <div class="ch-outline-popup-header">
-      <h2 id="ch-outline-popup-title">Chapter Outline</h2>
-      <button class="panel-close" id="btn-ch-outline-close" aria-label="Close">&times;</button>
-    </div>
-    <div class="ch-outline-popup-body">
-      <textarea class="ch-outline-popup-text" id="ch-outline-popup-text" rows="12"></textarea>
-    </div>
-    <div class="ch-outline-popup-footer">
-      <button class="btn btn-primary" id="btn-ch-outline-accept">Accept Outline</button>
-      <button class="btn" id="btn-ch-outline-rethink" style="background:#dc3545;color:#fff;border-color:#dc3545;">Rethink</button>
-    </div>
-    <div class="ch-outline-popup-rethink" id="ch-outline-rethink-area" style="display:none;">
-      <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:10px;">
-        Describe what to add, remove, or change. The AI will revise this chapter's outline.
-      </p>
-      <textarea class="form-input" id="ch-outline-rethink-prompt" rows="3"
-        placeholder='e.g. "Add more conflict" or "Remove the subplot about..." or "Make the ending darker"'></textarea>
-      <div id="ch-outline-rethink-status" style="display:none;margin-top:10px;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div class="generate-spinner"></div>
-          <span style="font-size:0.85rem;color:var(--accent-primary);">Rethinking outline...</span>
-        </div>
-      </div>
-      <div style="margin-top:12px;display:flex;gap:8px;">
-        <button class="btn btn-primary" id="btn-ch-outline-rethink-submit">Finished</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- ===== New Project Help Modal ===== -->
 <div class="modal-overlay" id="new-project-help-overlay">
   <div class="modal new-project-help-modal">
@@ -1168,27 +1135,56 @@
 
 <!-- ===== Accept Chapter Outline Confirmation Modal ===== -->
 <div class="modal-overlay" id="accept-outline-overlay">
-  <div class="modal" style="width:min(440px, 90vw);">
+  <div class="modal" style="width:min(900px, 95vw);max-height:90vh;">
     <div class="modal-header">
       <h2>Before You Generate</h2>
     </div>
-    <div class="modal-body">
-      <p style="font-size:0.9rem;color:var(--text-secondary);line-height:1.5;">
-        Before generating prose, please confirm you have completed the following:
-      </p>
-      <p style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:14px 0 4px 0;">AI Fields</p>
-      <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:0 0 0 16px;">
-        <li>Characters and their profiles</li>
-        <li>Project notes and world-building details</li>
-        <li>AI instructions and writing preferences</li>
-        <li>Genre and style settings</li>
-      </ul>
-      <p style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:14px 0 4px 0;">Book Setup</p>
-      <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:0 0 0 16px;">
-        <li>Book title and word count goal</li>
-        <li>Story structure template</li>
-        <li>Voice and point of view</li>
-      </ul>
+    <div class="accept-outline-columns">
+      <!-- Left column: checklist -->
+      <div class="accept-outline-left">
+        <p style="font-size:0.9rem;color:var(--text-secondary);line-height:1.5;">
+          Please confirm you have completed the following:
+        </p>
+        <p style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:14px 0 4px 0;">AI Fields</p>
+        <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:0 0 0 16px;">
+          <li>Characters and their profiles</li>
+          <li>Project notes and world-building details</li>
+          <li>AI instructions and writing preferences</li>
+          <li>Genre and style settings</li>
+        </ul>
+        <p style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:14px 0 4px 0;">Book Setup</p>
+        <ul style="font-size:0.85rem;color:var(--text-secondary);line-height:1.8;margin:0 0 0 16px;">
+          <li>Book title and word count goal</li>
+          <li>Story structure template</li>
+          <li>Voice and point of view</li>
+        </ul>
+      </div>
+      <!-- Right column: chapter outline -->
+      <div class="accept-outline-right">
+        <h3 id="accept-outline-ch-title" style="font-family:var(--font-serif);font-size:1.05rem;color:var(--accent-primary);margin-bottom:10px;">Chapter Outline</h3>
+        <textarea class="accept-outline-textarea" id="accept-outline-text" rows="10"
+          placeholder="No outline available for this chapter."></textarea>
+        <div class="accept-outline-btn-row">
+          <button class="btn btn-primary" id="btn-accept-outline-accept">Accept Outline</button>
+          <button class="btn" id="btn-accept-outline-rethink" style="background:#dc3545;color:#fff;border-color:#dc3545;">Rethink</button>
+        </div>
+        <div class="accept-outline-rethink-area" id="accept-outline-rethink-area" style="display:none;">
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;">
+            Describe what to add, remove, or change:
+          </p>
+          <textarea class="form-input" id="accept-outline-rethink-prompt" rows="3"
+            placeholder='e.g. "Add more conflict" or "Remove the subplot about..." or "Make the ending darker"'></textarea>
+          <div id="accept-outline-rethink-status" style="display:none;margin-top:10px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="generate-spinner"></div>
+              <span style="font-size:0.85rem;color:var(--accent-primary);">Rethinking outline...</span>
+            </div>
+          </div>
+          <div style="margin-top:10px;">
+            <button class="btn btn-primary" id="btn-accept-outline-rethink-submit">Finished</button>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn" id="btn-accept-outline-cancel">Cancel</button>
