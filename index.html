@@ -530,6 +530,35 @@
       <!-- ═══ Tab: AI Writer ═══ -->
       <div class="setup-tab-content" id="setup-tab-ai-writer">
         <div class="analysis-section">
+          <h3>Multi-Agent Writing</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Deploy multiple AI writing agents to generate competing drafts, then collaborate on selecting and improving the best one.
+            A judge agent evaluates all candidates, and chapter agents check for continuity conflicts (GO/NO-GO).
+          </p>
+          <div class="setup-form-row">
+            <div class="form-group">
+              <label data-tooltip="Number of Writing Agents — How many parallel AI agents will generate competing prose drafts. More agents = more diversity but higher API cost. Each agent writes with a different creative 'temperature' for variety.">Writing Agents</label>
+              <select class="form-input" id="bs-agent-count">
+                <option value="1">1 — Single agent (standard)</option>
+                <option value="2">2 — Dual agent</option>
+                <option value="3" selected>3 — Triple agent (recommended)</option>
+                <option value="4">4 — Quad agent</option>
+                <option value="5">5 — Full squad</option>
+              </select>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">More agents = better selection but higher API usage. 1 = standard mode (no multi-agent).</p>
+            </div>
+            <div class="form-group">
+              <label data-tooltip="Chapter Agents — When enabled, each chapter maintains a continuity agent that tracks every detail (characters, locations, timeline, plot points). Before new prose is accepted, all chapter agents are polled for conflicts — like NASA launch control GO/NO-GO.">Chapter Agents</label>
+              <select class="form-input" id="bs-chapter-agents">
+                <option value="enabled" selected>Enabled (GO/NO-GO checks)</option>
+                <option value="disabled">Disabled</option>
+              </select>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Continuity guardians that check for conflicts across chapters before accepting new prose.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="analysis-section">
           <h3>AI Outline Generation</h3>
           <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
             Generate a detailed outline for each chapter based on your notes, characters, and book structure.
@@ -861,6 +890,81 @@
       </div>
 
       <button class="btn btn-sm" id="btn-iterative-cancel" style="min-width:100px;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Multi-Agent Progress Overlay ===== -->
+<div class="modal-overlay" id="multi-agent-overlay" style="display:none;">
+  <div class="modal" style="width:min(520px, 92vw);">
+    <div class="modal-body" style="padding:28px 24px;text-align:center;">
+      <div style="font-size:1rem;font-weight:700;color:var(--text-primary);margin-bottom:4px;">Multi-Agent Pipeline</div>
+      <div id="ma-phase-label" style="font-size:0.85rem;font-weight:600;color:var(--accent-primary);margin-bottom:16px;">Deploying writing agents&hellip;</div>
+
+      <!-- Agent Status Grid -->
+      <div id="ma-agent-grid" class="ma-agent-grid">
+        <!-- Populated dynamically -->
+      </div>
+
+      <!-- Pipeline Progress -->
+      <div style="margin:16px 0 8px;">
+        <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text-muted);margin-bottom:6px;">
+          <span>Generate</span>
+          <span>Judge</span>
+          <span>Fix</span>
+          <span>Edit</span>
+          <span>GO/NO-GO</span>
+        </div>
+        <div class="ma-pipeline-bar">
+          <div id="ma-pipeline-fill" class="ma-pipeline-fill" style="width:0%;"></div>
+        </div>
+      </div>
+
+      <!-- Status Log -->
+      <div id="ma-status-log" class="ma-status-log">
+        Initializing multi-agent pipeline&hellip;
+      </div>
+
+      <button class="btn btn-sm" id="btn-ma-cancel" style="min-width:100px;margin-top:12px;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== GO/NO-GO Mission Control Overlay ===== -->
+<div class="modal-overlay" id="go-nogo-overlay" style="display:none;">
+  <div class="modal" style="width:min(560px, 92vw);">
+    <div class="modal-body" style="padding:0;">
+      <div class="go-nogo-header">
+        <div class="go-nogo-title">MISSION CONTROL</div>
+        <div class="go-nogo-subtitle">GO / NO-GO Check</div>
+      </div>
+
+      <div style="padding:20px 24px;">
+        <!-- Chapter Agent Results -->
+        <div id="go-nogo-results" class="go-nogo-results">
+          <!-- Populated dynamically -->
+        </div>
+
+        <!-- Overall Status -->
+        <div id="go-nogo-status" class="go-nogo-overall">
+          <div id="go-nogo-status-icon" class="go-nogo-status-icon">&#x2714;</div>
+          <div id="go-nogo-status-text" class="go-nogo-status-text">ALL SYSTEMS GO</div>
+        </div>
+
+        <!-- Conflict Details (shown when NO-GO) -->
+        <div id="go-nogo-conflicts" style="display:none;margin-top:16px;">
+          <h4 style="font-size:0.85rem;color:var(--danger);margin-bottom:8px;">Conflicts Detected</h4>
+          <div id="go-nogo-conflict-list" class="go-nogo-conflict-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;">
+          <button class="btn btn-primary" id="btn-go-nogo-accept" style="min-width:140px;">Accept Prose</button>
+          <button class="btn" id="btn-go-nogo-reject" style="min-width:140px;display:none;">Reject &amp; Regenerate</button>
+          <button class="btn" id="btn-go-nogo-override" style="min-width:140px;display:none;">Override NO-GO</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>

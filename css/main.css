@@ -4087,3 +4087,255 @@ select.form-input {
     border-radius: 0;
   }
 }
+
+/* ============================================
+   Multi-Agent Pipeline Styles
+   ============================================ */
+
+/* Agent Status Grid */
+.ma-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ma-agent-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px;
+  text-align: center;
+  transition: border-color 0.3s, background 0.3s;
+}
+
+.ma-agent-card.agent-writing {
+  border-color: var(--accent-primary);
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.ma-agent-card.agent-done {
+  border-color: var(--success);
+  background: rgba(52, 199, 89, 0.08);
+}
+
+.ma-agent-card.agent-error {
+  border-color: var(--danger);
+  background: rgba(255, 59, 48, 0.08);
+}
+
+.ma-agent-card.agent-winner {
+  border-color: #FFD700;
+  background: rgba(255, 215, 0, 0.12);
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+}
+
+.ma-agent-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.ma-agent-status {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.ma-agent-score {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 4px;
+}
+
+/* Pipeline Progress Bar */
+.ma-pipeline-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ma-pipeline-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), #34C759);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+/* Status Log */
+.ma-status-log {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  max-height: 120px;
+  overflow-y: auto;
+  text-align: left;
+  padding: 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  margin-top: 12px;
+  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ============================================
+   GO/NO-GO Mission Control Styles
+   ============================================ */
+
+.go-nogo-header {
+  background: linear-gradient(135deg, #0a1628, #162544);
+  padding: 20px 24px;
+  text-align: center;
+  border-bottom: 2px solid #1e3a5f;
+}
+
+.go-nogo-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #e0e6ed;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+.go-nogo-subtitle {
+  font-size: 0.8rem;
+  color: #6b8bb5;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+.go-nogo-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.go-nogo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--border-color);
+  transition: border-color 0.3s;
+}
+
+.go-nogo-row.status-go {
+  border-left-color: #34C759;
+}
+
+.go-nogo-row.status-nogo {
+  border-left-color: #FF3B30;
+}
+
+.go-nogo-row.status-polling {
+  border-left-color: var(--accent-primary);
+}
+
+.go-nogo-chapter-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.go-nogo-chapter-status {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.go-nogo-chapter-status.go {
+  color: #34C759;
+  background: rgba(52, 199, 89, 0.12);
+}
+
+.go-nogo-chapter-status.nogo {
+  color: #FF3B30;
+  background: rgba(255, 59, 48, 0.12);
+}
+
+.go-nogo-chapter-status.polling {
+  color: var(--accent-primary);
+  background: rgba(0, 122, 255, 0.12);
+}
+
+.go-nogo-overall {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  border-radius: var(--radius-md);
+  background: rgba(52, 199, 89, 0.08);
+  border: 1px solid rgba(52, 199, 89, 0.3);
+}
+
+.go-nogo-overall.status-nogo {
+  background: rgba(255, 59, 48, 0.08);
+  border-color: rgba(255, 59, 48, 0.3);
+}
+
+.go-nogo-status-icon {
+  font-size: 1.5rem;
+  color: #34C759;
+}
+
+.go-nogo-overall.status-nogo .go-nogo-status-icon {
+  color: #FF3B30;
+}
+
+.go-nogo-status-text {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #34C759;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.go-nogo-overall.status-nogo .go-nogo-status-text {
+  color: #FF3B30;
+}
+
+.go-nogo-conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.go-nogo-conflict-item {
+  padding: 10px 12px;
+  background: rgba(255, 59, 48, 0.05);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid #FF3B30;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.go-nogo-conflict-item .conflict-category {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.go-nogo-conflict-item .conflict-detail {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

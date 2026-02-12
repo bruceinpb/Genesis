@@ -16,6 +16,7 @@ import { Editor } from './editor.js';
 import { ProseGenerator } from './generate.js';
 import { ErrorDatabase } from './error-database.js';
 import { CoverEditor } from './cover-editor.js';
+import { MultiAgentOrchestrator } from './multi-agent.js';
 
 class App {
   constructor() {
@@ -29,6 +30,7 @@ class App {
     this.generator = null;
     this.errorDb = null;
     this.coverEditor = null;
+    this.orchestrator = null;
 
     this.state = {
       currentUser: null,
@@ -74,6 +76,8 @@ class App {
       this.exporter = new ExportManager(this.fs);
       this.generator = new ProseGenerator(this.localStorage);
       await this.generator.init();
+      this.orchestrator = new MultiAgentOrchestrator(this.generator, this.localStorage);
+      this.orchestrator.onStatus((phase, message, data) => this._onMultiAgentStatus(phase, message, data));
       this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
 
       // One-time cleanup of duplicate error patterns from old problem-based keying
@@ -1054,7 +1058,433 @@ class App {
     setTimeout(() => document.getElementById('generate-plot')?.focus(), 300);
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //  MULTI-AGENT PIPELINE METHODS
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle status updates from the MultiAgentOrchestrator.
+   * Updates the multi-agent overlay UI in real time.
+   */
+  _onMultiAgentStatus(phase, message, data = {}) {
+    // Update log
+    const logEl = document.getElementById('ma-status-log');
+    if (logEl) {
+      logEl.textContent += '\n' + message;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Update phase label
+    const phaseEl = document.getElementById('ma-phase-label');
+
+    // Update pipeline progress bar based on phase
+    const fillEl = document.getElementById('ma-pipeline-fill');
+    const progressMap = {
+      'generating': 10, 'agent-started': 15, 'agent-done': 25,
+      'generation-complete': 30, 'judging': 40, 'judging-complete': 55,
+      'fixing': 60, 'fixing-complete': 70, 'editing': 75, 'editing-complete': 85,
+      'digests': 86, 'digest-building': 88, 'digests-complete': 90,
+      'go-nogo-start': 90, 'go-nogo-polling': 92, 'go-nogo-chapter': 95,
+      'go-nogo-complete': 100
+    };
+    if (fillEl && progressMap[phase]) {
+      fillEl.style.width = progressMap[phase] + '%';
+    }
+
+    // Update agent grid cards
+    const grid = document.getElementById('ma-agent-grid');
+    if (phase === 'agent-started' && data.agentId && grid) {
+      const card = document.getElementById(`ma-agent-${data.agentId}`);
+      if (card) {
+        card.className = 'ma-agent-card agent-writing';
+        card.querySelector('.ma-agent-status').textContent = 'Writing...';
+      }
+    }
+    if (phase === 'agent-done' && data.agentId && grid) {
+      const card = document.getElementById(`ma-agent-${data.agentId}`);
+      if (card) {
+        card.className = 'ma-agent-card agent-done';
+        card.querySelector('.ma-agent-status').textContent = 'Done';
+      }
+    }
+    if (phase === 'agent-error' && data.agentId && grid) {
+      const card = document.getElementById(`ma-agent-${data.agentId}`);
+      if (card) {
+        card.className = 'ma-agent-card agent-error';
+        card.querySelector('.ma-agent-status').textContent = 'Failed';
+      }
+    }
+
+    // Mark winner
+    if (phase === 'judging-complete' && data.winnerId && grid) {
+      const card = document.getElementById(`ma-agent-${data.winnerId}`);
+      if (card) {
+        card.className = 'ma-agent-card agent-winner';
+        card.querySelector('.ma-agent-status').textContent = 'WINNER';
+      }
+      // Show scores on all agent cards
+      if (data.report?.scores) {
+        for (const s of data.report.scores) {
+          const c = document.getElementById(`ma-agent-${s.agentId}`);
+          if (c) {
+            const scoreEl = c.querySelector('.ma-agent-score');
+            if (scoreEl) scoreEl.textContent = s.totalScore + '/100';
+          }
+        }
+      }
+    }
+
+    // Phase labels
+    if (phaseEl) {
+      const phaseLabels = {
+        'generating': 'Deploying writing agents...',
+        'generation-complete': 'All agents complete. Judging...',
+        'judging': 'Judge evaluating candidates...',
+        'judging-complete': 'Best candidate selected.',
+        'fixing': 'Collaborating on improvements...',
+        'fixing-complete': 'Fix plan ready.',
+        'editing': 'Editor applying fixes...',
+        'editing-complete': 'Fixes applied.',
+        'digests': 'Building chapter digests...',
+        'go-nogo-start': 'GO/NO-GO sequence initiated...',
+        'go-nogo-polling': 'Polling chapter agents...',
+        'go-nogo-complete': data.overallStatus === 'GO' ? 'ALL SYSTEMS GO' : 'CONFLICT DETECTED'
+      };
+      if (phaseLabels[phase]) phaseEl.textContent = phaseLabels[phase];
+    }
+  }
+
+  /**
+   * Show/hide the multi-agent progress overlay.
+   */
+  _showMultiAgentOverlay(show, agentCount = 3) {
+    const overlay = document.getElementById('multi-agent-overlay');
+    if (!overlay) return;
+
+    if (show) {
+      // Reset overlay state
+      const logEl = document.getElementById('ma-status-log');
+      if (logEl) logEl.textContent = 'Initializing multi-agent pipeline...';
+
+      const fillEl = document.getElementById('ma-pipeline-fill');
+      if (fillEl) fillEl.style.width = '0%';
+
+      const phaseEl = document.getElementById('ma-phase-label');
+      if (phaseEl) phaseEl.textContent = 'Deploying writing agents...';
+
+      // Build agent grid
+      const grid = document.getElementById('ma-agent-grid');
+      if (grid) {
+        const labels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold'];
+        grid.innerHTML = '';
+        for (let i = 1; i <= agentCount; i++) {
+          const card = document.createElement('div');
+          card.className = 'ma-agent-card';
+          card.id = `ma-agent-${i}`;
+          card.innerHTML = `
+            <div class="ma-agent-label">Agent ${i}</div>
+            <div class="ma-agent-status">${labels[i - 1] || 'Agent'}</div>
+            <div class="ma-agent-score"></div>
+          `;
+          grid.appendChild(card);
+        }
+      }
+
+      overlay.style.display = 'flex';
+    } else {
+      overlay.style.display = 'none';
+    }
+  }
+
+  /**
+   * Show the GO/NO-GO overlay with results.
+   */
+  _showGoNoGoOverlay(goNoGoResult, onAccept, onReject, onOverride) {
+    const overlay = document.getElementById('go-nogo-overlay');
+    if (!overlay) return;
+
+    const resultsEl = document.getElementById('go-nogo-results');
+    const statusEl = document.getElementById('go-nogo-status');
+    const statusIcon = document.getElementById('go-nogo-status-icon');
+    const statusText = document.getElementById('go-nogo-status-text');
+    const conflictsSection = document.getElementById('go-nogo-conflicts');
+    const conflictList = document.getElementById('go-nogo-conflict-list');
+    const acceptBtn = document.getElementById('btn-go-nogo-accept');
+    const rejectBtn = document.getElementById('btn-go-nogo-reject');
+    const overrideBtn = document.getElementById('btn-go-nogo-override');
+
+    // Build chapter rows
+    if (resultsEl) {
+      resultsEl.innerHTML = '';
+      for (const r of goNoGoResult.results) {
+        const row = document.createElement('div');
+        const statusClass = r.status === 'GO' ? 'status-go' : 'status-nogo';
+        row.className = `go-nogo-row ${statusClass}`;
+        row.innerHTML = `
+          <div class="go-nogo-chapter-name">${r.chapterTitle}</div>
+          <div class="go-nogo-chapter-status ${r.status === 'GO' ? 'go' : 'nogo'}">${r.status}</div>
+        `;
+        resultsEl.appendChild(row);
+      }
+    }
+
+    // Overall status
+    const isGo = goNoGoResult.overallStatus === 'GO';
+    if (statusEl) statusEl.className = `go-nogo-overall ${isGo ? '' : 'status-nogo'}`;
+    if (statusIcon) statusIcon.innerHTML = isGo ? '&#x2714;' : '&#x2718;';
+    if (statusText) statusText.textContent = isGo ? 'ALL SYSTEMS GO' : 'NO-GO — CONFLICTS DETECTED';
+
+    // Show conflicts if NO-GO
+    if (conflictsSection) conflictsSection.style.display = isGo ? 'none' : 'block';
+    if (conflictList && !isGo) {
+      conflictList.innerHTML = '';
+      for (const r of goNoGoResult.results) {
+        for (const c of (r.conflicts || [])) {
+          const item = document.createElement('div');
+          item.className = 'go-nogo-conflict-item';
+          item.innerHTML = `
+            <div class="conflict-category">${r.chapterTitle} — ${c.category} (${c.severity})</div>
+            <div><strong>Established:</strong> ${c.established}</div>
+            <div><strong>Contradicted:</strong> ${c.contradicted}</div>
+            <div class="conflict-detail">Suggestion: ${c.suggestion}</div>
+          `;
+          conflictList.appendChild(item);
+        }
+      }
+    }
+
+    // Buttons
+    if (acceptBtn) {
+      acceptBtn.style.display = isGo ? '' : 'none';
+      acceptBtn.onclick = () => { overlay.style.display = 'none'; if (onAccept) onAccept(); };
+    }
+    if (rejectBtn) {
+      rejectBtn.style.display = isGo ? 'none' : '';
+      rejectBtn.onclick = () => { overlay.style.display = 'none'; if (onReject) onReject(); };
+    }
+    if (overrideBtn) {
+      overrideBtn.style.display = isGo ? 'none' : '';
+      overrideBtn.onclick = () => { overlay.style.display = 'none'; if (onOverride) onOverride(); };
+    }
+
+    overlay.style.display = 'flex';
+  }
+
+  /**
+   * Run the full multi-agent generation pipeline.
+   * Called from _runGeneration when agentCount > 1.
+   */
+  async _runMultiAgentGeneration(options = {}) {
+    const project = this._currentProject;
+    if (!project) return;
+    if (!this.generator.hasApiKey()) {
+      alert('No API key set. Go to Settings to add your Anthropic API key.');
+      return;
+    }
+
+    // Gather settings (same as _runGeneration)
+    let plot, wordTarget, tone, style, useCharacters, useNotes;
+    if (options.isContinuation && this._lastGenSettings) {
+      plot = this._lastGenSettings.plot;
+      wordTarget = options.wordTarget || this._lastGenSettings.wordTarget;
+      tone = this._lastGenSettings.tone;
+      style = this._lastGenSettings.style;
+      useCharacters = this._lastGenSettings.useCharacters;
+      useNotes = this._lastGenSettings.useNotes;
+    } else {
+      plot = document.getElementById('generate-plot')?.value?.trim();
+      if (!plot) { alert('Please enter a story plot or description.'); return; }
+      wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 1000;
+      tone = document.getElementById('generate-tone')?.value?.trim() || '';
+      style = document.getElementById('generate-style')?.value?.trim() || '';
+      useCharacters = document.getElementById('generate-use-characters')?.checked;
+      useNotes = document.getElementById('generate-use-notes')?.checked;
+    }
+
+    const existingContent = this.editor.getContent();
+    this._preGenerationContent = existingContent;
+
+    let characters = [];
+    if (useCharacters && this.state.currentProjectId) {
+      characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
+    }
+
+    let notes = '';
+    if (useNotes && this.state.currentProjectId) {
+      const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId);
+      if (projectNotes.length > 0) {
+        notes = projectNotes.map(n => {
+          let entry = n.title;
+          if (n.type && n.type !== 'general') entry = `[${n.type}] ${entry}`;
+          if (n.content) entry += '\n' + n.content;
+          return entry;
+        }).join('\n\n');
+      }
+    }
+
+    const knowledgePromptMain = await this._getProjectKnowledge();
+    if (knowledgePromptMain) {
+      notes = notes ? notes + '\n\n' + knowledgePromptMain : knowledgePromptMain;
+    }
+
+    const aiInstructions = project.aiInstructions || '';
+    this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes };
+
+    let chapterTitle = '';
+    if (this.state.currentChapterId) {
+      try {
+        const chapter = await this.fs.getChapter(this.state.currentChapterId);
+        if (chapter) chapterTitle = chapter.title;
+      } catch (_) {}
+    }
+
+    const genreId = project.genre || '';
+    const subgenreId = project.subgenre || '';
+    const genreInfo = this._getGenreRules(genreId, subgenreId);
+    const genre = genreInfo ? genreInfo.label : '';
+    const genreRules = genreInfo ? genreInfo.rules : '';
+
+    // Load error patterns
+    let errorPatternsPrompt = '';
+    if (this.errorDb) {
+      try {
+        errorPatternsPrompt = await this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 });
+      } catch (_) {}
+    }
+
+    // Build the prompts using the generator's existing methods
+    const systemPrompt = this.generator._buildSystemPrompt({
+      tone, style, genre, genreRules,
+      voice: project.voice || '',
+      errorPatternsPrompt,
+      poetryLevel: project.poetryLevel || 3,
+      authorPalette: project.authorPalette || ''
+    });
+
+    const chapterOutline = this._currentChapterOutline || '';
+    const userPrompt = this.generator._buildUserPrompt({
+      plot, existingContent, chapterTitle, characters, notes,
+      aiInstructions, chapterOutline, wordTarget,
+      concludeStory: options.concludeStory || false,
+      genre, genreRules,
+      projectGoal: project.wordCountGoal || 0
+    });
+
+    const agentCount = project.agentCount || 3;
+    const chapterAgentsEnabled = project.chapterAgentsEnabled !== false;
+    this.orchestrator.configure({ agentCount, chapterAgentsEnabled });
+
+    // Close panels and show multi-agent overlay
+    this._showContinueBar(false);
+    this._closeAcceptOutlineDialog();
+    this._closeAllPanels();
+    this._hideWelcome();
+    this._generateCancelled = false;
+    this._showMultiAgentOverlay(true, agentCount);
+
+    const errEl = document.getElementById('generate-error');
+    if (errEl) { errEl.style.display = 'none'; }
+
+    // Get all chapters for GO/NO-GO
+    let chapters = [];
+    try {
+      chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    } catch (_) {}
+
+    try {
+      const maxTokens = Math.min(Math.ceil(wordTarget * 1.5), 8192);
+
+      const result = await this.orchestrator.runFullPipeline({
+        systemPrompt, userPrompt, maxTokens,
+        genre, voice: project.voice || '',
+        authorPalette: project.authorPalette || '',
+        qualityThreshold: project.qualityThreshold || 90,
+        currentChapterId: this.state.currentChapterId,
+        currentChapterTitle: chapterTitle,
+        chapters
+      });
+
+      this._showMultiAgentOverlay(false);
+
+      if (this._generateCancelled) return;
+
+      // Handle GO/NO-GO result
+      const goResult = result.goNoGoResult;
+
+      if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
+        // Show GO/NO-GO overlay and wait for user decision
+        await new Promise((resolve) => {
+          this._showGoNoGoOverlay(goResult,
+            // Accept (override)
+            () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
+            // Reject
+            () => { resolve(); },
+            // Override
+            () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); }
+          );
+        });
+      } else if (goResult && goResult.overallStatus === 'GO' && !goResult.skipped) {
+        // Show brief GO confirmation, then insert
+        this._showGoNoGoOverlay(goResult,
+          () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); },
+          null, null
+        );
+      } else {
+        // No GO/NO-GO (skipped) — insert directly
+        this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
+      }
+
+      this._showContinueBar(true);
+
+      // Score the final prose
+      if (result.prose && result.prose.length > 100) {
+        this._scoreProse(result.prose);
+      }
+
+    } catch (err) {
+      this._showMultiAgentOverlay(false);
+      if (err.name === 'AbortError') return;
+      console.error('Multi-agent pipeline failed:', err);
+      if (errEl) {
+        errEl.style.display = 'block';
+        errEl.textContent = 'Multi-agent pipeline: ' + err.message;
+      }
+      this._showSetupBookModal();
+      this._switchSetupTab('ai-writer');
+    }
+  }
+
+  /**
+   * Insert multi-agent generated prose into the editor.
+   */
+  _insertMultiAgentProse(prose, existingContent, chapterTitle) {
+    const editorEl = this.editor.element;
+    const startingContent = existingContent.trim() ? existingContent : '';
+    const paragraphs = prose.split('\n\n');
+    const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+    editorEl.innerHTML = startingContent + newHtml;
+    editorEl.innerHTML = this._formatGeneratedHtml(editorEl.innerHTML, chapterTitle);
+
+    // Save
+    const content = this.editor.getContent();
+    if (this.state.currentChapterId) {
+      this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+      this._updateLocalWordCounts(content);
+    }
+
+    // Update word count display
+    const wc = editorEl.textContent.match(/[a-zA-Z'''\u2019-]+/g) || [];
+    const wordsEl = document.getElementById('status-words');
+    if (wordsEl) wordsEl.textContent = wc.length.toLocaleString();
+  }
+
   async _runGeneration(options = {}) {
+    // Route to multi-agent pipeline if agentCount > 1
+    const agentCount = this._currentProject?.agentCount || 1;
+    if (agentCount > 1 && !options.isContinuation) {
+      return this._runMultiAgentGeneration(options);
+    }
+
     let plot, wordTarget, tone, style, useCharacters;
     if (options.isContinuation && this._lastGenSettings) {
       plot = this._lastGenSettings.plot;
@@ -2746,6 +3176,12 @@ class App {
     const authorPaletteEl = document.getElementById('bs-author-palette');
     if (authorPaletteEl) authorPaletteEl.value = project.authorPalette || '';
 
+    // Populate Multi-Agent settings
+    const agentCountEl = document.getElementById('bs-agent-count');
+    if (agentCountEl) agentCountEl.value = project.agentCount || 1;
+    const chapterAgentsEl = document.getElementById('bs-chapter-agents');
+    if (chapterAgentsEl) chapterAgentsEl.value = project.chapterAgentsEnabled === false ? 'disabled' : 'enabled';
+
     // Populate AI Instructions
     const aiInstructionsEl = document.getElementById('generate-ai-instructions');
     if (aiInstructionsEl) aiInstructionsEl.value = project.aiInstructions || '';
@@ -2910,6 +3346,8 @@ class App {
     const qualityThreshold = Math.max(50, Math.min(100, parseInt(document.getElementById('bs-quality-threshold')?.value) || 90));
     const poetryLevel = parseInt(document.getElementById('bs-poetry-level')?.value) || 3;
     const authorPalette = document.getElementById('bs-author-palette')?.value?.trim() || '';
+    const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
+    const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
 
     // Gather genre, subgenre, and voice from Book Setup tab
     const genre = document.getElementById('bs-genre')?.value || '';
@@ -2931,10 +3369,11 @@ class App {
     try {
       await this.fs.updateProject(this.state.currentProjectId, {
         title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette,
-        genre, subgenre, voice, translationLanguages, frontMatter, backMatter
+        genre, subgenre, voice, translationLanguages, frontMatter, backMatter,
+        agentCount, chapterAgentsEnabled
       });
 
-      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, genre, subgenre, voice, translationLanguages, frontMatter, backMatter };
+      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal, numChapters, qualityThreshold, poetryLevel, authorPalette, genre, subgenre, voice, translationLanguages, frontMatter, backMatter, agentCount, chapterAgentsEnabled };
       document.getElementById('project-title').textContent = title;
       this._updateStatusBarLocal();
       await this.renderChapterNav();
@@ -5466,6 +5905,12 @@ class App {
         this._showIterativeOverlay(false);
         this._showIterativeScoringNotice(false);
         this._setGenerateStatus(false);
+        this._showContinueBar(true);
+      }
+      if (e.target.id === 'btn-ma-cancel') {
+        this._generateCancelled = true;
+        this.orchestrator.cancel();
+        this._showMultiAgentOverlay(false);
         this._showContinueBar(true);
       }
       // Note: btn-iterative-accept and btn-iterative-accept-stop handlers are now
