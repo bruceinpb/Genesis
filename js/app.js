@@ -1452,7 +1452,14 @@ class App {
     } catch (_) {}
 
     try {
-      const maxTokens = Math.min(Math.ceil(wordTarget * 1.5), 8192);
+      // For multi-agent mode, generate the full chapter (words-per-chapter).
+      // wordTarget from the dropdown is chunk size — multi-agent generates the whole thing at once.
+      const projectWpc = Math.round(
+        (project.wordCountGoal || 80000) / (project.numChapters || 20)
+      );
+      const existingWc = (this.editor.getContent().replace(/<[^>]+>/g, '').match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+      const wordsToGenerate = Math.max(wordTarget, projectWpc - existingWc);
+      const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
 
       const result = await this.orchestrator.runFullPipeline({
         systemPrompt, userPrompt, maxTokens,
@@ -1651,10 +1658,21 @@ class App {
     }
 
     // --- Chunked generation with scoring between chunks ---
-    // Break the total word target into scored chunks.
-    // After each chunk, halt and score the prose, then continue.
-    const CHUNK_SIZE = 1000;
-    const maxTokensPerChunk = 4096; // ~1000 words
+    // The dropdown now controls chunk size (words per chunk before scoring).
+    // wordTarget = total words to generate for this chapter.
+    // CHUNK_SIZE = how many words to generate before stopping to score.
+    const CHUNK_SIZE = wordTarget; // wordTarget IS the chunk size from the dropdown
+    const maxTokensPerChunk = Math.min(Math.ceil(CHUNK_SIZE * 4), 8192);
+
+    // Calculate total words needed for this chapter from book structure
+    const projectWpc = Math.round(
+      (this._currentProject?.wordCountGoal || 80000) /
+      (this._currentProject?.numChapters || 20)
+    );
+    // Existing words in editor
+    const existingWordCount = (existingContent.replace(/<[^>]+>/g, '').match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+    const totalWordsNeeded = Math.max(0, projectWpc - existingWordCount);
+
     let wordsGenerated = 0;
     let chunkNum = 0;
     let allStreamedText = '';
@@ -1673,11 +1691,12 @@ class App {
     const thresholdMarkerEl = document.getElementById('iterative-progress-threshold');
     if (thresholdMarkerEl) thresholdMarkerEl.style.left = qualityThresholdDisplay + '%';
     const logEl = document.getElementById('iterative-status-log');
-    if (logEl) logEl.textContent = `Generating ~${wordTarget} words in scored chunks (threshold: ${qualityThresholdDisplay}%)\u2026`;
+    const chunksNeeded = Math.ceil(totalWordsNeeded / CHUNK_SIZE);
+    if (logEl) logEl.textContent = `Chapter: ~${totalWordsNeeded} words in ${chunksNeeded} chunk${chunksNeeded !== 1 ? 's' : ''} of ~${CHUNK_SIZE} words (threshold: ${qualityThresholdDisplay}%)\u2026`;
 
-    while (wordsGenerated < wordTarget && !this._generateCancelled) {
+    while (wordsGenerated < totalWordsNeeded && !this._generateCancelled) {
       chunkNum++;
-      const remaining = wordTarget - wordsGenerated;
+      const remaining = totalWordsNeeded - wordsGenerated;
       const thisChunkTarget = Math.min(CHUNK_SIZE, remaining);
       const isLastChunk = remaining <= CHUNK_SIZE;
 
@@ -2075,7 +2094,7 @@ class App {
       }
 
       // Check if we should stop (close to target or generation cancelled)
-      if (wordsGenerated >= wordTarget * 0.9) break;
+      if (wordsGenerated >= totalWordsNeeded * 0.9) break;
     }
 
     // All chunks done
@@ -3299,6 +3318,7 @@ class App {
     }
 
     this._updateWordsPerChapter();
+    this._updateChunkOptions();
     this._populateExportButtons();
 
     // Populate Settings tab
@@ -3396,6 +3416,60 @@ class App {
     const wpc = Math.round(totalWords / numChapters);
     const el = document.getElementById('bs-words-per-chapter');
     if (el) el.textContent = wpc.toLocaleString();
+  }
+
+  /**
+   * Update the "Chunk Size Before Scoring" dropdown options based on words-per-chapter.
+   * Chunk sizes cannot exceed words-per-chapter. Options are standard sizes up to that limit.
+   */
+  _updateChunkOptions() {
+    const select = document.getElementById('generate-word-target');
+    if (!select) return;
+
+    const project = this._currentProject;
+    const totalWords = project?.wordCountGoal || parseInt(document.getElementById('bs-total-words')?.value) || 80000;
+    const numChapters = project?.numChapters || parseInt(document.getElementById('bs-num-chapters')?.value) || 20;
+    const wpc = Math.round(totalWords / numChapters);
+
+    // Standard chunk sizes, filtered to not exceed words-per-chapter
+    const allSizes = [250, 500, 1000, 1500, 2000, 2500, 3000];
+    const validSizes = allSizes.filter(s => s <= wpc);
+    // Always include at least 250
+    if (validSizes.length === 0) validSizes.push(250);
+    // Add words-per-chapter itself if it's not already in the list and > 250
+    if (wpc > 250 && !validSizes.includes(wpc)) {
+      validSizes.push(wpc);
+      validSizes.sort((a, b) => a - b);
+    }
+
+    // Remember current selection
+    const currentVal = parseInt(select.value) || 500;
+
+    select.innerHTML = validSizes.map(size => {
+      const label = size === wpc
+        ? `~${size.toLocaleString()} (full chapter)`
+        : `~${size.toLocaleString()} words per chunk`;
+      return `<option value="${size}">${label}</option>`;
+    }).join('');
+
+    // Restore selection if still valid, otherwise pick the middle option
+    if (validSizes.includes(currentVal)) {
+      select.value = currentVal;
+    } else {
+      // Pick the closest valid size
+      const closest = validSizes.reduce((prev, curr) =>
+        Math.abs(curr - currentVal) < Math.abs(prev - currentVal) ? curr : prev
+      );
+      select.value = closest;
+    }
+
+    // Update info display
+    const chunkSize = parseInt(select.value) || 500;
+    const chunksNeeded = Math.ceil(wpc / chunkSize);
+    const wpcEl = document.getElementById('chunk-wpc-display');
+    const countEl = document.getElementById('chunk-count-display');
+    if (wpcEl) wpcEl.textContent = wpc.toLocaleString();
+    if (countEl) countEl.textContent = chunksNeeded;
   }
 
   async _saveBookStructure() {
@@ -5766,6 +5840,16 @@ class App {
       }
       if (e.target.id === 'bs-total-words' || e.target.id === 'bs-num-chapters') {
         this._updateWordsPerChapter();
+        this._updateChunkOptions();
+      }
+      // Auto-save agent settings immediately on change
+      if (e.target.id === 'bs-agent-count' || e.target.id === 'bs-chapter-agents') {
+        if (this.state.currentProjectId) {
+          const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
+          const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
+          await this.fs.updateProject(this.state.currentProjectId, { agentCount, chapterAgentsEnabled });
+          this._currentProject = { ...this._currentProject, agentCount, chapterAgentsEnabled };
+        }
       }
       if (e.target.id === 'structure-template-select') {
         await this.localStorage.setSetting('structureTemplate_' + this.state.currentProjectId, e.target.value);
@@ -5779,6 +5863,10 @@ class App {
           const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
           container.innerHTML = this._renderStructureInSettings(guidance, beats, this._currentProject, templateId);
         }
+      }
+      // Update chunk info when chunk size dropdown changes
+      if (e.target.id === 'generate-word-target') {
+        this._updateChunkOptions();
       }
       if (e.target.id === 'setting-project-genre') {
         const genreId = e.target.value;
@@ -5965,15 +6053,6 @@ class App {
           await this.fs.updateProject(this.state.currentProjectId, { aiInstructions: instructions });
           this._currentProject = { ...this._currentProject, aiInstructions: instructions };
           alert('AI instructions saved.');
-        }
-      }
-      // --- Auto-save agent settings on change ---
-      if (e.target.id === 'bs-agent-count' || e.target.id === 'bs-chapter-agents') {
-        if (this.state.currentProjectId) {
-          const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
-          const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
-          await this.fs.updateProject(this.state.currentProjectId, { agentCount, chapterAgentsEnabled });
-          this._currentProject = { ...this._currentProject, agentCount, chapterAgentsEnabled };
         }
       }
       // --- Accept Outline confirmation modal events ---

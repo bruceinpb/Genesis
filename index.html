@@ -626,14 +626,16 @@
         <div class="analysis-section">
           <h3>Options</h3>
           <div class="form-group">
-            <label>Approximate Words</label>
-            <select class="form-input" id="generate-word-target" data-tooltip="Choose how much prose to generate.">
-              <option value="250">~250 (short scene)</option>
-              <option value="500">~500 (short scene)</option>
-              <option value="1000" selected>~1,000 (standard scene)</option>
-              <option value="2000">~2,000 (long scene)</option>
-              <option value="3000">~3,000 (full chapter)</option>
+            <label data-tooltip="Chunk Size Before Scoring — How many words the AI writes before stopping to score and improve the prose. Smaller chunks = more frequent quality checks but slower. Cannot exceed words per chapter. The full chapter is generated in chunks of this size.">Chunk Size Before Scoring</label>
+            <select class="form-input" id="generate-word-target" data-tooltip="How many words to generate per chunk before scoring. Auto-calculated from your book structure.">
+              <option value="250">~250 words per chunk</option>
+              <option value="500" selected>~500 words per chunk</option>
+              <option value="1000">~1,000 words per chunk</option>
             </select>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+              Words per chapter: <strong id="chunk-wpc-display">--</strong> &bull;
+              Chunks needed: <strong id="chunk-count-display">--</strong>
+            </p>
           </div>
           <div class="setup-form-row">
             <div class="form-group">
