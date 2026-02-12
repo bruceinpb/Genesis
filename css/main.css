@@ -2582,65 +2582,93 @@ select.form-input {
    Chapter Outline Display
    ============================================ */
 
-/* --- Chapter Outline Overlay (same pattern as .welcome overlay) --- */
-.chapter-outline-overlay {
-  padding: 40px 24px;
-  max-width: 640px;
-  margin: 0 auto;
+/* --- Single Chapter Outline Popup (same pattern as .outline-review-overlay) --- */
+.ch-outline-popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 410;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
 }
 
-.chapter-outline-card {
+.ch-outline-popup-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ch-outline-popup-modal {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  width: min(720px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: scale(0.95);
+  transition: transform 0.2s;
+}
+
+.ch-outline-popup-overlay.visible .ch-outline-popup-modal {
+  transform: scale(1);
+}
+
+.ch-outline-popup-header {
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
   background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  border-left: 4px solid var(--accent-primary);
-  padding: 28px 32px;
 }
 
-.chapter-outline-card h3 {
+.ch-outline-popup-header h2 {
   font-family: var(--font-serif);
   font-size: 1.3rem;
   color: var(--accent-primary);
-  margin-bottom: 16px;
 }
 
-.chapter-outline-content {
-  font-size: 0.95rem;
-  color: var(--text-secondary);
-  line-height: 1.8;
-  max-height: 50vh;
+.ch-outline-popup-body {
+  flex: 1;
   overflow-y: auto;
-  margin-bottom: 20px;
-  white-space: pre-wrap;
+  padding: 24px 28px;
 }
 
-.chapter-outline-buttons {
+.ch-outline-popup-text {
+  width: 100%;
+  min-height: 200px;
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  resize: vertical;
+}
+
+.ch-outline-popup-footer {
+  padding: 16px 28px;
+  border-top: 1px solid var(--border-color);
   display: flex;
   gap: 10px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
 }
 
-.chapter-outline-buttons .btn {
-  font-size: 0.9rem;
-  padding: 10px 24px;
-}
-
-.chapter-outline-rethink {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.chapter-outline-rethink textarea {
-  width: 100%;
-  font-size: 0.9rem;
-  resize: vertical;
-  min-height: 70px;
-  margin-bottom: 10px;
-}
-
-.chapter-outline-rethink-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+.ch-outline-popup-rethink {
+  padding: 16px 28px 20px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-tertiary, var(--bg-secondary));
+  flex-shrink: 0;
 }
 
 /* === Translation Grid === */
