@@ -1141,9 +1141,8 @@ class App {
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
 
-    // Hide outline review panel once generation begins
-    const outlineMount = document.getElementById('outline-review-mount');
-    if (outlineMount) outlineMount.innerHTML = '';
+    // Hide chapter outline overlay once generation begins
+    this._hideChapterOutlineOverlay();
 
     this._closeAllPanels();
     this._hideWelcome();
@@ -3255,85 +3254,53 @@ class App {
   //  Inline Outline Review Panel (editor area)
   // ========================================
 
+  /**
+   * Show or hide the chapter outline overlay (same pattern as welcome overlay).
+   * When a chapter has an outline but little/no prose, show the outline overlay
+   * instead of the editor. This gives the author a chance to review, accept,
+   * or rethink the outline before prose generation.
+   */
   _updateOutlineReviewPanel(chapterContent) {
-    const mount = document.getElementById('outline-review-mount');
-    if (!mount) return;
+    const overlay = document.getElementById('chapter-outline-overlay');
+    const editorEl = document.getElementById('editor');
+    if (!overlay || !editorEl) return;
 
-    // Clear previous panel
-    mount.innerHTML = '';
+    // If no outline, hide overlay and show editor
+    if (!this._currentChapterOutline) {
+      overlay.style.display = 'none';
+      editorEl.style.display = '';
+      return;
+    }
 
-    if (!this._currentChapterOutline) return;
-
-    // Determine if chapter is ready for generation (little/no prose yet)
+    // Check if chapter already has substantial prose
     const plainText = (chapterContent || '').replace(/<[^>]*>/g, '').trim();
     const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
-    const readyForGeneration = wordCount < 50;
 
-    // Build the panel HTML
-    const panel = document.createElement('div');
-    panel.className = 'chapter-outline-section';
-    panel.id = 'outline-review-panel';
-    panel.innerHTML = `
-      <div class="outline-review-header-bar">
-        <h4>Chapter Outline</h4>
-        <button class="outline-review-collapse-btn" id="btn-outline-review-toggle" title="Collapse/Expand">&#9660;</button>
-      </div>
-      <div class="outline-review-panel-body" id="outline-review-panel-body">
-        <p id="chapter-outline-text"></p>
-        <div class="outline-review-actions" id="outline-review-actions" style="display:${readyForGeneration ? 'flex' : 'none'};">
-          <button class="btn btn-primary" id="btn-outline-review-accept">Accept &amp; Generate</button>
-          <button class="btn" id="btn-outline-review-rethink">Rethink</button>
-        </div>
-        <div class="outline-rethink-input" id="outline-rethink-input" style="display:none;">
-          <textarea id="outline-rethink-prompt" class="form-control" rows="3"
-            placeholder="Describe what to add, remove, or change..."></textarea>
-          <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
-            <button class="btn btn-primary" id="btn-outline-rethink-submit">Submit</button>
-            <button class="btn" id="btn-outline-rethink-cancel">Cancel</button>
-            <span id="outline-rethink-status" style="display:none;font-size:0.8rem;color:var(--text-muted);">Rethinking...</span>
-          </div>
-        </div>
-      </div>
-    `;
-
-    mount.appendChild(panel);
-
-    // Set outline text via textContent to avoid XSS
-    document.getElementById('chapter-outline-text').textContent = this._currentChapterOutline;
-
-    // Wire up event listeners directly
-    document.getElementById('btn-outline-review-toggle').addEventListener('click', () => this._toggleOutlineReviewCollapse());
-    document.getElementById('btn-outline-review-accept').addEventListener('click', () => this._acceptOutlineReviewAndGenerate());
-    document.getElementById('btn-outline-review-rethink').addEventListener('click', () => {
-      this._showOutlineRethinkInput(true);
-    });
-    document.getElementById('btn-outline-rethink-submit').addEventListener('click', () => this._submitOutlineReviewRethink());
-    document.getElementById('btn-outline-rethink-cancel').addEventListener('click', () => {
-      this._showOutlineRethinkInput(false);
-    });
-  }
-
-  _showOutlineReviewActions(show) {
-    const actions = document.getElementById('outline-review-actions');
-    if (actions) actions.style.display = show ? 'flex' : 'none';
-  }
-
-  _showOutlineRethinkInput(show) {
-    const el = document.getElementById('outline-rethink-input');
-    if (el) el.style.display = show ? 'block' : 'none';
-    if (show) {
-      const prompt = document.getElementById('outline-rethink-prompt');
-      if (prompt) { prompt.value = ''; prompt.focus(); }
+    if (wordCount >= 50) {
+      // Chapter already has prose — show editor, hide outline overlay
+      overlay.style.display = 'none';
+      editorEl.style.display = '';
+      return;
     }
+
+    // Show outline overlay, hide editor (same pattern as _showWelcome)
+    editorEl.style.display = 'none';
+    overlay.style.display = '';
+
+    // Populate outline content
+    const contentEl = document.getElementById('chapter-outline-content');
+    if (contentEl) contentEl.textContent = this._currentChapterOutline;
+
+    // Reset rethink area
+    const rethinkArea = document.getElementById('co-rethink-area');
+    if (rethinkArea) rethinkArea.style.display = 'none';
   }
 
-  _toggleOutlineReviewCollapse() {
-    const body = document.getElementById('outline-review-panel-body');
-    const btn = document.getElementById('btn-outline-review-toggle');
-    if (!body || !btn) return;
-    const isCollapsed = body.classList.toggle('collapsed');
-    btn.classList.toggle('collapsed', isCollapsed);
-    btn.innerHTML = isCollapsed ? '&#9654;' : '&#9660;';
+  _hideChapterOutlineOverlay() {
+    const overlay = document.getElementById('chapter-outline-overlay');
+    const editorEl = document.getElementById('editor');
+    if (overlay) overlay.style.display = 'none';
+    if (editorEl) editorEl.style.display = '';
   }
 
   async _acceptOutlineReviewAndGenerate() {
@@ -3350,6 +3317,9 @@ class App {
       return;
     }
 
+    // Hide the outline overlay, show the editor for generation
+    this._hideChapterOutlineOverlay();
+
     // Open the generate panel and fill plot with outline, then trigger generation
     await this.openGeneratePanel();
     const plotEl = document.getElementById('generate-plot');
@@ -3361,7 +3331,7 @@ class App {
   }
 
   async _submitOutlineReviewRethink() {
-    const promptEl = document.getElementById('outline-rethink-prompt');
+    const promptEl = document.getElementById('co-rethink-prompt');
     const userInstructions = promptEl?.value?.trim();
     if (!userInstructions) {
       alert('Please enter instructions for how to revise the outline.');
@@ -3384,8 +3354,8 @@ class App {
     const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
 
     // Show status, disable submit
-    document.getElementById('outline-rethink-status').style.display = '';
-    document.getElementById('btn-outline-rethink-submit').disabled = true;
+    document.getElementById('co-rethink-status').style.display = '';
+    document.getElementById('btn-co-rethink-submit').disabled = true;
 
     try {
       const revisedOutline = await this.generator.rethinkOutline({
@@ -3402,20 +3372,20 @@ class App {
         await this.fs.updateChapter(this.state.currentChapterId, { outline: revisedOutline });
         this._currentChapterOutline = revisedOutline;
 
-        // Update the review panel with the new outline
-        const outlineText = document.getElementById('chapter-outline-text');
-        if (outlineText) outlineText.textContent = revisedOutline;
+        // Update the displayed outline
+        const contentEl = document.getElementById('chapter-outline-content');
+        if (contentEl) contentEl.textContent = revisedOutline;
 
-        // Hide rethink input, re-show Accept/Rethink actions
-        this._showOutlineRethinkInput(false);
-        this._showOutlineReviewActions(true);
+        // Hide rethink area
+        const rethinkArea = document.getElementById('co-rethink-area');
+        if (rethinkArea) rethinkArea.style.display = 'none';
       }
     } catch (err) {
       console.error('Outline rethink failed:', err);
       alert('Rethink failed: ' + err.message);
     } finally {
-      document.getElementById('outline-rethink-status').style.display = 'none';
-      document.getElementById('btn-outline-rethink-submit').disabled = false;
+      document.getElementById('co-rethink-status').style.display = 'none';
+      document.getElementById('btn-co-rethink-submit').disabled = false;
     }
   }
 
@@ -4896,16 +4866,19 @@ class App {
     const editorEl = document.getElementById('editor');
     if (overlay) overlay.style.display = '';
     if (editorEl) editorEl.style.display = 'none';
-    const outlineMount = document.getElementById('outline-review-mount');
-    if (outlineMount) outlineMount.innerHTML = '';
+    // Also hide the chapter outline overlay
+    const coOverlay = document.getElementById('chapter-outline-overlay');
+    if (coOverlay) coOverlay.style.display = 'none';
     document.getElementById('project-title').textContent = 'Genesis 2';
   }
 
   _hideWelcome() {
     const overlay = document.getElementById('welcome-overlay');
     const editorEl = document.getElementById('editor');
+    const coOverlay = document.getElementById('chapter-outline-overlay');
     if (overlay) overlay.style.display = 'none';
     if (editorEl) editorEl.style.display = '';
+    if (coOverlay) coOverlay.style.display = 'none';
   }
 
   // ========================================
@@ -4943,6 +4916,26 @@ class App {
     // Create project
     document.getElementById('btn-create-project')?.addEventListener('click', () => {
       this._createNewProject();
+    });
+
+    // --- Chapter Outline Overlay buttons ---
+    document.getElementById('btn-co-accept')?.addEventListener('click', () => {
+      this._acceptOutlineReviewAndGenerate();
+    });
+    document.getElementById('btn-co-rethink')?.addEventListener('click', () => {
+      const area = document.getElementById('co-rethink-area');
+      if (area) {
+        area.style.display = area.style.display === 'none' ? '' : 'none';
+        const prompt = document.getElementById('co-rethink-prompt');
+        if (prompt) { prompt.value = ''; prompt.focus(); }
+      }
+    });
+    document.getElementById('btn-co-rethink-submit')?.addEventListener('click', () => {
+      this._submitOutlineReviewRethink();
+    });
+    document.getElementById('btn-co-rethink-cancel')?.addEventListener('click', () => {
+      const area = document.getElementById('co-rethink-area');
+      if (area) area.style.display = 'none';
     });
 
     // Import project — landing page

@@ -2582,112 +2582,65 @@ select.form-input {
    Chapter Outline Display
    ============================================ */
 
-.chapter-outline-section {
-  padding: 16px;
-  margin-bottom: 16px;
+/* --- Chapter Outline Overlay (same pattern as .welcome overlay) --- */
+.chapter-outline-overlay {
+  padding: 40px 24px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.chapter-outline-card {
   background: var(--bg-secondary);
   border-radius: var(--radius-md);
-  border-left: 3px solid var(--accent-primary);
+  border-left: 4px solid var(--accent-primary);
+  padding: 28px 32px;
 }
 
-.outline-review-header-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.chapter-outline-section h4 {
+.chapter-outline-card h3 {
   font-family: var(--font-serif);
-  font-size: 0.95rem;
+  font-size: 1.3rem;
   color: var(--accent-primary);
-  margin-bottom: 0;
+  margin-bottom: 16px;
 }
 
-.outline-review-collapse-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  cursor: pointer;
-  padding: 2px 6px;
-  min-width: 28px;
-  transition: transform 0.2s;
-}
-
-.outline-review-collapse-btn.collapsed {
-  transform: rotate(-90deg);
-}
-
-.outline-review-panel-body {
-  transition: max-height 0.3s ease, opacity 0.2s ease;
-  overflow: hidden;
-}
-
-.outline-review-panel-body.collapsed {
-  max-height: 0 !important;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.chapter-outline-section p {
-  font-size: 0.85rem;
+.chapter-outline-content {
+  font-size: 0.95rem;
   color: var(--text-secondary);
-  line-height: 1.6;
-  max-height: 200px;
+  line-height: 1.8;
+  max-height: 50vh;
   overflow-y: auto;
-  margin-bottom: 12px;
+  margin-bottom: 20px;
+  white-space: pre-wrap;
 }
 
-.outline-review-actions {
+.chapter-outline-buttons {
   display: flex;
-  gap: 8px;
-  padding-top: 4px;
+  gap: 10px;
 }
 
-.outline-review-actions .btn {
-  font-size: 0.8rem;
-  padding: 6px 16px;
+.chapter-outline-buttons .btn {
+  font-size: 0.9rem;
+  padding: 10px 24px;
 }
 
-.outline-review-actions .btn-primary {
-  background: var(--accent-primary);
-  color: var(--bg-primary);
-  font-weight: 600;
-}
-
-.outline-rethink-input {
-  margin-top: 12px;
-  padding-top: 12px;
+.chapter-outline-rethink {
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
-.outline-rethink-input textarea {
+.chapter-outline-rethink textarea {
   width: 100%;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   resize: vertical;
-  min-height: 60px;
+  min-height: 70px;
+  margin-bottom: 10px;
 }
 
-.outline-rethink-actions {
+.chapter-outline-rethink-actions {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
-  justify-content: flex-end;
-}
-
-.outline-rethink-actions .btn {
-  font-size: 0.8rem;
-  padding: 5px 14px;
-}
-
-.outline-rethink-status {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  font-size: 0.8rem;
-  color: var(--accent-primary);
 }
 
 /* === Translation Grid === */
