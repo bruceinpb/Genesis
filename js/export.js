@@ -63,6 +63,21 @@ class ExportManager {
     margin: 0 auto;
     padding: 1in;
   }
+  .cover-page {
+    page-break-after: always;
+    text-align: center;
+    padding: 0;
+    margin: -1in;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  .cover-page img {
+    max-width: 100%;
+    max-height: 100vh;
+    object-fit: contain;
+  }
   .title-page {
     text-align: center;
     page-break-after: always;
@@ -110,6 +125,9 @@ class ExportManager {
 </head>
 <body>
 
+${project.coverImage ? `<div class="cover-page">
+  <img src="${project.coverImage}" alt="Cover">
+</div>\n` : ''}
 <div class="title-page">
   <h1>${this._escapeHtml(project.title)}</h1>
   <div class="byline">by ${this._escapeHtml(project.owner || '[Author Name]')}</div>
@@ -194,11 +212,28 @@ class ExportManager {
     color: #555;
     font-style: italic;
   }
+  .cover-page {
+    page-break-after: always;
+    text-align: center;
+    margin: -40px -24px 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  .cover-page img {
+    max-width: 100%;
+    max-height: 100vh;
+    object-fit: contain;
+  }
 </style>
 </head>
 <body>
 
-<h1>${this._escapeHtml(project.title)}</h1>
+${project.coverImage ? `<div class="cover-page">
+  <img src="${project.coverImage}" alt="Cover">
+</div>\n` : ''}<h1>${this._escapeHtml(project.title)}</h1>
 `;
 
     for (const chapter of chapters) {
