@@ -1976,6 +1976,7 @@ class App {
     // Actions
     html += `<div class="analysis-section" style="display:flex;gap:8px;flex-wrap:wrap;">`;
     if (stats.totalPatterns > 0) {
+      html += `<button class="btn btn-sm" id="btn-download-error-db">Download Log (.md)</button>`;
       html += `<button class="btn btn-sm" id="btn-clear-error-db" style="border-color:var(--danger,#e94560);color:var(--danger,#e94560);">Clear All Patterns</button>`;
     }
     if (stats.dismissedPatterns > 0) {
@@ -2014,6 +2015,91 @@ class App {
       }
       await this._renderErrorDatabasePanel();
     });
+
+    // Bind download button
+    document.getElementById('btn-download-error-db')?.addEventListener('click', async () => {
+      await this._downloadErrorDatabaseLog();
+    });
+  }
+
+  async _downloadErrorDatabaseLog() {
+    if (!this.errorDb) return;
+
+    const allPatterns = await this.errorDb.getPatterns({ minFrequency: 1, limit: 500 });
+    const stats = await this.errorDb.getStats();
+
+    const categoryLabels = {
+      'pet-phrase': 'PET Phrases',
+      'telling': 'Telling vs Showing',
+      'cliche': 'Cliches',
+      'weak-words': 'Weak/Filler Words',
+      'passive': 'Passive Voice',
+      'structure': 'Structural Issues',
+      'pacing': 'Pacing Problems',
+      'ai-pattern': 'AI Writing Patterns',
+      'other': 'Other Issues'
+    };
+
+    let md = `# Error Pattern Database\n\n`;
+    md += `**Exported:** ${new Date().toLocaleString()}\n\n`;
+    md += `## Overview\n\n`;
+    md += `| Metric | Value |\n|--------|-------|\n`;
+    md += `| Unique Patterns | ${stats.totalPatterns} |\n`;
+    md += `| Total Occurrences | ${stats.totalOccurrences} |\n`;
+    md += `| Projects | ${stats.projectCount} |\n`;
+    md += `| Categories | ${Object.keys(stats.categories).length} |\n`;
+    md += `| Dismissed | ${stats.dismissedPatterns} |\n\n`;
+
+    // Category breakdown
+    if (Object.keys(stats.categories).length > 0) {
+      md += `## Categories\n\n`;
+      md += `| Category | Count | % |\n|----------|-------|---|\n`;
+      for (const [cat, count] of Object.entries(stats.categories).sort((a, b) => b[1] - a[1])) {
+        const label = categoryLabels[cat] || cat;
+        const pct = Math.round((count / stats.totalPatterns) * 100);
+        md += `| ${label} | ${count} | ${pct}% |\n`;
+      }
+      md += `\n`;
+    }
+
+    // Group patterns by category
+    const grouped = {};
+    for (const p of allPatterns) {
+      const cat = p.category || 'other';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(p);
+    }
+
+    // All patterns
+    if (allPatterns.length > 0) {
+      md += `## All Patterns\n\n`;
+      for (const [cat, items] of Object.entries(grouped).sort((a, b) => b[1].length - a[1].length)) {
+        const label = categoryLabels[cat] || cat;
+        md += `### ${label} (${items.length})\n\n`;
+
+        for (const item of items) {
+          const active = item.frequency >= 2 ? ' **ACTIVE**' : '';
+          md += `- **${item.frequency}x**${active} | ${item.severity} | ~${item.estimatedImpact} pts\n`;
+          if (item.text) {
+            md += `  - Text: _"${item.text}"_\n`;
+          }
+          md += `  - ${item.problem}\n`;
+        }
+        md += `\n`;
+      }
+    }
+
+    // Download
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const projectName = this._currentProject?.title || 'genesis';
+    a.download = `error_patterns_${projectName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 40)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   _initApiKeyPinLock() {
@@ -8540,8 +8626,8 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           })]
         }));
 
-        // Parse the chapter content HTML into paragraphs
-        const htmlContent = chapter.content || '';
+        // Parse the chapter content HTML into paragraphs (strip leading heading to avoid duplication)
+        const htmlContent = (chapter.content || '').replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
         const paragraphs = this._parseHTMLToParagraphs(htmlContent);
 
         for (const para of paragraphs) {
