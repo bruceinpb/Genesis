@@ -158,34 +158,70 @@ class MultiAgentOrchestrator {
     return JSON.parse(jsonStr);
   }
 
+  /** @private Format author palette for the judge prompt. Handles both structured and string palettes. */
+  _formatPaletteForJudge(authorPalette) {
+    if (!authorPalette) return '';
+    if (typeof authorPalette === 'object' && authorPalette.authors) {
+      const list = authorPalette.authors.map(a => `${a.name} (${a.label})`).join(', ');
+      return `STYLE INFLUENCES (AI-selected authors): ${list}`;
+    }
+    if (typeof authorPalette === 'string' && authorPalette.trim()) {
+      return `STYLE INFLUENCES: ${authorPalette}`;
+    }
+    return '';
+  }
+
   // ═══════════════════════════════════════════════════════════
   //  PHASE 1: MULTI-AGENT PROSE GENERATION
   // ═══════════════════════════════════════════════════════════
 
   /**
    * Generate prose using multiple writing agents in parallel.
-   * Each agent uses a different temperature for creative diversity.
+   * When an AI-selected author palette is available, each agent channels a specific author's voice.
+   * Otherwise, each agent uses a different temperature for creative diversity.
    *
-   * @param {Object} params - { systemPrompt, userPrompt, maxTokens }
+   * @param {Object} params - { systemPrompt, userPrompt, maxTokens, authorPalette }
    * @returns {Array} Array of { agentId, text, temperature, label } candidates.
    */
   async generateWithAgents(params) {
-    const { systemPrompt, userPrompt, maxTokens = 4096 } = params;
+    const { systemPrompt, userPrompt, maxTokens = 4096, authorPalette } = params;
 
-    // Temperature profiles — each agent has a distinct creative "personality"
-    const profiles = [
-      { temp: 0.70, label: 'Focused' },
-      { temp: 0.85, label: 'Balanced' },
-      { temp: 1.00, label: 'Creative' },
-      { temp: 0.75, label: 'Precise' },
-      { temp: 0.95, label: 'Bold' }
-    ];
+    // If we have a structured AI-selected palette, use author-voice agents
+    const useAuthorVoices = authorPalette &&
+      typeof authorPalette === 'object' &&
+      authorPalette.authors &&
+      authorPalette.authors.length >= 2;
 
-    const agentProfiles = profiles.slice(0, this.agentCount);
+    let agentProfiles;
 
-    this._emit('generating', `Deploying ${this.agentCount} writing agents...`, {
-      agentCount: this.agentCount
-    });
+    if (useAuthorVoices) {
+      // Each agent channels a specific author voice with their own temperature
+      agentProfiles = authorPalette.authors.map(author => ({
+        temp: author.temperature || 0.70,
+        label: `${author.name} (${author.label})`,
+        authorName: author.name,
+        voicePrompt: author.voicePrompt,
+        role: author.role,
+        authorId: author.id
+      }));
+      this._emit('generating', `Deploying ${agentProfiles.length} AI-selected author-voice agents...`, {
+        agentCount: agentProfiles.length,
+        authors: agentProfiles.map(p => p.authorName)
+      });
+    } else {
+      // Fallback: temperature-varied agents (original behavior)
+      const profiles = [
+        { temp: 0.70, label: 'Focused' },
+        { temp: 0.85, label: 'Balanced' },
+        { temp: 1.00, label: 'Creative' },
+        { temp: 0.75, label: 'Precise' },
+        { temp: 0.95, label: 'Bold' }
+      ];
+      agentProfiles = profiles.slice(0, this.agentCount);
+      this._emit('generating', `Deploying ${this.agentCount} writing agents...`, {
+        agentCount: this.agentCount
+      });
+    }
 
     // Launch all agents with slight stagger to reduce rate-limit risk
     const promises = agentProfiles.map((profile, i) => {
@@ -198,34 +234,60 @@ class MultiAgentOrchestrator {
           agentId, profile: profile.label
         });
 
+        // Build the system prompt for this agent
+        let agentSystemPrompt = systemPrompt;
+        if (profile.voicePrompt) {
+          // Inject author-specific voice prompt into the system prompt
+          agentSystemPrompt = this._buildAuthorVoiceSystemPrompt(
+            systemPrompt, profile.authorName, profile.voicePrompt
+          );
+        }
+
         try {
-          const text = await this._callApi(systemPrompt, userPrompt, {
+          const text = await this._callApi(agentSystemPrompt, userPrompt, {
             maxTokens,
             temperature: profile.temp
           });
           this._emit('agent-done', `Agent ${agentId} (${profile.label}) complete.`, { agentId });
-          resolve({ agentId, text, temperature: profile.temp, label: profile.label, error: null });
+          resolve({
+            agentId,
+            text,
+            temperature: profile.temp,
+            label: profile.label,
+            authorName: profile.authorName || null,
+            authorId: profile.authorId || null,
+            error: null
+          });
         } catch (err) {
           // Retry once on rate limit
           if (err.message.startsWith('RATE_LIMITED')) {
             this._emit('agent-retry', `Agent ${agentId} rate limited. Retrying in 5s...`, { agentId });
             await new Promise(r => setTimeout(r, 5000));
             try {
-              const text = await this._callApi(systemPrompt, userPrompt, {
+              const text = await this._callApi(agentSystemPrompt, userPrompt, {
                 maxTokens,
                 temperature: profile.temp
               });
               this._emit('agent-done', `Agent ${agentId} (${profile.label}) complete (retry).`, { agentId });
-              resolve({ agentId, text, temperature: profile.temp, label: profile.label, error: null });
+              resolve({
+                agentId, text, temperature: profile.temp, label: profile.label,
+                authorName: profile.authorName || null, authorId: profile.authorId || null, error: null
+              });
               return;
             } catch (retryErr) {
               this._emit('agent-error', `Agent ${agentId} retry failed: ${retryErr.message}`, { agentId });
-              resolve({ agentId, text: '', temperature: profile.temp, label: profile.label, error: retryErr.message });
+              resolve({
+                agentId, text: '', temperature: profile.temp, label: profile.label,
+                authorName: profile.authorName || null, authorId: profile.authorId || null, error: retryErr.message
+              });
               return;
             }
           }
           this._emit('agent-error', `Agent ${agentId} failed: ${err.message}`, { agentId });
-          resolve({ agentId, text: '', temperature: profile.temp, label: profile.label, error: err.message });
+          resolve({
+            agentId, text: '', temperature: profile.temp, label: profile.label,
+            authorName: profile.authorName || null, authorId: profile.authorId || null, error: err.message
+          });
         }
       });
     });
@@ -238,11 +300,34 @@ class MultiAgentOrchestrator {
     }
 
     this._emit('generation-complete',
-      `${valid.length} of ${this.agentCount} agents produced candidates.`,
-      { total: this.agentCount, successful: valid.length }
+      `${valid.length} of ${agentProfiles.length} agents produced candidates.`,
+      { total: agentProfiles.length, successful: valid.length }
     );
 
     return valid;
+  }
+
+  /**
+   * Build an author-voice-specific system prompt by injecting the voice prompt
+   * into the base system prompt.
+   * @private
+   */
+  _buildAuthorVoiceSystemPrompt(baseSystemPrompt, authorName, voicePrompt) {
+    // Insert the author voice instruction right after the opening of the system prompt
+    const authorBlock = `\n\n=== AUTHOR VOICE: ${authorName} ===\nYou are channeling the prose approach of ${authorName}.\n${voicePrompt}\n=== END AUTHOR VOICE ===\n`;
+
+    // Find the AUTHOR PALETTE section and replace it with the specific author voice
+    const paletteStart = baseSystemPrompt.indexOf('=== AUTHOR PALETTE ===');
+    const paletteEnd = baseSystemPrompt.indexOf('=== HARD CONSTRAINTS');
+
+    if (paletteStart !== -1 && paletteEnd !== -1) {
+      return baseSystemPrompt.substring(0, paletteStart) +
+        authorBlock +
+        baseSystemPrompt.substring(paletteEnd);
+    }
+
+    // If no palette section found, prepend to the prompt
+    return authorBlock + baseSystemPrompt;
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -272,7 +357,7 @@ EVALUATION CRITERIA (order of importance):
 4. EMOTIONAL RESONANCE (15%) — Makes the reader feel? Emotions shown through action, not stated?
 5. ORIGINALITY (15%) — Fresh imagery, unexpected turns, no cliches or formulaic patterns?
 ${voice && voice !== 'auto' ? `\nVOICE REQUIREMENT: Must be in ${voice} voice/POV.` : ''}
-${authorPalette ? `STYLE INFLUENCES: ${authorPalette}` : ''}
+${this._formatPaletteForJudge(authorPalette)}
 QUALITY TARGET: ${qualityThreshold || 90}/100
 
 SCORING RULES:
@@ -749,7 +834,7 @@ Output valid JSON only:
     try {
       // Phase 1
       this._emit('pipeline', '=== PHASE 1: Multi-Agent Generation ===');
-      const candidates = await this.generateWithAgents({ systemPrompt, userPrompt, maxTokens });
+      const candidates = await this.generateWithAgents({ systemPrompt, userPrompt, maxTokens, authorPalette });
 
       // Phase 2
       this._emit('pipeline', '=== PHASE 2: Judge Agent Evaluation ===');

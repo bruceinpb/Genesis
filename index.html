@@ -393,6 +393,16 @@
           </div>
         </div>
 
+        <div class="analysis-section" id="author-palette-section" style="display:none;">
+          <h3>Author Palette <span class="badge badge-ai">AI-Selected</span></h3>
+          <div id="palette-rationale" class="palette-rationale"></div>
+          <div id="author-palette-cards" class="author-palette-grid"></div>
+          <div class="palette-actions">
+            <button id="btn-regenerate-palette" class="btn btn-secondary" title="Get a new set of 5 authors">&#8635; Regenerate Palette</button>
+            <span class="palette-hint">Lock authors you want to keep, then regenerate to fill remaining slots.</span>
+          </div>
+        </div>
+
         <div class="analysis-section">
           <h3>Book Size</h3>
           <div class="setup-form-row">
@@ -599,10 +609,11 @@
             </div>
           </div>
           <div class="form-group">
-            <label data-tooltip="Author Palette -- Style influences for the AI to channel. List authors and their strengths, one per line.">Author Palette (style influences)</label>
-            <textarea class="form-input" id="bs-author-palette" rows="3"
-              placeholder="Morrison: elemental weight&#10;Tyler: domestic warmth&#10;Russo: working-class dignity&#10;Saunders: absurdist heart&#10;Strout: plainspoken power"></textarea>
-            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">List authors and their strengths to channel, one per line. Leave blank for defaults.</p>
+            <label data-tooltip="Author Palette -- AI selects 5 optimal authors based on your Genre, Subgenre, and POV settings. Configure in the Book Setup tab.">Author Palette (AI-Selected)</label>
+            <div id="bs-author-palette-summary" class="palette-summary-inline">
+              <span class="palette-summary-text">Set Genre, Subgenre, and POV in the Book Setup tab to auto-select authors.</span>
+            </div>
+            <input type="hidden" id="bs-author-palette" value="">
           </div>
         </div>
 

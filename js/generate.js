@@ -988,7 +988,7 @@ Example of BAD rhythm (monotonous):
 
 === AUTHOR PALETTE ===
 Channel these voices as you write, not imitating, but channeling their STRENGTHS:
-${authorPalette || '- Morrison: elemental weight\n- Tyler: domestic warmth\n- Russo: working-class dignity\n- Saunders: absurdist heart\n- Strout: plainspoken power'}
+${this._formatAuthorPalette(authorPalette)}
 
 === HARD CONSTRAINTS (ZERO TOLERANCE) ===
 The following are absolute prohibitions. ANY occurrence is a failure:
@@ -1162,6 +1162,30 @@ This self-checking protocol is MANDATORY. The error database represents patterns
     }
 
     return prompt;
+  }
+
+  /**
+   * Format the author palette for inclusion in system prompts.
+   * Handles both structured palette objects (new AI-selected) and legacy strings.
+   */
+  _formatAuthorPalette(authorPalette) {
+    const defaultPalette = '- Morrison: elemental weight\n- Tyler: domestic warmth\n- Russo: working-class dignity\n- Saunders: absurdist heart\n- Strout: plainspoken power';
+
+    if (!authorPalette) return defaultPalette;
+
+    // Structured palette object from the new AI selection system
+    if (typeof authorPalette === 'object' && authorPalette.authors && authorPalette.authors.length > 0) {
+      return authorPalette.authors.map(a =>
+        `- ${a.name} (${a.label}): ${a.role}`
+      ).join('\n');
+    }
+
+    // Legacy string palette
+    if (typeof authorPalette === 'string' && authorPalette.trim()) {
+      return authorPalette;
+    }
+
+    return defaultPalette;
   }
 
   _buildUserPrompt({ plot, existingContent, sceneTitle, chapterTitle, characters, notes, aiInstructions, chapterOutline, wordTarget, concludeStory, genre, genreRules, projectGoal }) {
