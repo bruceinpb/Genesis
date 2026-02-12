@@ -17,6 +17,7 @@ import { ProseGenerator } from './generate.js';
 import { ErrorDatabase } from './error-database.js';
 import { CoverEditor } from './cover-editor.js';
 import { MultiAgentOrchestrator } from './multi-agent.js';
+import { AuthorPaletteManager } from './author-palette.js';
 
 class App {
   constructor() {
@@ -78,6 +79,7 @@ class App {
       await this.generator.init();
       this.orchestrator = new MultiAgentOrchestrator(this.generator, this.localStorage);
       this.orchestrator.onStatus((phase, message, data) => this._onMultiAgentStatus(phase, message, data));
+      this.paletteManager = new AuthorPaletteManager(this.generator);
       this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
 
       // One-time cleanup of duplicate error patterns from old problem-based keying
@@ -2835,6 +2837,25 @@ class App {
     md += `**Exported:** ${new Date().toLocaleString()}\n`;
     md += `**Agent Count:** ${agentCount}\n`;
     md += `**Total Log Entries:** ${log.length}\n\n`;
+
+    // Include Author Palette info if available
+    const palette = this._currentProject?.authorPalette;
+    if (palette && typeof palette === 'object' && palette.authors) {
+      md += `## Author Palette (AI-selected for ${palette.genre || ''}`;
+      if (palette.subgenre) md += ` / ${palette.subgenre}`;
+      if (palette.pov) md += ` / ${palette.pov}`;
+      md += `)\n\n`;
+      md += `| # | Author | Style | Role | Temp |\n`;
+      md += `|---|--------|-------|------|------|\n`;
+      palette.authors.forEach((a, i) => {
+        md += `| ${i + 1} | ${a.name} | ${a.label} | ${a.role} | ${a.temperature} |\n`;
+      });
+      if (palette.paletteRationale) {
+        md += `\n**Rationale:** ${palette.paletteRationale}\n`;
+      }
+      md += `\n`;
+    }
+
     md += `---\n\n`;
 
     // Group log entries by pipeline phase
@@ -3568,8 +3589,24 @@ class App {
     const poetryLevelEl = document.getElementById('bs-poetry-level');
     if (poetryLevelEl) poetryLevelEl.value = project.poetryLevel || 3;
 
+    // Display existing author palette if available
+    if (project.authorPalette && typeof project.authorPalette === 'object' && project.authorPalette.authors) {
+      this._renderAuthorPalette(project.authorPalette);
+      this._updateAuthorPaletteSummary(project.authorPalette);
+    } else {
+      // Legacy string palette or empty — hide the section
+      const paletteSection = document.getElementById('author-palette-section');
+      if (paletteSection) paletteSection.style.display = 'none';
+    }
+    // Update the hidden field for backward compat
     const authorPaletteEl = document.getElementById('bs-author-palette');
-    if (authorPaletteEl) authorPaletteEl.value = project.authorPalette || '';
+    if (authorPaletteEl) {
+      if (typeof project.authorPalette === 'object' && project.authorPalette.authors) {
+        authorPaletteEl.value = this.paletteManager.buildPalettePromptString(project.authorPalette);
+      } else {
+        authorPaletteEl.value = project.authorPalette || '';
+      }
+    }
 
     // Populate Multi-Agent settings
     const agentCountEl = document.getElementById('bs-agent-count');
@@ -3707,6 +3744,220 @@ class App {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //  AUTHOR PALETTE UI METHODS
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Trigger AI author palette selection based on current genre/subgenre/POV.
+   * @param {boolean} force - If true, regenerate even if cached palette is valid.
+   */
+  async _triggerPaletteSelection(force = false) {
+    const genreId = document.getElementById('bs-genre')?.value;
+    const subgenreId = document.getElementById('bs-subgenre')?.value;
+    const povEl = document.getElementById('bs-voice');
+    const pov = povEl?.selectedOptions?.[0]?.textContent || povEl?.value || '';
+
+    if (!genreId || !pov) return;
+
+    // Get genre label from ID
+    const genreData = (window.GENRE_DATA || []).find(g => g.id === genreId);
+    if (!genreData) return;
+    const genre = genreData.label;
+
+    // Get subgenre label from ID
+    let subgenre = null;
+    if (subgenreId) {
+      const sub = genreData.subgenres?.find(s => s.id === subgenreId);
+      subgenre = sub ? sub.label : null;
+    }
+
+    // Check if we need to regenerate
+    if (!force && !this.paletteManager.paletteNeedsRegeneration(
+      this._currentProject || {}, genre, subgenre, pov
+    )) {
+      // Show existing palette if it exists
+      if (this._currentProject?.authorPalette?.authors) {
+        this._renderAuthorPalette(this._currentProject.authorPalette);
+      }
+      return;
+    }
+
+    // Need API key
+    if (!this.generator.hasApiKey()) {
+      this._showPaletteError('No API key set. Add your Anthropic API key in the AI Writer tab first.');
+      return;
+    }
+
+    this._showPaletteLoading();
+
+    try {
+      let palette;
+      if (force && this._currentProject?.authorPalette?.authors) {
+        palette = await this.paletteManager.regeneratePalette(
+          this._currentProject, genre, subgenre, pov
+        );
+      } else {
+        palette = await this.paletteManager.selectAuthorPalette(genre, subgenre, pov);
+      }
+
+      // Save to project
+      if (this._currentProject) {
+        this._currentProject.authorPalette = palette;
+        if (this.state.currentProjectId) {
+          await this.fs.updateProject(this.state.currentProjectId, { authorPalette: palette });
+        }
+      }
+
+      this._renderAuthorPalette(palette);
+      this._updateAuthorPaletteSummary(palette);
+    } catch (err) {
+      console.error('Author palette selection failed:', err);
+      this._showPaletteError(err.message);
+    }
+  }
+
+  /**
+   * Render the author palette cards in the Book Setup tab.
+   */
+  _renderAuthorPalette(palette) {
+    const section = document.getElementById('author-palette-section');
+    const rationaleEl = document.getElementById('palette-rationale');
+    const cardsEl = document.getElementById('author-palette-cards');
+
+    if (!section || !cardsEl) return;
+
+    section.style.display = '';
+    if (rationaleEl) {
+      rationaleEl.textContent = palette.paletteRationale || '';
+    }
+
+    cardsEl.innerHTML = palette.authors.map((author, i) => `
+      <div class="author-card" data-author-id="${this._escapeHtml(author.id)}">
+        <div class="author-card-header">
+          <span class="author-number">${i + 1}</span>
+          <div class="author-info">
+            <strong class="author-name">${this._escapeHtml(author.name)}</strong>
+            <span class="author-label">${this._escapeHtml(author.label)}</span>
+          </div>
+          <button class="btn-lock ${author.locked ? 'locked' : ''}"
+                  data-index="${i}"
+                  title="${author.locked ? 'Unlock this author' : 'Lock this author'}">
+            ${author.locked ? '&#128274;' : '&#128275;'}
+          </button>
+        </div>
+        <div class="author-card-body">
+          <span class="author-role">${this._escapeHtml(author.role || '')}</span>
+          <span class="author-temp">temp: ${author.temperature || 0.70}</span>
+        </div>
+        <div class="author-card-reason">${this._escapeHtml(author.whySelected || '')}</div>
+      </div>
+    `).join('');
+
+    // Wire up lock buttons
+    cardsEl.querySelectorAll('.btn-lock').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const index = parseInt(e.currentTarget.dataset.index);
+        this._toggleAuthorLock(index);
+      });
+    });
+  }
+
+  /**
+   * Toggle lock state for an author.
+   */
+  _toggleAuthorLock(index) {
+    const palette = this._currentProject?.authorPalette;
+    if (!palette || !palette.authors?.[index]) return;
+
+    palette.authors[index].locked = !palette.authors[index].locked;
+    this._renderAuthorPalette(palette);
+
+    // Persist lock state
+    if (this.state.currentProjectId) {
+      this.fs.updateProject(this.state.currentProjectId, { authorPalette: palette }).catch(() => {});
+    }
+  }
+
+  /**
+   * Show loading state while AI selects authors.
+   */
+  _showPaletteLoading() {
+    const section = document.getElementById('author-palette-section');
+    const cardsEl = document.getElementById('author-palette-cards');
+    const rationaleEl = document.getElementById('palette-rationale');
+
+    if (!section || !cardsEl) return;
+
+    section.style.display = '';
+    if (rationaleEl) rationaleEl.textContent = '';
+    cardsEl.innerHTML = `
+      <div class="palette-loading">
+        <div class="spinner"></div>
+        <span>Selecting optimal author voices for your genre...</span>
+      </div>
+    `;
+  }
+
+  /**
+   * Show error state for palette.
+   */
+  _showPaletteError(message) {
+    const section = document.getElementById('author-palette-section');
+    const cardsEl = document.getElementById('author-palette-cards');
+
+    if (!section || !cardsEl) return;
+
+    section.style.display = '';
+    cardsEl.innerHTML = `
+      <div class="palette-error">
+        <span>${this._escapeHtml(message)}</span>
+        <button id="btn-palette-retry">Try Again</button>
+      </div>
+    `;
+
+    document.getElementById('btn-palette-retry')?.addEventListener('click', () => {
+      this._triggerPaletteSelection(true);
+    });
+  }
+
+  /**
+   * Update the author palette summary display in the AI Writer tab.
+   */
+  _updateAuthorPaletteSummary(palette) {
+    const summaryEl = document.getElementById('bs-author-palette-summary');
+    if (!summaryEl) return;
+
+    if (!palette || !palette.authors || palette.authors.length === 0) {
+      summaryEl.innerHTML = '<span class="palette-summary-text">Set Genre, Subgenre, and POV in the Book Setup tab to auto-select authors.</span>';
+      return;
+    }
+
+    summaryEl.innerHTML = `
+      <ul class="palette-author-list">
+        ${palette.authors.map(a =>
+          `<li>${this._escapeHtml(a.name)} <span class="author-style-tag">(${this._escapeHtml(a.label)})</span></li>`
+        ).join('')}
+      </ul>
+    `;
+
+    // Also update the hidden field for backward compatibility
+    const hiddenEl = document.getElementById('bs-author-palette');
+    if (hiddenEl) {
+      hiddenEl.value = this.paletteManager.buildPalettePromptString(palette);
+    }
+  }
+
+  /**
+   * Escape HTML to prevent XSS in dynamically generated content.
+   */
+  _escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
   async _populateStructureInModal(project) {
     const container = document.getElementById('bs-structure-container');
     if (!container) return;
@@ -3795,7 +4046,10 @@ class App {
     const numChapters = parseInt(document.getElementById('bs-num-chapters')?.value) || 20;
     const qualityThreshold = Math.max(50, Math.min(100, parseInt(document.getElementById('bs-quality-threshold')?.value) || 90));
     const poetryLevel = parseInt(document.getElementById('bs-poetry-level')?.value) || 3;
-    const authorPalette = document.getElementById('bs-author-palette')?.value?.trim() || '';
+    // Author palette — use the structured palette object if available, otherwise fall back to text
+    const authorPalette = this._currentProject?.authorPalette && typeof this._currentProject.authorPalette === 'object'
+      ? this._currentProject.authorPalette
+      : (document.getElementById('bs-author-palette')?.value?.trim() || '');
     const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
     const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
 
@@ -6022,6 +6276,20 @@ class App {
       } else if (subgenreGroup) {
         subgenreGroup.style.display = 'none';
       }
+      this._triggerPaletteSelection();
+    });
+
+    // --- Subgenre and POV changes trigger palette selection ---
+    document.getElementById('bs-subgenre')?.addEventListener('change', () => {
+      this._triggerPaletteSelection();
+    });
+    document.getElementById('bs-voice')?.addEventListener('change', () => {
+      this._triggerPaletteSelection();
+    });
+
+    // --- Regenerate Palette button ---
+    document.getElementById('btn-regenerate-palette')?.addEventListener('click', () => {
+      this._triggerPaletteSelection(true);
     });
 
     // --- Error Database (from Settings tab) ---

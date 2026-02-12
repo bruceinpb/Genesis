@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Author Palette Tests</title>
+  <style>
+    body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+    .pass { color: #4caf50; }
+    .fail { color: #f44336; }
+    .test-group { margin: 16px 0; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px; }
+    .test-group h3 { color: #ffc832; margin-bottom: 8px; }
+    h1 { color: #ffc832; }
+    #summary { font-size: 1.2em; margin-top: 20px; padding: 12px; border-radius: 8px; }
+    #summary.all-pass { background: rgba(76, 175, 80, 0.15); }
+    #summary.has-fail { background: rgba(244, 67, 54, 0.15); }
+  </style>
+</head>
+<body>
+  <h1>Genesis 2 — Author Palette Tests</h1>
+  <div id="results"></div>
+  <div id="summary"></div>
+
+  <script type="module">
+    // Import the module under test
+    import { AuthorPaletteManager } from '../js/author-palette.js';
+
+    const results = document.getElementById('results');
+    const summary = document.getElementById('summary');
+    let passed = 0;
+    let failed = 0;
+
+    function assert(condition, message) {
+      if (condition) {
+        passed++;
+        return `<div class="pass">PASS: ${message}</div>`;
+      } else {
+        failed++;
+        return `<div class="fail">FAIL: ${message}</div>`;
+      }
+    }
+
+    function group(name, tests) {
+      let html = `<div class="test-group"><h3>${name}</h3>`;
+      html += tests;
+      html += `</div>`;
+      return html;
+    }
+
+    // ───────────────────────────────────────────────────
+    // Mock generator for tests (no actual API calls)
+    // ───────────────────────────────────────────────────
+    const mockGenerator = {
+      apiKey: 'test-key',
+      model: 'claude-sonnet-4-5-20250929'
+    };
+
+    const manager = new AuthorPaletteManager(mockGenerator);
+
+    let html = '';
+
+    // ───────────────────────────────────────────────────
+    // Test: Constructor
+    // ───────────────────────────────────────────────────
+    html += group('Constructor', [
+      assert(manager instanceof AuthorPaletteManager, 'Creates instance of AuthorPaletteManager'),
+      assert(manager.generator === mockGenerator, 'Stores generator reference'),
+    ].join(''));
+
+    // ───────────────────────────────────────────────────
+    // Test: _parseAuthorSelectionResponse
+    // ───────────────────────────────────────────────────
+    const validResponse = JSON.stringify({
+      authors: [
+        { id: 'mccarthy', name: 'Cormac McCarthy', label: 'Stark Declarative', role: 'restraint', temperature: 0.65, voicePrompt: 'test', whySelected: 'test' },
+        { id: 'larson', name: 'Erik Larson', label: 'Immersive Documentary', role: 'narrative-drive', temperature: 0.70, voicePrompt: 'test', whySelected: 'test' },
+        { id: 'robinson', name: 'Marilynne Robinson', label: 'Contemplative', role: 'psychological-depth', temperature: 0.75, voicePrompt: 'test', whySelected: 'test' },
+        { id: 'didion', name: 'Joan Didion', label: 'Cool Observational', role: 'distinctive-voice', temperature: 0.70, voicePrompt: 'test', whySelected: 'test' },
+        { id: 'grann', name: 'David Grann', label: 'Evidence-Woven', role: 'sensory-richness', temperature: 0.70, voicePrompt: 'test', whySelected: 'test' }
+      ],
+      paletteRationale: 'Test rationale'
+    });
+
+    const parsed = manager._parseAuthorSelectionResponse(validResponse);
+    html += group('_parseAuthorSelectionResponse — valid JSON', [
+      assert(parsed.authors.length === 5, 'Parses 5 authors from valid JSON'),
+      assert(parsed.authors[0].name === 'Cormac McCarthy', 'First author name is correct'),
+      assert(parsed.paletteRationale === 'Test rationale', 'Parses palette rationale'),
+      assert(parsed.authors[0].temperature === 0.65, 'Parses temperature correctly'),
+    ].join(''));
+
+    // Test with markdown fences
+    const fencedResponse = '```json\n' + validResponse + '\n```';
+    const parsedFenced = manager._parseAuthorSelectionResponse(fencedResponse);
+    html += group('_parseAuthorSelectionResponse — markdown fences', [
+      assert(parsedFenced.authors.length === 5, 'Parses 5 authors from fenced JSON'),
+      assert(parsedFenced.authors[0].name === 'Cormac McCarthy', 'Correct author from fenced JSON'),
+    ].join(''));
+
+    // Test with preamble text
+    const withPreamble = 'Here are the authors:\n' + validResponse;
+    const parsedPreamble = manager._parseAuthorSelectionResponse(withPreamble);
+    html += group('_parseAuthorSelectionResponse — with preamble', [
+      assert(parsedPreamble.authors.length === 5, 'Parses 5 authors from response with preamble'),
+    ].join(''));
+
+    // Test with invalid JSON
+    let parseError = null;
+    try {
+      manager._parseAuthorSelectionResponse('not json at all');
+    } catch (e) {
+      parseError = e;
+    }
+    html += group('_parseAuthorSelectionResponse — invalid JSON', [
+      assert(parseError !== null, 'Throws on invalid JSON'),
+      assert(parseError.message.includes('invalid author selection'), 'Error message mentions invalid selection'),
+    ].join(''));
+
+    // ───────────────────────────────────────────────────
+    // Test: paletteNeedsRegeneration
+    // ───────────────────────────────────────────────────
+    const projectWithPalette = {
+      authorPalette: {
+        genre: 'Science Fiction',
+        subgenre: 'Hard Science Fiction',
+        pov: 'Third-Person Limited',
+        authors: [{ id: 'test', name: 'Test', label: 'Test', role: 'test', temperature: 0.7 }]
+      }
+    };
+
+    html += group('paletteNeedsRegeneration', [
+      assert(manager.paletteNeedsRegeneration({}, 'Science Fiction', 'Hard SF', 'Third-Person') === true,
+        'Returns true for project with no palette'),
+      assert(manager.paletteNeedsRegeneration({ authorPalette: 'legacy string' }, 'SF', null, 'First Person') === true,
+        'Returns true for legacy string palette'),
+      assert(manager.paletteNeedsRegeneration(projectWithPalette, 'Science Fiction', 'Hard Science Fiction', 'Third-Person Limited') === false,
+        'Returns false when genre/subgenre/POV match'),
+      assert(manager.paletteNeedsRegeneration(projectWithPalette, 'Fantasy', 'Hard Science Fiction', 'Third-Person Limited') === true,
+        'Returns true when genre changes'),
+      assert(manager.paletteNeedsRegeneration(projectWithPalette, 'Science Fiction', 'Space Opera', 'Third-Person Limited') === true,
+        'Returns true when subgenre changes'),
+      assert(manager.paletteNeedsRegeneration(projectWithPalette, 'Science Fiction', 'Hard Science Fiction', 'First Person') === true,
+        'Returns true when POV changes'),
+    ].join(''));
+
+    // ───────────────────────────────────────────────────
+    // Test: buildPalettePromptString
+    // ───────────────────────────────────────────────────
+    const testPalette = {
+      authors: [
+        { name: 'McCarthy', label: 'Stark Declarative', role: 'restraint' },
+        { name: 'Didion', label: 'Cool Observational', role: 'distinctive-voice' },
+      ]
+    };
+
+    const promptStr = manager.buildPalettePromptString(testPalette);
+    html += group('buildPalettePromptString', [
+      assert(promptStr.includes('McCarthy'), 'Includes author name'),
+      assert(promptStr.includes('Stark Declarative'), 'Includes author label'),
+      assert(promptStr.includes('restraint'), 'Includes author role'),
+      assert(promptStr.includes('- McCarthy'), 'Formats as bullet list'),
+      assert(manager.buildPalettePromptString(null) === '', 'Returns empty for null'),
+      assert(manager.buildPalettePromptString({}) === '', 'Returns empty for empty object'),
+      assert(manager.buildPalettePromptString({ authors: [] }) === '', 'Returns empty for empty authors'),
+    ].join(''));
+
+    // ───────────────────────────────────────────────────
+    // Test: _getAuthorSelectionSystemPrompt
+    // ───────────────────────────────────────────────────
+    const sysPrompt5 = manager._getAuthorSelectionSystemPrompt(5);
+    const sysPrompt3 = manager._getAuthorSelectionSystemPrompt(3);
+
+    html += group('_getAuthorSelectionSystemPrompt', [
+      assert(sysPrompt5.includes('5 best authors'), 'Prompt mentions 5 authors'),
+      assert(sysPrompt5.includes('SELECTION CRITERIA'), 'Includes selection criteria'),
+      assert(sysPrompt5.includes('STRUCTURAL DIVERSITY'), 'Includes structural diversity criterion'),
+      assert(sysPrompt5.includes('VOICE RANGE'), 'Includes voice range criterion'),
+      assert(sysPrompt5.includes('PRACTICAL CHANNELING'), 'Includes practical channeling criterion'),
+      assert(sysPrompt5.includes('OUTPUT FORMAT'), 'Includes output format'),
+      assert(sysPrompt5.includes('"id"'), 'Output format includes id field'),
+      assert(sysPrompt5.includes('"voicePrompt"'), 'Output format includes voicePrompt field'),
+      assert(sysPrompt3.includes('3 best authors'), 'Adjusts count for 3 authors'),
+      assert(sysPrompt3.includes(`at least ${Math.ceil(3 * 0.6)}`), 'Adjusts genre mastery count for 3'),
+    ].join(''));
+
+    // ───────────────────────────────────────────────────
+    // Test: Locked author handling
+    // ───────────────────────────────────────────────────
+    const projectAllLocked = {
+      authorPalette: {
+        genre: 'Fantasy',
+        subgenre: null,
+        pov: 'Third-Person',
+        authors: [
+          { id: 'a1', name: 'A1', locked: true },
+          { id: 'a2', name: 'A2', locked: true },
+          { id: 'a3', name: 'A3', locked: true },
+          { id: 'a4', name: 'A4', locked: true },
+          { id: 'a5', name: 'A5', locked: true },
+        ]
+      }
+    };
+
+    // Test: all locked returns existing palette
+    // (No API call needed — regeneratePalette returns immediately)
+    const allLockedResult = await manager.regeneratePalette(projectAllLocked, 'Fantasy', null, 'Third-Person');
+    html += group('regeneratePalette — all authors locked', [
+      assert(allLockedResult === projectAllLocked.authorPalette, 'Returns existing palette when all 5 are locked'),
+      assert(allLockedResult.authors.length === 5, 'Still has 5 authors'),
+    ].join(''));
+
+    // ───────────────────────────────────────────────────
+    // Summary
+    // ───────────────────────────────────────────────────
+    results.innerHTML = html;
+
+    const total = passed + failed;
+    summary.className = failed > 0 ? 'has-fail' : 'all-pass';
+    summary.innerHTML = `<strong>${passed}/${total} tests passed</strong>` +
+      (failed > 0 ? ` — <span class="fail">${failed} failed</span>` : ' — All tests passing!');
+  </script>
+</body>
+</html>
