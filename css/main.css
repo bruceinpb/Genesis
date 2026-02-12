@@ -4706,3 +4706,23 @@ select.form-input {
   color: rgba(255, 255, 255, 0.35);
   padding: 0 2px;
 }
+
+/* ═══ Scholarly Apparatus ═══ */
+.scholarly-sub-options {
+  padding: 6px 0;
+}
+.scholarly-sub-options .radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.scholarly-sub-options .radio-option input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+}
+#scholarly-apparatus-section .matter-option {
+  padding: 8px 10px;
+}

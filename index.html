@@ -528,6 +528,63 @@
           </div>
         </div>
 
+        <div class="analysis-section" id="scholarly-apparatus-section">
+          <h3>Scholarly Apparatus</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Enable footnotes, index, and bibliography for nonfiction and academic works. Auto-configured based on genre.
+          </p>
+          <div class="scholarly-grid" style="display:flex;flex-direction:column;gap:10px;">
+            <label class="matter-option">
+              <input type="checkbox" id="bs-sa-footnotes" value="footnotes">
+              <div class="matter-info">
+                <span class="matter-name">Enable Footnotes</span>
+                <span class="matter-desc">Add source citations to the manuscript</span>
+              </div>
+            </label>
+            <div id="bs-sa-footnote-format-group" class="scholarly-sub-options" style="display:none;margin-left:32px;">
+              <label style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;display:block;">Format:</label>
+              <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                <label class="radio-option"><input type="radio" name="bs-sa-footnote-format" value="endnotes" checked> Endnotes (per chapter)</label>
+                <label class="radio-option"><input type="radio" name="bs-sa-footnote-format" value="footnotes"> Footnotes (per page)</label>
+                <label class="radio-option"><input type="radio" name="bs-sa-footnote-format" value="inline"> Inline citations (Author, Year)</label>
+              </div>
+            </div>
+
+            <label class="matter-option">
+              <input type="checkbox" id="bs-sa-index" value="index">
+              <div class="matter-info">
+                <span class="matter-name">Enable Index</span>
+                <span class="matter-desc">Generate a back-of-book index</span>
+              </div>
+            </label>
+            <div id="bs-sa-index-type-group" class="scholarly-sub-options" style="display:none;margin-left:32px;">
+              <label style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;display:block;">Type:</label>
+              <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                <label class="radio-option"><input type="radio" name="bs-sa-index-type" value="subject" checked> Subject Index</label>
+                <label class="radio-option"><input type="radio" name="bs-sa-index-type" value="name"> Name Index</label>
+                <label class="radio-option"><input type="radio" name="bs-sa-index-type" value="combined"> Combined Index</label>
+                <label class="radio-option"><input type="radio" name="bs-sa-index-type" value="separate"> Subject + Name (separate)</label>
+              </div>
+            </div>
+
+            <label class="matter-option">
+              <input type="checkbox" id="bs-sa-bibliography" value="bibliography">
+              <div class="matter-info">
+                <span class="matter-name">Enable Bibliography / Works Cited</span>
+                <span class="matter-desc">Compile a bibliography from cited sources</span>
+              </div>
+            </label>
+
+            <label class="matter-option">
+              <input type="checkbox" id="bs-sa-source-specificity" value="source-specificity">
+              <div class="matter-info">
+                <span class="matter-name">Source Specificity Mode</span>
+                <span class="matter-desc">Forces archival-grade citations: box numbers, page refs, document dates</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
         <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
       </div>
 
