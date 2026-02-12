@@ -859,13 +859,11 @@ class App {
       this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
-      // Show chapter outline popup if chapter has an outline but no prose yet
+      // Show chapter outline popup whenever chapter has an outline
+      console.log('[Genesis] _loadChapter: outline =', !!this._currentChapterOutline, 'chapterId =', chapterId);
       if (this._currentChapterOutline) {
-        const plainText = (chapter.content || '').replace(/<[^>]*>/g, '').trim();
-        const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
-        if (wordCount < 50) {
-          this._showChapterOutlinePopup(chapter.title);
-        }
+        console.log('[Genesis] Showing chapter outline popup for:', chapter.title);
+        this._showChapterOutlinePopup(chapter.title);
       }
 
       // Update active state in tree
@@ -3265,8 +3263,15 @@ class App {
    * Uses the proven fixed-position modal pattern (same as outline-review-overlay).
    */
   _showChapterOutlinePopup(chapterTitle) {
+    console.log('[Genesis] _showChapterOutlinePopup called for:', chapterTitle);
     const popup = document.getElementById('ch-outline-popup');
-    if (!popup) return;
+    console.log('[Genesis] popup element found:', !!popup);
+    if (!popup) {
+      console.error('[Genesis] CRITICAL: #ch-outline-popup not found in DOM!');
+      // Fallback: use a native alert to prove the code is running
+      alert('Chapter Outline:\n\n' + (this._currentChapterOutline || '(no outline)').substring(0, 500));
+      return;
+    }
 
     // Set title
     const titleEl = document.getElementById('ch-outline-popup-title');
@@ -3286,6 +3291,7 @@ class App {
 
     // Show the popup
     popup.classList.add('visible');
+    console.log('[Genesis] popup classList after add:', popup.classList.toString());
   }
 
   _hideChapterOutlinePopup() {
