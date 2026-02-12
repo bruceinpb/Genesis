@@ -539,9 +539,9 @@
             <div class="form-group">
               <label data-tooltip="Number of Writing Agents — How many parallel AI agents will generate competing prose drafts. More agents = more diversity but higher API cost. Each agent writes with a different creative 'temperature' for variety.">Writing Agents</label>
               <select class="form-input" id="bs-agent-count">
-                <option value="1">1 — Single agent (standard)</option>
+                <option value="1" selected>1 — Single agent (standard)</option>
                 <option value="2">2 — Dual agent</option>
-                <option value="3" selected>3 — Triple agent (recommended)</option>
+                <option value="3">3 — Triple agent (recommended)</option>
                 <option value="4">4 — Quad agent</option>
                 <option value="5">5 — Full squad</option>
               </select>
@@ -883,6 +883,25 @@
         <div id="four-req-observation" style="color:var(--text-muted);">&#x25CB; Precise observation</div>
         <div id="four-req-musical" style="color:var(--text-muted);">&#x25CB; Musical sentence</div>
         <div id="four-req-break" style="color:var(--text-muted);">&#x25CB; Expectation break</div>
+      </div>
+
+      <!-- Agent Status Panel (shown during multi-agent mode) -->
+      <div id="iterative-agent-panel" style="display:none;margin-bottom:12px;">
+        <div style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:6px;text-align:left;">AGENTS</div>
+        <div id="iterative-agent-grid" class="ma-agent-grid" style="margin-bottom:8px;"></div>
+        <div style="margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--text-muted);margin-bottom:4px;">
+            <span>Generate</span>
+            <span>Judge</span>
+            <span>Fix</span>
+            <span>Edit</span>
+            <span>GO/NO-GO</span>
+          </div>
+          <div class="ma-pipeline-bar">
+            <div id="iterative-pipeline-fill" class="ma-pipeline-fill" style="width:0%;"></div>
+          </div>
+        </div>
+        <div id="iterative-agent-log" class="ma-status-log" style="max-height:60px;font-size:0.7rem;"></div>
       </div>
 
       <div id="iterative-status-log" style="font-size:0.75rem;color:var(--text-muted);max-height:80px;overflow-y:auto;text-align:left;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:16px;">
@@ -1263,11 +1282,16 @@
           <li>Voice and point of view</li>
         </ul>
       </div>
-      <!-- Right column: chapter outline -->
+      <!-- Right column: chapter outline(s) -->
       <div class="accept-outline-right">
         <h3 id="accept-outline-ch-title" style="font-family:var(--font-serif);font-size:1.05rem;color:var(--accent-primary);margin-bottom:10px;">Chapter Outline</h3>
-        <textarea class="accept-outline-textarea" id="accept-outline-text" rows="10"
-          placeholder="No outline available for this chapter."></textarea>
+        <!-- Single chapter outline (original) -->
+        <div id="accept-outline-single">
+          <textarea class="accept-outline-textarea" id="accept-outline-text" rows="10"
+            placeholder="No outline available for this chapter."></textarea>
+        </div>
+        <!-- Multi-chapter outlines container -->
+        <div id="accept-outline-multi" style="display:none;max-height:45vh;overflow-y:auto;"></div>
         <div class="accept-outline-btn-row">
           <button class="btn btn-primary" id="btn-accept-outline-accept">Accept Outline</button>
           <button class="btn" id="btn-accept-outline-rethink" style="background:#dc3545;color:#fff;border-color:#dc3545;">Rethink</button>
