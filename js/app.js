@@ -859,31 +859,8 @@ class App {
       this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
-      // Display chapter outline review panel if available
-      const outlineDisplay = document.getElementById('chapter-outline-display');
-      const outlineText = document.getElementById('chapter-outline-text');
-      if (outlineDisplay && outlineText) {
-        if (this._currentChapterOutline) {
-          outlineText.textContent = this._currentChapterOutline;
-          outlineDisplay.style.display = '';
-
-          // Show Accept/Rethink actions when chapter is ready for generation
-          // (has outline and little or no prose content)
-          const plainText = (chapter.content || '').replace(/<[^>]*>/g, '').trim();
-          const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
-          const readyForGeneration = wordCount < 50;
-          this._showOutlineReviewActions(readyForGeneration);
-          this._showOutlineRethinkInput(false);
-
-          // Reset collapsed state
-          const body = document.getElementById('outline-review-body');
-          const toggleBtn = document.getElementById('btn-outline-review-toggle');
-          if (body) body.classList.remove('collapsed');
-          if (toggleBtn) { toggleBtn.classList.remove('collapsed'); toggleBtn.innerHTML = '&#9660;'; }
-        } else {
-          outlineDisplay.style.display = 'none';
-        }
-      }
+      // Display chapter outline review panel if chapter has an outline
+      this._updateOutlineReviewPanel(chapter.content);
 
       // Update active state in tree
       document.querySelectorAll('.tree-item').forEach(el => {
@@ -3192,6 +3169,32 @@ class App {
   //  Inline Outline Review Panel (editor area)
   // ========================================
 
+  _updateOutlineReviewPanel(chapterContent) {
+    const outlineDisplay = document.getElementById('chapter-outline-display');
+    const outlineText = document.getElementById('chapter-outline-text');
+    if (!outlineDisplay || !outlineText) return;
+
+    if (this._currentChapterOutline) {
+      outlineText.textContent = this._currentChapterOutline;
+      outlineDisplay.style.display = 'block';
+
+      // Show Accept/Rethink actions when chapter is ready for generation
+      const plainText = (chapterContent || '').replace(/<[^>]*>/g, '').trim();
+      const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
+      const readyForGeneration = wordCount < 50;
+      this._showOutlineReviewActions(readyForGeneration);
+      this._showOutlineRethinkInput(false);
+
+      // Reset collapsed state
+      const panelBody = document.getElementById('outline-review-panel-body');
+      const toggleBtn = document.getElementById('btn-outline-review-toggle');
+      if (panelBody) panelBody.classList.remove('collapsed');
+      if (toggleBtn) { toggleBtn.classList.remove('collapsed'); toggleBtn.innerHTML = '&#9660;'; }
+    } else {
+      outlineDisplay.style.display = 'none';
+    }
+  }
+
   _showOutlineReviewActions(show) {
     const actions = document.getElementById('outline-review-actions');
     if (actions) actions.style.display = show ? 'flex' : 'none';
@@ -3199,7 +3202,7 @@ class App {
 
   _showOutlineRethinkInput(show) {
     const el = document.getElementById('outline-rethink-input');
-    if (el) el.style.display = show ? '' : 'none';
+    if (el) el.style.display = show ? 'block' : 'none';
     if (show) {
       const prompt = document.getElementById('outline-rethink-prompt');
       if (prompt) { prompt.value = ''; prompt.focus(); }
@@ -3207,7 +3210,7 @@ class App {
   }
 
   _toggleOutlineReviewCollapse() {
-    const body = document.getElementById('outline-review-body');
+    const body = document.getElementById('outline-review-panel-body');
     const btn = document.getElementById('btn-outline-review-toggle');
     if (!body || !btn) return;
     const isCollapsed = body.classList.toggle('collapsed');
@@ -3285,8 +3288,9 @@ class App {
         const outlineText = document.getElementById('chapter-outline-text');
         if (outlineText) outlineText.textContent = revisedOutline;
 
-        // Hide rethink input, show actions again
+        // Hide rethink input, re-show Accept/Rethink actions
         this._showOutlineRethinkInput(false);
+        this._showOutlineReviewActions(true);
       }
     } catch (err) {
       console.error('Outline rethink failed:', err);
