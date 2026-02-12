@@ -1486,22 +1486,22 @@ class App {
         await new Promise((resolve) => {
           this._showGoNoGoOverlay(goResult,
             // Accept (override)
-            () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
+            async () => { await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
             // Reject
             () => { resolve(); },
             // Override
-            () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); }
+            async () => { await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); }
           );
         });
       } else if (goResult && goResult.overallStatus === 'GO' && !goResult.skipped) {
         // Show brief GO confirmation, then insert
         this._showGoNoGoOverlay(goResult,
-          () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); },
+          async () => { await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); },
           null, null
         );
       } else {
         // No GO/NO-GO (skipped) — insert directly
-        this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
+        await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
       }
 
       this._showContinueBar(true);
@@ -1528,7 +1528,7 @@ class App {
   /**
    * Insert multi-agent generated prose into the editor.
    */
-  _insertMultiAgentProse(prose, existingContent, chapterTitle) {
+  async _insertMultiAgentProse(prose, existingContent, chapterTitle) {
     const editorEl = this.editor.element;
     const startingContent = existingContent.trim() ? existingContent : '';
     const paragraphs = prose.split('\n\n');
@@ -1536,10 +1536,14 @@ class App {
     editorEl.innerHTML = startingContent + newHtml;
     editorEl.innerHTML = this._formatGeneratedHtml(editorEl.innerHTML, chapterTitle);
 
-    // Save
+    // Save — must await to ensure prose is persisted before moving to next chapter
     const content = this.editor.getContent();
     if (this.state.currentChapterId) {
-      this.fs.updateChapter(this.state.currentChapterId, { content }).catch(() => {});
+      try {
+        await this.fs.updateChapter(this.state.currentChapterId, { content });
+      } catch (err) {
+        console.error(`Failed to save chapter ${this.state.currentChapterId}:`, err);
+      }
       this._updateLocalWordCounts(content);
     }
 
@@ -1708,7 +1712,7 @@ class App {
           }
 
           if (acceptProse && result.prose) {
-            this._insertMultiAgentProse(result.prose, existingContent, chInfo.title);
+            await this._insertMultiAgentProse(result.prose, existingContent, chInfo.title);
             this._updateIterativeLog(`  Chapter "${chInfo.title}" complete — prose inserted.`);
 
             // Refresh all chapters list for next GO/NO-GO (updated content)
@@ -4496,7 +4500,12 @@ class App {
         }).catch(() => {});
       }
 
-      this._showProseReview(review, generatedText);
+      // When text was reverted due to score decrease, show the review but
+      // preserve _lastGeneratedText as the reverted (previous) text, not the bad rewrite
+      const textForReview = review._revertedToPrevious
+        ? this._previousRewriteText
+        : generatedText;
+      this._showProseReview(review, textForReview);
     } catch (err) {
       this._showScoringProgress(false);
       console.error('Prose scoring failed:', err);
@@ -5842,7 +5851,7 @@ class App {
 
           // Re-score the rewritten prose with rewrite context
           if (streamedText && streamedText.length > 100) {
-            this._scoreProseAfterRewrite(streamedText, previousScore, previousIssueCount, previousSubscores);
+            await this._scoreProseAfterRewrite(streamedText, previousScore, previousIssueCount, previousSubscores);
           }
 
           this._showContinueBar(true);

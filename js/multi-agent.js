@@ -344,8 +344,18 @@ class MultiAgentOrchestrator {
   async judgeAndSelect(candidates, { genre, voice, authorPalette, qualityThreshold }) {
     this._emit('judging', `Judge agent evaluating ${candidates.length} candidates...`);
 
-    const candidateBlock = candidates.map(c =>
-      `=== CANDIDATE ${c.agentId} (${c.label}) ===\n${c.text}\n=== END CANDIDATE ${c.agentId} ===`
+    // Shuffle candidates to eliminate positional bias (first-candidate advantage)
+    // The judge at temperature 0 is deterministic, so presentation order matters.
+    const shuffled = [...candidates];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    // Use anonymous labels (A, B, C...) so the judge can't be biased by agent IDs
+    const anonLabels = shuffled.map((_, i) => String.fromCharCode(65 + i));
+    const candidateBlock = shuffled.map((c, i) =>
+      `=== CANDIDATE ${anonLabels[i]} ===\n${c.text}\n=== END CANDIDATE ${anonLabels[i]} ===`
     ).join('\n\n');
 
     const systemPrompt = `You are a senior literary editor and competition judge. You have ${candidates.length} versions of the same prose passage, each written by a different author. Select the BEST version.
@@ -367,12 +377,14 @@ SCORING RULES:
 - Note strengths to PRESERVE from the winner.
 - Note any elements from LOSING candidates that could improve the winner.
 
+IMPORTANT: Candidates are labeled with letters (A, B, C, etc.). Evaluate ONLY based on prose quality. Do NOT favor any particular position.
+
 Output valid JSON only:
 {
-  "selectedCandidate": <number: winning agent ID>,
+  "selectedCandidate": "<letter: winning candidate label, e.g. A, B, C>",
   "scores": [
     {
-      "agentId": <number>,
+      "candidateLabel": "<letter>",
       "voiceAuthenticity": <number 0-100>,
       "proseQuality": <number 0-100>,
       "genreAdherence": <number 0-100>,
@@ -386,7 +398,7 @@ Output valid JSON only:
   "strengthsToPreserve": ["<specific qualities that must NOT be changed>"],
   "borrowFromOthers": [
     {
-      "fromAgent": <number>,
+      "fromCandidate": "<letter>",
       "element": "<specific passage or technique to borrow>",
       "reason": "<why it would improve the winning text>"
     }
@@ -403,17 +415,33 @@ Output valid JSON only:
 
     const text = await this._callApi(systemPrompt,
       `Evaluate these ${candidates.length} prose candidates and select the best one:\n\n${candidateBlock}`,
-      { maxTokens: 4096, temperature: 0 }
+      { maxTokens: 4096, temperature: 0.3 }
     );
 
     const report = this._parseJson(text);
-    const winnerId = report.selectedCandidate;
-    const winner = candidates.find(c => c.agentId === winnerId) || candidates[0];
-    const winnerScore = report.scores?.find(s => s.agentId === winnerId)?.totalScore || '?';
+
+    // Map the anonymous winner label back to the original candidate
+    const winnerLabel = String(report.selectedCandidate).trim().toUpperCase();
+    const winnerIdx = winnerLabel.charCodeAt(0) - 65;
+    const winner = (winnerIdx >= 0 && winnerIdx < shuffled.length)
+      ? shuffled[winnerIdx]
+      : shuffled[0];
+
+    // Map anonymous labels back to real agent IDs in the report for logging
+    if (report.scores) {
+      for (const s of report.scores) {
+        const lbl = String(s.candidateLabel).trim().toUpperCase();
+        const idx = lbl.charCodeAt(0) - 65;
+        s.agentId = (idx >= 0 && idx < shuffled.length) ? shuffled[idx].agentId : '?';
+      }
+    }
+    report.selectedCandidate = winner.agentId;
+
+    const winnerScore = report.scores?.find(s => s.agentId === winner.agentId)?.totalScore || '?';
 
     this._emit('judging-complete',
-      `Judge selected Agent ${winnerId} (${winner.label}). Score: ${winnerScore}/100`,
-      { winnerId, report }
+      `Judge selected Agent ${winner.agentId} (${winner.label}). Score: ${winnerScore}/100`,
+      { winnerId: winner.agentId, report }
     );
 
     return { winner, report };
