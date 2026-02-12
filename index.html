@@ -231,8 +231,26 @@
         <span class="pane-lang" id="pane-lang-original">English</span>
         <button class="btn btn-sm" id="btn-close-translation" title="Close translation view">&times;</button>
       </div>
-      <div id="outline-review-mount"></div>
       <div id="editor" class="editor" data-placeholder="Begin writing your story..."></div>
+      <div id="chapter-outline-overlay" class="chapter-outline-overlay" style="display:none;">
+        <div class="chapter-outline-card">
+          <h3>Chapter Outline</h3>
+          <div class="chapter-outline-content" id="chapter-outline-content"></div>
+          <div class="chapter-outline-buttons">
+            <button class="btn btn-primary" id="btn-co-accept">Accept &amp; Generate</button>
+            <button class="btn" id="btn-co-rethink">Rethink</button>
+          </div>
+          <div class="chapter-outline-rethink" id="co-rethink-area" style="display:none;">
+            <textarea class="form-control" id="co-rethink-prompt" rows="3"
+              placeholder="Describe what to add, remove, or change..."></textarea>
+            <div class="chapter-outline-rethink-actions">
+              <button class="btn btn-primary" id="btn-co-rethink-submit">Submit</button>
+              <button class="btn" id="btn-co-rethink-cancel">Cancel</button>
+              <span id="co-rethink-status" style="display:none;font-size:0.85rem;color:var(--text-muted);">Rethinking...</span>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="welcome-overlay" class="welcome" style="display:none;">
         <h2>Genesis 2</h2>
         <p>
