@@ -2619,12 +2619,12 @@ select.form-input {
   transform: rotate(-90deg);
 }
 
-.outline-review-body {
+.outline-review-panel-body {
   transition: max-height 0.3s ease, opacity 0.2s ease;
   overflow: hidden;
 }
 
-.outline-review-body.collapsed {
+.outline-review-panel-body.collapsed {
   max-height: 0 !important;
   opacity: 0;
   pointer-events: none;
