@@ -4339,3 +4339,65 @@ select.form-input {
   color: var(--text-muted);
   margin-top: 2px;
 }
+
+/* ============================================
+   Multi-Chapter Outline Styles
+   ============================================ */
+
+.multi-outline-card {
+  margin-bottom: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.multi-outline-card .outline-ch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.multi-outline-card .outline-ch-header .ch-number {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.multi-outline-card textarea {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.multi-outline-card textarea:focus {
+  outline: none;
+  background: var(--bg-surface);
+}
+
+.multi-outline-gap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  background: rgba(255, 149, 0, 0.08);
+  border: 1px dashed rgba(255, 149, 0, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: #FF9500;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}

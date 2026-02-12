@@ -1067,18 +1067,16 @@ class App {
    * Updates the multi-agent overlay UI in real time.
    */
   _onMultiAgentStatus(phase, message, data = {}) {
-    // Update log
-    const logEl = document.getElementById('ma-status-log');
-    if (logEl) {
-      logEl.textContent += '\n' + message;
-      logEl.scrollTop = logEl.scrollHeight;
+    // Update BOTH the standalone multi-agent overlay AND the iterative overlay's agent panel
+    const logEls = [document.getElementById('ma-status-log'), document.getElementById('iterative-agent-log')];
+    for (const logEl of logEls) {
+      if (logEl) {
+        logEl.textContent += '\n' + message;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
     }
 
-    // Update phase label
-    const phaseEl = document.getElementById('ma-phase-label');
-
-    // Update pipeline progress bar based on phase
-    const fillEl = document.getElementById('ma-pipeline-fill');
+    // Update pipeline progress bars in both overlays
     const progressMap = {
       'generating': 10, 'agent-started': 15, 'agent-done': 25,
       'generation-complete': 30, 'judging': 40, 'judging-complete': 55,
@@ -1087,70 +1085,129 @@ class App {
       'go-nogo-start': 90, 'go-nogo-polling': 92, 'go-nogo-chapter': 95,
       'go-nogo-complete': 100
     };
-    if (fillEl && progressMap[phase]) {
-      fillEl.style.width = progressMap[phase] + '%';
-    }
-
-    // Update agent grid cards
-    const grid = document.getElementById('ma-agent-grid');
-    if (phase === 'agent-started' && data.agentId && grid) {
-      const card = document.getElementById(`ma-agent-${data.agentId}`);
-      if (card) {
-        card.className = 'ma-agent-card agent-writing';
-        card.querySelector('.ma-agent-status').textContent = 'Writing...';
-      }
-    }
-    if (phase === 'agent-done' && data.agentId && grid) {
-      const card = document.getElementById(`ma-agent-${data.agentId}`);
-      if (card) {
-        card.className = 'ma-agent-card agent-done';
-        card.querySelector('.ma-agent-status').textContent = 'Done';
-      }
-    }
-    if (phase === 'agent-error' && data.agentId && grid) {
-      const card = document.getElementById(`ma-agent-${data.agentId}`);
-      if (card) {
-        card.className = 'ma-agent-card agent-error';
-        card.querySelector('.ma-agent-status').textContent = 'Failed';
+    const fillEls = [document.getElementById('ma-pipeline-fill'), document.getElementById('iterative-pipeline-fill')];
+    for (const fillEl of fillEls) {
+      if (fillEl && progressMap[phase]) {
+        fillEl.style.width = progressMap[phase] + '%';
       }
     }
 
-    // Mark winner
-    if (phase === 'judging-complete' && data.winnerId && grid) {
-      const card = document.getElementById(`ma-agent-${data.winnerId}`);
-      if (card) {
-        card.className = 'ma-agent-card agent-winner';
-        card.querySelector('.ma-agent-status').textContent = 'WINNER';
+    // Update phase labels in both overlays
+    const phaseLabels = {
+      'generating': 'Deploying writing agents...',
+      'generation-complete': 'All agents complete. Judging...',
+      'judging': 'Judge evaluating candidates...',
+      'judging-complete': 'Best candidate selected.',
+      'fixing': 'Collaborating on improvements...',
+      'fixing-complete': 'Fix plan ready.',
+      'editing': 'Editor applying fixes...',
+      'editing-complete': 'Fixes applied.',
+      'digests': 'Building chapter digests...',
+      'go-nogo-start': 'GO/NO-GO sequence initiated...',
+      'go-nogo-polling': 'Polling chapter agents...',
+      'go-nogo-complete': data.overallStatus === 'GO' ? 'ALL SYSTEMS GO' : 'CONFLICT DETECTED'
+    };
+    const phaseEls = [document.getElementById('ma-phase-label'), document.getElementById('iterative-phase-label')];
+    for (const phaseEl of phaseEls) {
+      if (phaseEl && phaseLabels[phase]) phaseEl.textContent = phaseLabels[phase];
+    }
+
+    // Update agent grid cards in BOTH overlays (standalone: ma-agent-N, iterative: iter-agent-N)
+    const cardPrefixes = ['ma-agent-', 'iter-agent-'];
+
+    if (phase === 'agent-started' && data.agentId) {
+      for (const prefix of cardPrefixes) {
+        const card = document.getElementById(`${prefix}${data.agentId}`);
+        if (card) {
+          card.className = 'ma-agent-card agent-writing';
+          card.querySelector('.ma-agent-status').textContent = 'Writing...';
+        }
       }
-      // Show scores on all agent cards
-      if (data.report?.scores) {
-        for (const s of data.report.scores) {
-          const c = document.getElementById(`ma-agent-${s.agentId}`);
-          if (c) {
-            const scoreEl = c.querySelector('.ma-agent-score');
-            if (scoreEl) scoreEl.textContent = s.totalScore + '/100';
+    }
+    if (phase === 'agent-done' && data.agentId) {
+      for (const prefix of cardPrefixes) {
+        const card = document.getElementById(`${prefix}${data.agentId}`);
+        if (card) {
+          card.className = 'ma-agent-card agent-done';
+          card.querySelector('.ma-agent-status').textContent = 'Done';
+        }
+      }
+    }
+    if (phase === 'agent-error' && data.agentId) {
+      for (const prefix of cardPrefixes) {
+        const card = document.getElementById(`${prefix}${data.agentId}`);
+        if (card) {
+          card.className = 'ma-agent-card agent-error';
+          card.querySelector('.ma-agent-status').textContent = 'Failed';
+        }
+      }
+    }
+
+    // Mark winner + show scores in both grids
+    if (phase === 'judging-complete' && data.winnerId) {
+      for (const prefix of cardPrefixes) {
+        const card = document.getElementById(`${prefix}${data.winnerId}`);
+        if (card) {
+          card.className = 'ma-agent-card agent-winner';
+          card.querySelector('.ma-agent-status').textContent = 'WINNER';
+        }
+        if (data.report?.scores) {
+          for (const s of data.report.scores) {
+            const c = document.getElementById(`${prefix}${s.agentId}`);
+            if (c) {
+              const scoreEl = c.querySelector('.ma-agent-score');
+              if (scoreEl) scoreEl.textContent = s.totalScore + '/100';
+            }
           }
         }
       }
     }
 
-    // Phase labels
-    if (phaseEl) {
-      const phaseLabels = {
-        'generating': 'Deploying writing agents...',
-        'generation-complete': 'All agents complete. Judging...',
-        'judging': 'Judge evaluating candidates...',
-        'judging-complete': 'Best candidate selected.',
-        'fixing': 'Collaborating on improvements...',
-        'fixing-complete': 'Fix plan ready.',
-        'editing': 'Editor applying fixes...',
-        'editing-complete': 'Fixes applied.',
-        'digests': 'Building chapter digests...',
-        'go-nogo-start': 'GO/NO-GO sequence initiated...',
-        'go-nogo-polling': 'Polling chapter agents...',
-        'go-nogo-complete': data.overallStatus === 'GO' ? 'ALL SYSTEMS GO' : 'CONFLICT DETECTED'
-      };
-      if (phaseLabels[phase]) phaseEl.textContent = phaseLabels[phase];
+    // Update all agent cards for collaborative phases
+    if (phase === 'judging') {
+      for (const prefix of cardPrefixes) {
+        document.querySelectorAll(`[id^="${prefix}"]`).forEach(card => {
+          if (card.classList.contains('agent-done') || card.classList.contains('agent-winner')) {
+            card.querySelector('.ma-agent-status').textContent = 'Judging...';
+          }
+        });
+      }
+    }
+    if (phase === 'fixing') {
+      for (const prefix of cardPrefixes) {
+        document.querySelectorAll(`[id^="${prefix}"]`).forEach(card => {
+          if (card.classList.contains('agent-winner')) {
+            card.querySelector('.ma-agent-status').textContent = 'Collaborating...';
+          }
+        });
+      }
+    }
+    if (phase === 'editing') {
+      for (const prefix of cardPrefixes) {
+        document.querySelectorAll(`[id^="${prefix}"]`).forEach(card => {
+          if (card.classList.contains('agent-winner')) {
+            card.querySelector('.ma-agent-status').textContent = 'Editing...';
+          }
+        });
+      }
+    }
+    if (phase === 'go-nogo-start' || phase === 'go-nogo-polling') {
+      for (const prefix of cardPrefixes) {
+        document.querySelectorAll(`[id^="${prefix}"]`).forEach(card => {
+          if (card.classList.contains('agent-winner')) {
+            card.querySelector('.ma-agent-status').textContent = 'GO/NO-GO...';
+          }
+        });
+      }
+    }
+    if (phase === 'editing-complete' || phase === 'go-nogo-complete') {
+      for (const prefix of cardPrefixes) {
+        const winnerCard = document.querySelector(`[id^="${prefix}"].agent-winner`);
+        if (winnerCard) {
+          winnerCard.querySelector('.ma-agent-status').textContent =
+            phase === 'go-nogo-complete' ? (data.overallStatus === 'GO' ? 'ALL GO' : 'NO-GO') : 'Complete';
+        }
+      }
     }
   }
 
@@ -1370,7 +1427,7 @@ class App {
       projectGoal: project.wordCountGoal || 0
     });
 
-    const agentCount = project.agentCount || 3;
+    const agentCount = project.agentCount || 1;
     const chapterAgentsEnabled = project.chapterAgentsEnabled !== false;
     this.orchestrator.configure({ agentCount, chapterAgentsEnabled });
 
@@ -1380,6 +1437,9 @@ class App {
     this._closeAllPanels();
     this._hideWelcome();
     this._generateCancelled = false;
+    // Show the iterative writing overlay with agent panel enabled
+    this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
+    this._updateIterativePhase('Deploying writing agents...');
     this._showMultiAgentOverlay(true, agentCount);
 
     const errEl = document.getElementById('generate-error');
@@ -1405,6 +1465,7 @@ class App {
       });
 
       this._showMultiAgentOverlay(false);
+      this._showIterativeOverlay(false);
 
       if (this._generateCancelled) return;
 
@@ -1443,6 +1504,7 @@ class App {
 
     } catch (err) {
       this._showMultiAgentOverlay(false);
+      this._showIterativeOverlay(false);
       if (err.name === 'AbortError') return;
       console.error('Multi-agent pipeline failed:', err);
       if (errEl) {
@@ -4634,13 +4696,44 @@ class App {
     if (overlay) overlay.classList.add('visible');
   }
 
-  _showIterativeOverlay(show) {
+  _showIterativeOverlay(show, { showAgentPanel, agentCount } = {}) {
     const overlay = document.getElementById('iterative-write-overlay');
     if (overlay) {
       if (show) {
         overlay.classList.add('visible');
       } else {
         overlay.classList.remove('visible');
+      }
+    }
+    // Show/hide agent panel inside the iterative overlay
+    const agentPanel = document.getElementById('iterative-agent-panel');
+    if (agentPanel) {
+      if (show && showAgentPanel && agentCount > 1) {
+        agentPanel.style.display = '';
+        // Build agent grid
+        const grid = document.getElementById('iterative-agent-grid');
+        const labels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold'];
+        if (grid) {
+          grid.innerHTML = '';
+          for (let i = 1; i <= agentCount; i++) {
+            const card = document.createElement('div');
+            card.className = 'ma-agent-card';
+            card.id = `iter-agent-${i}`;
+            card.innerHTML = `
+              <div class="ma-agent-label">Agent ${i}</div>
+              <div class="ma-agent-status">${labels[i - 1] || 'Agent'}</div>
+              <div class="ma-agent-score"></div>
+            `;
+            grid.appendChild(card);
+          }
+        }
+        // Reset pipeline bar and log
+        const fill = document.getElementById('iterative-pipeline-fill');
+        if (fill) fill.style.width = '0%';
+        const log = document.getElementById('iterative-agent-log');
+        if (log) log.textContent = 'Initializing multi-agent pipeline...';
+      } else {
+        agentPanel.style.display = 'none';
       }
     }
   }
@@ -5874,6 +5967,15 @@ class App {
           alert('AI instructions saved.');
         }
       }
+      // --- Auto-save agent settings on change ---
+      if (e.target.id === 'bs-agent-count' || e.target.id === 'bs-chapter-agents') {
+        if (this.state.currentProjectId) {
+          const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
+          const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
+          await this.fs.updateProject(this.state.currentProjectId, { agentCount, chapterAgentsEnabled });
+          this._currentProject = { ...this._currentProject, agentCount, chapterAgentsEnabled };
+        }
+      }
       // --- Accept Outline confirmation modal events ---
       if (e.target.id === 'btn-accept-outline-continue') {
         await this._acceptChapterOutlineAndGenerate();
@@ -5911,6 +6013,7 @@ class App {
         this._generateCancelled = true;
         this.orchestrator.cancel();
         this._showMultiAgentOverlay(false);
+        this._showIterativeOverlay(false);
         this._showContinueBar(true);
       }
       // Note: btn-iterative-accept and btn-iterative-accept-stop handlers are now
@@ -6365,22 +6468,87 @@ class App {
     }
   }
 
-  _showAcceptOutlineConfirmation() {
+  async _showAcceptOutlineConfirmation() {
     const overlay = document.getElementById('accept-outline-overlay');
     if (!overlay) return;
 
-    // Populate the chapter outline in the right column
     const titleEl = document.getElementById('accept-outline-ch-title');
+    const singleEl = document.getElementById('accept-outline-single');
+    const multiEl = document.getElementById('accept-outline-multi');
     const textEl = document.getElementById('accept-outline-text');
-    const sceneTitleEl = document.getElementById('scene-title');
-    const chTitle = sceneTitleEl?.textContent || 'Current Chapter';
-
-    if (titleEl) titleEl.textContent = `Outline: ${chTitle}`;
-    if (textEl) textEl.value = this._currentChapterOutline || '(No outline for this chapter)';
 
     // Reset rethink area
     const rethinkArea = document.getElementById('accept-outline-rethink-area');
     if (rethinkArea) rethinkArea.style.display = 'none';
+
+    // Check if multiple chapters are selected
+    const selectedIds = [...this._navSelectedIds].filter(id => !id.startsWith('fm-') && !id.startsWith('bm-'));
+
+    if (selectedIds.length > 1) {
+      // MULTI-CHAPTER MODE: show all selected outlines with gap indicators
+      if (titleEl) titleEl.textContent = `Outlines: ${selectedIds.length} Chapters Selected`;
+      if (singleEl) singleEl.style.display = 'none';
+      if (multiEl) multiEl.style.display = '';
+
+      // Load all project chapters to determine order and detect gaps
+      const allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const chapterMap = new Map(allChapters.map(ch => [ch.id, ch]));
+      const chapterOrderMap = new Map(allChapters.map((ch, idx) => [ch.id, idx]));
+
+      // Sort selected IDs by chapter order
+      const sortedIds = selectedIds.slice().sort((a, b) =>
+        (chapterOrderMap.get(a) ?? 999) - (chapterOrderMap.get(b) ?? 999)
+      );
+
+      // Build HTML with gap indicators for skipped chapters
+      let html = '';
+      let lastOrderIdx = -1;
+
+      for (const chId of sortedIds) {
+        const ch = chapterMap.get(chId);
+        if (!ch) continue;
+
+        const orderIdx = chapterOrderMap.get(chId) ?? 0;
+
+        // Check for gap: any chapters between lastOrderIdx and orderIdx that are NOT selected
+        if (lastOrderIdx >= 0 && orderIdx > lastOrderIdx + 1) {
+          const skipped = [];
+          for (let g = lastOrderIdx + 1; g < orderIdx; g++) {
+            const skippedCh = allChapters[g];
+            if (skippedCh) skipped.push(skippedCh.title || `Chapter ${g + 1}`);
+          }
+          if (skipped.length > 0) {
+            html += `<div class="multi-outline-gap">SKIPPED: ${this._escapeHtml(skipped.join(', '))}</div>`;
+          }
+        }
+
+        const chNum = orderIdx + 1;
+        const outline = ch.outline || '(No outline for this chapter)';
+        html += `<div class="multi-outline-card">
+          <div class="outline-ch-header">
+            <span>${this._escapeHtml(ch.title || 'Untitled')}</span>
+            <span class="ch-number">Chapter ${chNum}</span>
+          </div>
+          <textarea class="form-input multi-outline-textarea" data-chapter-id="${chId}" rows="5">${this._escapeHtml(outline)}</textarea>
+        </div>`;
+
+        lastOrderIdx = orderIdx;
+      }
+
+      multiEl.innerHTML = html;
+      // Store multi-select state for accept handler
+      this._multiOutlineChapterIds = sortedIds;
+    } else {
+      // SINGLE CHAPTER MODE: original behavior
+      if (singleEl) singleEl.style.display = '';
+      if (multiEl) multiEl.style.display = 'none';
+      this._multiOutlineChapterIds = null;
+
+      const sceneTitleEl = document.getElementById('scene-title');
+      const chTitle = sceneTitleEl?.textContent || 'Current Chapter';
+      if (titleEl) titleEl.textContent = `Outline: ${chTitle}`;
+      if (textEl) textEl.value = this._currentChapterOutline || '(No outline for this chapter)';
+    }
 
     overlay.classList.add('visible');
   }
@@ -6395,7 +6563,48 @@ class App {
    * Saves any edits the user made to the outline, then triggers generation.
    */
   async _acceptEditedOutlineAndGenerate() {
-    // Save any edits from the textarea
+    if (!this.generator.hasApiKey()) {
+      alert('Set your Anthropic API key in Settings first.');
+      return;
+    }
+
+    // Multi-chapter mode: save all edited outlines, then combine for plot
+    if (this._multiOutlineChapterIds && this._multiOutlineChapterIds.length > 1) {
+      const combinedOutlines = [];
+      const allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const chapterMap = new Map(allChapters.map((ch, i) => [ch.id, { ...ch, orderIdx: i }]));
+
+      for (const chId of this._multiOutlineChapterIds) {
+        const textarea = document.querySelector(`#accept-outline-multi textarea[data-chapter-id="${chId}"]`);
+        const ch = chapterMap.get(chId);
+        if (!ch) continue;
+        const editedOutline = textarea?.value?.trim() || ch.outline || '';
+        // Save edits back to Firestore
+        if (textarea && editedOutline !== (ch.outline || '')) {
+          await this.fs.updateChapter(chId, { outline: editedOutline });
+        }
+        combinedOutlines.push(`=== Chapter ${ch.orderIdx + 1}: ${ch.title || 'Untitled'} ===\n${editedOutline}`);
+      }
+
+      this._closeAcceptOutlineDialog();
+
+      // Load the first selected chapter if not already loaded
+      if (!this.state.currentChapterId || !this._multiOutlineChapterIds.includes(this.state.currentChapterId)) {
+        await this._loadChapter(this._multiOutlineChapterIds[0]);
+      }
+
+      const combined = combinedOutlines.join('\n\n');
+      this._currentChapterOutline = combined;
+
+      await this.openGeneratePanel();
+      const plotEl = document.getElementById('generate-plot');
+      if (plotEl) plotEl.value = combined;
+      this._closeSetupBookModal();
+      await this._runGeneration();
+      return;
+    }
+
+    // Single chapter mode: original behavior
     const textEl = document.getElementById('accept-outline-text');
     const editedOutline = textEl?.value?.trim();
     if (editedOutline && editedOutline !== this._currentChapterOutline) {
@@ -6413,10 +6622,6 @@ class App {
     }
     if (!this._currentChapterOutline) {
       alert('The current chapter has no outline. Generate outlines first via Structure.');
-      return;
-    }
-    if (!this.generator.hasApiKey()) {
-      alert('Set your Anthropic API key in Settings first.');
       return;
     }
 
