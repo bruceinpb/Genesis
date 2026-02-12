@@ -8453,7 +8453,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
 
       const {
         Document, Packer, Paragraph, TextRun, PageBreak,
-        HeadingLevel, AlignmentType
+        HeadingLevel, AlignmentType, ImageRun
       } = docx;
 
       // Fetch all chapters for this project
@@ -8482,6 +8482,37 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
 
       // Build document content
       const children = [];
+
+      // Add cover image as first page if available
+      if (project.coverImage && ImageRun) {
+        try {
+          const coverData = await this._dataUrlToUint8Array(project.coverImage);
+          if (coverData) {
+            // Page content area: 6.5 x 9 inches (letter with 1in margins)
+            const maxWPx = 468; // 6.5 * 72
+            const maxHPx = 648; // 9 * 72
+            const dims = await this._getImageDimensions(project.coverImage);
+            let w = maxWPx;
+            let h = maxHPx;
+            if (dims) {
+              const scale = Math.min(maxWPx / dims.width, maxHPx / dims.height);
+              w = Math.round(dims.width * scale);
+              h = Math.round(dims.height * scale);
+            }
+            children.push(new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new ImageRun({
+                data: coverData,
+                transformation: { width: w, height: h },
+                type: project.coverImage.includes('image/png') ? 'png' : 'jpg'
+              })]
+            }));
+            children.push(new Paragraph({ children: [new PageBreak()] }));
+          }
+        } catch (coverErr) {
+          console.warn('Could not embed cover image in DOCX:', coverErr);
+        }
+      }
 
       for (let i = 0; i < chaptersToExport.length; i++) {
         const chapter = chaptersToExport[i];
@@ -8685,6 +8716,32 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
   /**
    * Check if text is a scene break marker.
    */
+  _dataUrlToUint8Array(dataUrl) {
+    return new Promise((resolve) => {
+      try {
+        const parts = dataUrl.split(',');
+        if (parts.length < 2) { resolve(null); return; }
+        const byteString = atob(parts[1]);
+        const bytes = new Uint8Array(byteString.length);
+        for (let i = 0; i < byteString.length; i++) {
+          bytes[i] = byteString.charCodeAt(i);
+        }
+        resolve(bytes);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+
+  _getImageDimensions(src) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  }
+
   _isSceneBreak(text) {
     if (!text) return false;
     const t = text.trim();
