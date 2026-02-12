@@ -339,11 +339,11 @@
       <button class="panel-close" id="btn-close-setup-book" aria-label="Close">&times;</button>
     </div>
     <div class="setup-book-tabs">
-      <button class="setup-tab active" data-setup-tab="book">Book Setup</button>
-      <button class="setup-tab" data-setup-tab="ai-writer">AI Writer</button>
-      <button class="setup-tab" data-setup-tab="translation">Translation</button>
-      <button class="setup-tab" data-setup-tab="export">Export</button>
-      <button class="setup-tab" data-setup-tab="settings">Settings</button>
+      <button class="setup-tab active" data-setup-tab="book"><span class="tab-icon">&#128214;</span> Book Setup</button>
+      <button class="setup-tab" data-setup-tab="ai-writer"><span class="tab-icon">&#9998;</span> AI Writer</button>
+      <button class="setup-tab" data-setup-tab="translation"><span class="tab-icon">&#127760;</span> Translation</button>
+      <button class="setup-tab" data-setup-tab="export"><span class="tab-icon">&#128230;</span> Export</button>
+      <button class="setup-tab" data-setup-tab="settings"><span class="tab-icon">&#9881;</span> Settings</button>
     </div>
     <div class="setup-book-body">
 
@@ -364,17 +364,19 @@
 
         <div class="analysis-section">
           <h3>Genre &amp; Voice</h3>
-          <div class="form-group">
-            <label>Genre</label>
-            <select class="form-input" id="bs-genre">
-              <option value="">-- Select Genre --</option>
-            </select>
-          </div>
-          <div class="form-group" id="bs-subgenre-group" style="display:none;">
-            <label>Subgenre</label>
-            <select class="form-input" id="bs-subgenre">
-              <option value="">-- None (use main genre rules) --</option>
-            </select>
+          <div class="setup-form-row">
+            <div class="form-group">
+              <label>Genre</label>
+              <select class="form-input" id="bs-genre">
+                <option value="">-- Select Genre --</option>
+              </select>
+            </div>
+            <div class="form-group" id="bs-subgenre-group" style="display:none;">
+              <label>Subgenre</label>
+              <select class="form-input" id="bs-subgenre">
+                <option value="">-- None (use main genre rules) --</option>
+              </select>
+            </div>
           </div>
           <div class="form-group">
             <label>Narrative Voice / POV</label>
@@ -397,15 +399,17 @@
 
         <div class="analysis-section">
           <h3>Book Size</h3>
-          <div class="form-group">
-            <label>Total Word Count Goal</label>
-            <input type="number" class="form-input" id="bs-total-words" value="80000" min="5000" step="1000" placeholder="80000">
+          <div class="setup-form-row">
+            <div class="form-group">
+              <label>Total Word Count Goal</label>
+              <input type="number" class="form-input" id="bs-total-words" value="80000" min="5000" step="1000" placeholder="80000">
+            </div>
+            <div class="form-group">
+              <label>Number of Chapters</label>
+              <input type="number" class="form-input" id="bs-num-chapters" value="20" min="1" max="200" placeholder="20">
+            </div>
           </div>
-          <div class="form-group">
-            <label>Number of Chapters</label>
-            <input type="number" class="form-input" id="bs-num-chapters" value="20" min="1" max="200" placeholder="20">
-          </div>
-          <div class="form-group" style="margin-top:12px;">
+          <div class="form-group" style="margin-top:4px;">
             <div class="stat-card" style="text-align:center;">
               <div class="stat-value" id="bs-words-per-chapter">4,000</div>
               <div class="stat-label">Approximate Words per Chapter</div>
@@ -552,26 +556,24 @@
       <!-- ═══ Tab: AI Writer ═══ -->
       <div class="setup-tab-content" id="setup-tab-ai-writer">
         <div class="analysis-section">
-          <h3>Quality Settings</h3>
-          <div class="form-group">
-            <label data-tooltip="Quality Threshold -- Set the minimum quality score (out of 100) that AI-generated prose must achieve before the system moves to the next chunk.">Quality Threshold (%)</label>
-            <input type="number" class="form-input" id="bs-quality-threshold" value="90" min="50" max="100" step="5" placeholder="90">
-            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Minimum score prose must reach before continuing. Lower = faster generation, higher = better quality. Default: 90%.</p>
-          </div>
-        </div>
-
-        <div class="analysis-section">
-          <h3>Prose Generation Style</h3>
-          <div class="form-group">
-            <label data-tooltip="Poetry Level -- Controls prose density and ornamentation. Level 1 is clean/invisible (Hemingway). Level 5 is lyrical/prose-poetry territory.">Poetry Level</label>
-            <select class="form-input" id="bs-poetry-level">
-              <option value="1">1 -- Clean, invisible (Hemingway)</option>
-              <option value="2">2 -- Modest detail</option>
-              <option value="3" selected>3 -- Literary (default)</option>
-              <option value="4">4 -- Heightened, rich</option>
-              <option value="5">5 -- Lyrical / prose-poetry</option>
-            </select>
-            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls prose density and ornamentation. Default: 3 (Literary).</p>
+          <h3>Quality &amp; Style</h3>
+          <div class="setup-form-row">
+            <div class="form-group">
+              <label data-tooltip="Quality Threshold -- Set the minimum quality score (out of 100) that AI-generated prose must achieve before the system moves to the next chunk.">Quality Threshold (%)</label>
+              <input type="number" class="form-input" id="bs-quality-threshold" value="90" min="50" max="100" step="5" placeholder="90">
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Minimum score prose must reach before continuing. Lower = faster, higher = better quality.</p>
+            </div>
+            <div class="form-group">
+              <label data-tooltip="Poetry Level -- Controls prose density and ornamentation. Level 1 is clean/invisible (Hemingway). Level 5 is lyrical/prose-poetry territory.">Poetry Level</label>
+              <select class="form-input" id="bs-poetry-level">
+                <option value="1">1 -- Clean, invisible (Hemingway)</option>
+                <option value="2">2 -- Modest detail</option>
+                <option value="3" selected>3 -- Literary (default)</option>
+                <option value="4">4 -- Heightened, rich</option>
+                <option value="5">5 -- Lyrical / prose-poetry</option>
+              </select>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Controls prose density and ornamentation. Default: 3 (Literary).</p>
+            </div>
           </div>
           <div class="form-group">
             <label data-tooltip="Author Palette -- Style influences for the AI to channel. List authors and their strengths, one per line.">Author Palette (style influences)</label>
@@ -610,13 +612,15 @@
               <option value="3000">~3,000 (full chapter)</option>
             </select>
           </div>
-          <div class="form-group">
-            <label>Tone (optional)</label>
-            <input type="text" class="form-input" id="generate-tone" placeholder="e.g. dark, humorous, suspenseful, literary">
-          </div>
-          <div class="form-group">
-            <label>Style Inspiration (optional)</label>
-            <input type="text" class="form-input" id="generate-style" placeholder="e.g. Cormac McCarthy, Donna Tartt, Stephen King">
+          <div class="setup-form-row">
+            <div class="form-group">
+              <label>Tone (optional)</label>
+              <input type="text" class="form-input" id="generate-tone" placeholder="e.g. dark, humorous, suspenseful, literary">
+            </div>
+            <div class="form-group">
+              <label>Style Inspiration (optional)</label>
+              <input type="text" class="form-input" id="generate-style" placeholder="e.g. Cormac McCarthy, Donna Tartt, Stephen King">
+            </div>
           </div>
           <div class="form-group" style="display:flex;align-items:center;gap:10px;">
             <input type="checkbox" id="generate-continue" checked style="width:20px;height:20px;">
@@ -705,25 +709,27 @@
             Export your manuscript in various formats for submission, sharing, or backup.
           </p>
 
-          <button class="btn" id="export-manuscript" style="width:100%;margin-bottom:8px;">
-            Standard Manuscript Format (HTML)
-            <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
-          </button>
+          <div class="setup-export-grid">
+            <button class="btn" id="export-manuscript">
+              Standard Manuscript Format (HTML)
+              <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, Shunn format</span>
+            </button>
 
-          <button class="btn" id="export-html" style="width:100%;margin-bottom:8px;">
-            Styled HTML
-            <br><span style="font-size:0.75rem;color:var(--text-muted);">Beautiful reading format</span>
-          </button>
+            <button class="btn" id="export-html">
+              Styled HTML
+              <br><span style="font-size:0.75rem;color:var(--text-muted);">Beautiful reading format</span>
+            </button>
 
-          <button class="btn" id="export-plain" style="width:100%;margin-bottom:8px;">
-            Plain Text
-            <br><span style="font-size:0.75rem;color:var(--text-muted);">Universal .txt format</span>
-          </button>
+            <button class="btn" id="export-plain">
+              Plain Text
+              <br><span style="font-size:0.75rem;color:var(--text-muted);">Universal .txt format</span>
+            </button>
 
-          <button class="btn" id="export-json" style="width:100%;margin-bottom:8px;">
-            Full Backup (JSON)
-            <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
-          </button>
+            <button class="btn" id="export-json">
+              Full Backup (JSON)
+              <br><span style="font-size:0.75rem;color:var(--text-muted);">Everything including chapters</span>
+            </button>
+          </div>
         </div>
 
         <div class="analysis-section">
