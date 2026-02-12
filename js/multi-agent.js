@@ -39,6 +39,9 @@ class MultiAgentOrchestrator {
 
     // Abort controller for cancellation
     this._abortController = null;
+
+    // Pipeline log accumulator for download
+    this._pipelineLog = [];
   }
 
   /**
@@ -69,9 +72,30 @@ class MultiAgentOrchestrator {
 
   /** @private Emit a status update. */
   _emit(phase, message, data = {}) {
+    this._pipelineLog.push({
+      timestamp: new Date().toISOString(),
+      phase,
+      message,
+      data: Object.keys(data).length > 0 ? data : undefined
+    });
     if (this._statusCallback) {
       this._statusCallback(phase, message, data);
     }
+  }
+
+  /**
+   * Get the accumulated pipeline log entries.
+   * @returns {Array} Log entries with timestamp, phase, message, data
+   */
+  getPipelineLog() {
+    return [...this._pipelineLog];
+  }
+
+  /**
+   * Clear the pipeline log.
+   */
+  clearPipelineLog() {
+    this._pipelineLog = [];
   }
 
   /** @private Simple string hash for cache invalidation. */
