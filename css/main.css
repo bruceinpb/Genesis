@@ -2583,24 +2583,111 @@ select.form-input {
    ============================================ */
 
 .chapter-outline-section {
-  padding: 12px;
-  margin-bottom: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
   background: var(--bg-secondary);
   border-radius: var(--radius-md);
   border-left: 3px solid var(--accent-primary);
+}
+
+.outline-review-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
 .chapter-outline-section h4 {
   font-family: var(--font-serif);
   font-size: 0.95rem;
   color: var(--accent-primary);
-  margin-bottom: 6px;
+  margin-bottom: 0;
+}
+
+.outline-review-collapse-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  min-width: 28px;
+  transition: transform 0.2s;
+}
+
+.outline-review-collapse-btn.collapsed {
+  transform: rotate(-90deg);
+}
+
+.outline-review-body {
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+
+.outline-review-body.collapsed {
+  max-height: 0 !important;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .chapter-outline-section p {
   font-size: 0.85rem;
   color: var(--text-secondary);
   line-height: 1.6;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.outline-review-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.outline-review-actions .btn {
+  font-size: 0.8rem;
+  padding: 6px 16px;
+}
+
+.outline-review-actions .btn-primary {
+  background: var(--accent-primary);
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.outline-rethink-input {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.outline-rethink-input textarea {
+  width: 100%;
+  font-size: 0.85rem;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.outline-rethink-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.outline-rethink-actions .btn {
+  font-size: 0.8rem;
+  padding: 5px 14px;
+}
+
+.outline-rethink-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--accent-primary);
 }
 
 /* === Translation Grid === */

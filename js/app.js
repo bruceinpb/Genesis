@@ -859,13 +859,27 @@ class App {
       this._currentChapterOutline = chapter.outline || '';
       this.editor.setContent(chapter.content || '');
 
-      // Display chapter outline if available
+      // Display chapter outline review panel if available
       const outlineDisplay = document.getElementById('chapter-outline-display');
       const outlineText = document.getElementById('chapter-outline-text');
       if (outlineDisplay && outlineText) {
         if (this._currentChapterOutline) {
           outlineText.textContent = this._currentChapterOutline;
           outlineDisplay.style.display = '';
+
+          // Show Accept/Rethink actions when chapter is ready for generation
+          // (has outline and little or no prose content)
+          const plainText = (chapter.content || '').replace(/<[^>]*>/g, '').trim();
+          const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
+          const readyForGeneration = wordCount < 50;
+          this._showOutlineReviewActions(readyForGeneration);
+          this._showOutlineRethinkInput(false);
+
+          // Reset collapsed state
+          const body = document.getElementById('outline-review-body');
+          const toggleBtn = document.getElementById('btn-outline-review-toggle');
+          if (body) body.classList.remove('collapsed');
+          if (toggleBtn) { toggleBtn.classList.remove('collapsed'); toggleBtn.innerHTML = '&#9660;'; }
         } else {
           outlineDisplay.style.display = 'none';
         }
@@ -1149,6 +1163,10 @@ class App {
     this._generateCancelled = false;
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
+
+    // Hide outline review actions once generation begins
+    this._showOutlineReviewActions(false);
+    this._showOutlineRethinkInput(false);
 
     this._closeAllPanels();
     this._hideWelcome();
@@ -3167,6 +3185,115 @@ class App {
     } finally {
       document.getElementById('rethink-status').style.display = 'none';
       document.getElementById('btn-rethink-submit').disabled = false;
+    }
+  }
+
+  // ========================================
+  //  Inline Outline Review Panel (editor area)
+  // ========================================
+
+  _showOutlineReviewActions(show) {
+    const actions = document.getElementById('outline-review-actions');
+    if (actions) actions.style.display = show ? 'flex' : 'none';
+  }
+
+  _showOutlineRethinkInput(show) {
+    const el = document.getElementById('outline-rethink-input');
+    if (el) el.style.display = show ? '' : 'none';
+    if (show) {
+      const prompt = document.getElementById('outline-rethink-prompt');
+      if (prompt) { prompt.value = ''; prompt.focus(); }
+    }
+  }
+
+  _toggleOutlineReviewCollapse() {
+    const body = document.getElementById('outline-review-body');
+    const btn = document.getElementById('btn-outline-review-toggle');
+    if (!body || !btn) return;
+    const isCollapsed = body.classList.toggle('collapsed');
+    btn.classList.toggle('collapsed', isCollapsed);
+    btn.innerHTML = isCollapsed ? '&#9654;' : '&#9660;';
+  }
+
+  async _acceptOutlineReviewAndGenerate() {
+    if (!this.state.currentChapterId) {
+      alert('Please select a chapter first.');
+      return;
+    }
+    if (!this._currentChapterOutline) {
+      alert('No chapter outline to generate from.');
+      return;
+    }
+    if (!this.generator.hasApiKey()) {
+      alert('Set your Anthropic API key in Settings first.');
+      return;
+    }
+
+    // Open the generate panel and fill plot with outline, then trigger generation
+    await this.openGeneratePanel();
+    const plotEl = document.getElementById('generate-plot');
+    if (plotEl && !plotEl.value?.trim()) {
+      plotEl.value = this._currentChapterOutline;
+    }
+    this._closeSetupBookModal();
+    await this._runGeneration();
+  }
+
+  async _submitOutlineReviewRethink() {
+    const promptEl = document.getElementById('outline-rethink-prompt');
+    const userInstructions = promptEl?.value?.trim();
+    if (!userInstructions) {
+      alert('Please enter instructions for how to revise the outline.');
+      return;
+    }
+
+    if (!this.state.currentChapterId) return;
+    const chapter = await this.fs.getChapter(this.state.currentChapterId);
+    if (!chapter?.outline) return;
+
+    const project = this._currentProject;
+    const characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId) || [];
+    const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId) || [];
+    let notes = projectNotes.map(n => {
+      let entry = n.title;
+      if (n.content) entry += '\n' + n.content;
+      return entry;
+    }).join('\n\n');
+
+    const genreInfo = this._getGenreRules(project?.genre, project?.subgenre);
+
+    // Show status, disable submit
+    document.getElementById('outline-rethink-status').style.display = '';
+    document.getElementById('btn-outline-rethink-submit').disabled = true;
+
+    try {
+      const revisedOutline = await this.generator.rethinkOutline({
+        currentOutline: chapter.outline,
+        chapterTitle: chapter.title,
+        userInstructions,
+        bookTitle: project?.title || '',
+        genre: genreInfo?.label || '',
+        characters,
+        notes
+      });
+
+      if (revisedOutline) {
+        await this.fs.updateChapter(this.state.currentChapterId, { outline: revisedOutline });
+        this._currentChapterOutline = revisedOutline;
+
+        // Update the review panel with the new outline
+        const outlineText = document.getElementById('chapter-outline-text');
+        if (outlineText) outlineText.textContent = revisedOutline;
+
+        // Hide rethink input, show actions again
+        this._showOutlineRethinkInput(false);
+      }
+    } catch (err) {
+      console.error('Outline rethink failed:', err);
+      alert('Rethink failed: ' + err.message);
+    } finally {
+      document.getElementById('outline-rethink-status').style.display = 'none';
+      document.getElementById('btn-outline-rethink-submit').disabled = false;
     }
   }
 
@@ -5299,6 +5426,22 @@ class App {
       }
       if (e.target.id === 'btn-rethink-cancel') {
         document.getElementById('rethink-overlay')?.classList.remove('visible');
+      }
+      // --- Inline Outline Review panel events (editor area) ---
+      if (e.target.id === 'btn-outline-review-accept') {
+        await this._acceptOutlineReviewAndGenerate();
+      }
+      if (e.target.id === 'btn-outline-review-rethink') {
+        this._showOutlineRethinkInput(true);
+      }
+      if (e.target.id === 'btn-outline-rethink-cancel') {
+        this._showOutlineRethinkInput(false);
+      }
+      if (e.target.id === 'btn-outline-rethink-submit') {
+        await this._submitOutlineReviewRethink();
+      }
+      if (e.target.id === 'btn-outline-review-toggle') {
+        this._toggleOutlineReviewCollapse();
       }
       // --- Outline Review popup events ---
       if (e.target.id === 'btn-outline-accept') {
