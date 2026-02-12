@@ -4340,6 +4340,60 @@ select.form-input {
   margin-top: 2px;
 }
 
+.go-nogo-conflict-solutions {
+  margin-top: 8px;
+  padding-left: 4px;
+}
+
+.go-nogo-solution-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: var(--bg-tertiary, rgba(255,255,255,0.03));
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.go-nogo-solution-option:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.go-nogo-solution-option.selected {
+  border-left-color: var(--accent-primary);
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.go-nogo-solution-option input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.go-nogo-solution-approach {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.go-nogo-solution-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.go-nogo-solution-recommended {
+  font-size: 0.6rem;
+  color: #34C759;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 /* ============================================
    Multi-Chapter Outline Styles
    ============================================ */

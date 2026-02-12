@@ -936,7 +936,7 @@
           <span>Generate</span>
           <span>Judge</span>
           <span>Fix</span>
-          <span>Edit</span>
+          <span>Refine</span>
           <span>GO/NO-GO</span>
         </div>
         <div class="ma-pipeline-bar">
@@ -956,8 +956,8 @@
 
 <!-- ===== GO/NO-GO Mission Control Overlay ===== -->
 <div class="modal-overlay" id="go-nogo-overlay">
-  <div class="modal" style="width:min(560px, 92vw);">
-    <div class="modal-body" style="padding:0;">
+  <div class="modal" style="width:min(620px, 94vw);max-height:90vh;">
+    <div class="modal-body" style="padding:0;overflow-y:auto;">
       <div class="go-nogo-header">
         <div class="go-nogo-title">MISSION CONTROL</div>
         <div class="go-nogo-subtitle">GO / NO-GO Check</div>
@@ -975,18 +975,21 @@
           <div id="go-nogo-status-text" class="go-nogo-status-text">ALL SYSTEMS GO</div>
         </div>
 
-        <!-- Conflict Details (shown when NO-GO) -->
+        <!-- Conflict Details with Solution Options (shown when NO-GO) -->
         <div id="go-nogo-conflicts" style="display:none;margin-top:16px;">
-          <h4 style="font-size:0.85rem;color:var(--danger);margin-bottom:8px;">Conflicts Detected</h4>
+          <h4 style="font-size:0.85rem;color:var(--danger);margin-bottom:4px;">Conflicts Detected</h4>
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Select solutions for each conflict. Recommended solutions are pre-selected.</p>
           <div id="go-nogo-conflict-list" class="go-nogo-conflict-list">
-            <!-- Populated dynamically -->
+            <!-- Populated dynamically with solution checkboxes -->
           </div>
         </div>
 
-        <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;">
+        <div id="go-nogo-actions" style="display:flex;gap:10px;margin-top:20px;justify-content:center;flex-wrap:wrap;">
           <button class="btn btn-primary" id="btn-go-nogo-accept" style="min-width:140px;">Accept Prose</button>
-          <button class="btn" id="btn-go-nogo-reject" style="min-width:140px;display:none;">Reject &amp; Regenerate</button>
+          <button class="btn btn-primary" id="btn-go-nogo-apply-solutions" style="min-width:180px;display:none;">Apply Selected &amp; Regenerate</button>
+          <button class="btn" id="btn-go-nogo-accept-suggested" style="min-width:180px;display:none;">Accept Suggested Solutions</button>
           <button class="btn" id="btn-go-nogo-override" style="min-width:140px;display:none;">Override NO-GO</button>
+          <button class="btn" id="btn-go-nogo-reject" style="min-width:100px;display:none;">Skip Chapter</button>
         </div>
       </div>
     </div>

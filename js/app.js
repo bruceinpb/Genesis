@@ -1078,11 +1078,13 @@ class App {
 
     // Update pipeline progress bars in both overlays
     const progressMap = {
-      'generating': 10, 'agent-started': 15, 'agent-done': 25,
-      'generation-complete': 30, 'judging': 40, 'judging-complete': 55,
-      'fixing': 60, 'fixing-complete': 70, 'editing': 75, 'editing-complete': 85,
-      'digests': 86, 'digest-building': 88, 'digests-complete': 90,
-      'go-nogo-start': 90, 'go-nogo-polling': 92, 'go-nogo-chapter': 95,
+      'generating': 8, 'agent-started': 12, 'agent-done': 20,
+      'generation-complete': 25, 'judging': 30, 'judging-complete': 40,
+      'fixing': 45, 'fixing-complete': 50, 'editing': 52, 'editing-complete': 55,
+      'refinement-start': 56, 'refinement-pass': 62, 'refinement-score': 65,
+      'refinement-fix-accepted': 68, 'refinement-threshold': 80, 'refinement-complete': 80,
+      'digests': 82, 'digest-building': 85, 'digests-complete': 88,
+      'go-nogo-start': 88, 'go-nogo-polling': 92, 'go-nogo-chapter': 95,
       'go-nogo-complete': 100
     };
     const fillEls = [document.getElementById('ma-pipeline-fill'), document.getElementById('iterative-pipeline-fill')];
@@ -1102,6 +1104,13 @@ class App {
       'fixing-complete': 'Fix plan ready.',
       'editing': 'Editor applying fixes...',
       'editing-complete': 'Fixes applied.',
+      'refinement-start': 'Iterative quality refinement...',
+      'refinement-pass': 'Micro-fix pass...',
+      'refinement-score': 'Scoring...',
+      'refinement-fix-accepted': 'Fix accepted.',
+      'refinement-threshold': 'Quality threshold reached!',
+      'refinement-complete': 'Refinement complete.',
+      'refinement-plateau': 'Quality plateau reached.',
       'digests': 'Building chapter digests...',
       'go-nogo-start': 'GO/NO-GO sequence initiated...',
       'go-nogo-polling': 'Polling chapter agents...',
@@ -1256,7 +1265,15 @@ class App {
   /**
    * Show the GO/NO-GO overlay with results.
    */
-  _showGoNoGoOverlay(goNoGoResult, onAccept, onReject, onOverride) {
+  /**
+   * Show GO/NO-GO overlay.
+   * @param {Object} goNoGoResult - The GO/NO-GO result object
+   * @param {Function} onAccept - Called when user accepts the prose (GO result or override)
+   * @param {Function} onReject - Called when user skips the chapter
+   * @param {Function} onOverride - Called when user overrides NO-GO
+   * @param {Function} onApplySolutions - Called with selected solutions array for regeneration
+   */
+  _showGoNoGoOverlay(goNoGoResult, onAccept, onReject, onOverride, onApplySolutions) {
     const overlay = document.getElementById('go-nogo-overlay');
     if (!overlay) return;
 
@@ -1269,16 +1286,18 @@ class App {
     const acceptBtn = document.getElementById('btn-go-nogo-accept');
     const rejectBtn = document.getElementById('btn-go-nogo-reject');
     const overrideBtn = document.getElementById('btn-go-nogo-override');
+    const applySolutionsBtn = document.getElementById('btn-go-nogo-apply-solutions');
+    const acceptSuggestedBtn = document.getElementById('btn-go-nogo-accept-suggested');
 
     // Build chapter rows
     if (resultsEl) {
       resultsEl.innerHTML = '';
-      for (const r of goNoGoResult.results) {
+      for (const r of (goNoGoResult.results || [])) {
         const row = document.createElement('div');
         const statusClass = r.status === 'GO' ? 'status-go' : 'status-nogo';
         row.className = `go-nogo-row ${statusClass}`;
         row.innerHTML = `
-          <div class="go-nogo-chapter-name">${r.chapterTitle}</div>
+          <div class="go-nogo-chapter-name">${this._escapeHtml(r.chapterTitle)}</div>
           <div class="go-nogo-chapter-status ${r.status === 'GO' ? 'go' : 'nogo'}">${r.status}</div>
         `;
         resultsEl.appendChild(row);
@@ -1289,39 +1308,124 @@ class App {
     const isGo = goNoGoResult.overallStatus === 'GO';
     if (statusEl) statusEl.className = `go-nogo-overall ${isGo ? '' : 'status-nogo'}`;
     if (statusIcon) statusIcon.innerHTML = isGo ? '&#x2714;' : '&#x2718;';
-    if (statusText) statusText.textContent = isGo ? 'ALL SYSTEMS GO' : 'NO-GO — CONFLICTS DETECTED';
+    if (statusText) statusText.textContent = isGo ? 'ALL SYSTEMS GO' : 'NO-GO \u2014 CONFLICTS DETECTED';
 
-    // Show conflicts if NO-GO
+    // Show conflicts with solution checkboxes if NO-GO
     if (conflictsSection) conflictsSection.style.display = isGo ? 'none' : 'block';
     if (conflictList && !isGo) {
       conflictList.innerHTML = '';
-      for (const r of goNoGoResult.results) {
+      let conflictIdx = 0;
+
+      for (const r of (goNoGoResult.results || [])) {
         for (const c of (r.conflicts || [])) {
           const item = document.createElement('div');
           item.className = 'go-nogo-conflict-item';
-          item.innerHTML = `
-            <div class="conflict-category">${r.chapterTitle} — ${c.category} (${c.severity})</div>
-            <div><strong>Established:</strong> ${c.established}</div>
-            <div><strong>Contradicted:</strong> ${c.contradicted}</div>
-            <div class="conflict-detail">Suggestion: ${c.suggestion}</div>
+
+          let html = `
+            <div class="conflict-category">${this._escapeHtml(r.chapterTitle)} \u2014 ${this._escapeHtml(c.category)} (${c.severity})</div>
+            <div style="font-size:0.78rem;margin:4px 0;"><strong>Established:</strong> ${this._escapeHtml(c.established)}</div>
+            <div style="font-size:0.78rem;margin:4px 0;"><strong>Contradicted:</strong> ${this._escapeHtml(c.contradicted)}</div>
           `;
+
+          // Build solution options with checkboxes
+          const solutions = c.solutions || [];
+          if (solutions.length > 0) {
+            html += '<div class="go-nogo-conflict-solutions">';
+            html += '<div style="font-size:0.7rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Solutions:</div>';
+            for (const sol of solutions) {
+              const solId = `go-nogo-sol-${conflictIdx}-${sol.id}`;
+              const isRec = sol.recommended;
+              html += `
+                <label class="go-nogo-solution-option${isRec ? ' selected' : ''}" for="${solId}">
+                  <input type="checkbox" id="${solId}" class="go-nogo-solution-cb"
+                    data-conflict-idx="${conflictIdx}" data-sol-id="${sol.id}"
+                    ${isRec ? 'checked' : ''}>
+                  <div>
+                    <div class="go-nogo-solution-approach">${this._escapeHtml(sol.approach || 'Fix')}${isRec ? ' <span class="go-nogo-solution-recommended">RECOMMENDED</span>' : ''}</div>
+                    <div class="go-nogo-solution-desc">${this._escapeHtml(sol.description)}</div>
+                  </div>
+                </label>
+              `;
+            }
+            html += '</div>';
+          } else {
+            // Fallback: show old-style suggestion if no solutions array
+            if (c.suggestion) {
+              html += `<div class="conflict-detail">Suggestion: ${this._escapeHtml(c.suggestion)}</div>`;
+            }
+          }
+
+          item.innerHTML = html;
           conflictList.appendChild(item);
+          conflictIdx++;
         }
       }
+
+      // Bind checkbox toggle styling
+      conflictList.querySelectorAll('.go-nogo-solution-cb').forEach(cb => {
+        cb.addEventListener('change', () => {
+          cb.closest('.go-nogo-solution-option').classList.toggle('selected', cb.checked);
+        });
+      });
     }
+
+    // Helper to gather selected solutions
+    const gatherSelectedSolutions = () => {
+      const selected = [];
+      const checkboxes = conflictList?.querySelectorAll('.go-nogo-solution-cb:checked') || [];
+      let conflictIdx = 0;
+      for (const r of (goNoGoResult.results || [])) {
+        for (const c of (r.conflicts || [])) {
+          const solutions = c.solutions || [];
+          for (const sol of solutions) {
+            const cb = document.getElementById(`go-nogo-sol-${conflictIdx}-${sol.id}`);
+            if (cb?.checked) {
+              selected.push({
+                chapterTitle: r.chapterTitle,
+                category: c.category,
+                severity: c.severity,
+                established: c.established,
+                contradicted: c.contradicted,
+                solution: sol.description,
+                approach: sol.approach
+              });
+            }
+          }
+          conflictIdx++;
+        }
+      }
+      return selected;
+    };
 
     // Buttons
     if (acceptBtn) {
       acceptBtn.style.display = isGo ? '' : 'none';
       acceptBtn.onclick = () => { overlay.classList.remove('visible'); if (onAccept) onAccept(); };
     }
-    if (rejectBtn) {
-      rejectBtn.style.display = isGo ? 'none' : '';
-      rejectBtn.onclick = () => { overlay.classList.remove('visible'); if (onReject) onReject(); };
+    if (applySolutionsBtn) {
+      applySolutionsBtn.style.display = (!isGo && onApplySolutions) ? '' : 'none';
+      applySolutionsBtn.onclick = () => {
+        const solutions = gatherSelectedSolutions();
+        overlay.classList.remove('visible');
+        if (onApplySolutions) onApplySolutions(solutions);
+      };
+    }
+    if (acceptSuggestedBtn) {
+      acceptSuggestedBtn.style.display = (!isGo && onApplySolutions) ? '' : 'none';
+      acceptSuggestedBtn.onclick = () => {
+        // Use only the recommended (pre-checked) solutions
+        const solutions = gatherSelectedSolutions();
+        overlay.classList.remove('visible');
+        if (onApplySolutions) onApplySolutions(solutions);
+      };
     }
     if (overrideBtn) {
       overrideBtn.style.display = isGo ? 'none' : '';
       overrideBtn.onclick = () => { overlay.classList.remove('visible'); if (onOverride) onOverride(); };
+    }
+    if (rejectBtn) {
+      rejectBtn.style.display = isGo ? 'none' : '';
+      rejectBtn.onclick = () => { overlay.classList.remove('visible'); if (onReject) onReject(); };
     }
 
     overlay.classList.add('visible');
@@ -1453,7 +1557,6 @@ class App {
 
     try {
       // For multi-agent mode, generate the full chapter (words-per-chapter).
-      // wordTarget from the dropdown is chunk size — multi-agent generates the whole thing at once.
       const projectWpc = Math.round(
         (project.wordCountGoal || 80000) / (project.numChapters || 20)
       );
@@ -1461,53 +1564,78 @@ class App {
       const wordsToGenerate = Math.max(wordTarget, projectWpc - existingWc);
       const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
 
-      const result = await this.orchestrator.runFullPipeline({
-        systemPrompt, userPrompt, maxTokens,
-        genre, voice: project.voice || '',
-        authorPalette: project.authorPalette || '',
-        qualityThreshold: project.qualityThreshold || 90,
-        currentChapterId: this.state.currentChapterId,
-        currentChapterTitle: chapterTitle,
-        chapters
-      });
+      let conflictCorrections = '';
+      let chapterDone = false;
+      const MAX_RETRIES = 3;
 
-      this._showMultiAgentOverlay(false);
-      this._showIterativeOverlay(false);
+      for (let attempt = 0; attempt < MAX_RETRIES && !chapterDone && !this._generateCancelled; attempt++) {
+        // Augment prompt with conflict corrections if retrying after NO-GO
+        let augmentedUserPrompt = userPrompt;
+        if (conflictCorrections) {
+          augmentedUserPrompt += `\n\nCRITICAL CONTINUITY CORRECTIONS (from GO/NO-GO check — you MUST respect these):\n${conflictCorrections}`;
+        }
 
-      if (this._generateCancelled) return;
+        if (attempt > 0) {
+          this._showMultiAgentOverlay(true, agentCount);
+          this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
+          this._updateIterativePhase(`Retry ${attempt}: Regenerating with corrections...`);
+        }
 
-      // Handle GO/NO-GO result
-      const goResult = result.goNoGoResult;
-
-      if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
-        // Show GO/NO-GO overlay and wait for user decision
-        await new Promise((resolve) => {
-          this._showGoNoGoOverlay(goResult,
-            // Accept (override)
-            () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
-            // Reject
-            () => { resolve(); },
-            // Override
-            () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); }
-          );
+        const result = await this.orchestrator.runFullPipeline({
+          systemPrompt, userPrompt: augmentedUserPrompt, maxTokens,
+          genre, voice: project.voice || '',
+          authorPalette: project.authorPalette || '',
+          qualityThreshold: project.qualityThreshold || 90,
+          currentChapterId: this.state.currentChapterId,
+          currentChapterTitle: chapterTitle,
+          chapters
         });
-      } else if (goResult && goResult.overallStatus === 'GO' && !goResult.skipped) {
-        // Show brief GO confirmation, then insert
-        this._showGoNoGoOverlay(goResult,
-          () => { this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); },
-          null, null
-        );
-      } else {
-        // No GO/NO-GO (skipped) — insert directly
-        this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
+
+        this._showMultiAgentOverlay(false);
+        this._showIterativeOverlay(false);
+
+        if (this._generateCancelled) return;
+
+        // Handle GO/NO-GO result
+        const goResult = result.goNoGoResult;
+
+        if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
+          // Show GO/NO-GO overlay with solution options
+          const decision = await new Promise((resolve) => {
+            this._showGoNoGoOverlay(goResult,
+              null, // no plain accept for NO-GO
+              () => { resolve({ action: 'skip' }); },
+              () => { resolve({ action: 'override', prose: result.prose }); },
+              (solutions) => { resolve({ action: 'retry', solutions }); }
+            );
+          });
+
+          if (decision.action === 'override') {
+            this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
+            chapterDone = true;
+          } else if (decision.action === 'retry' && decision.solutions?.length > 0) {
+            conflictCorrections = decision.solutions.map(s =>
+              `- [${s.category}] ${s.solution} (Established: "${s.established}" — do NOT contradict this)`
+            ).join('\n');
+            // Loop will retry
+          } else {
+            chapterDone = true; // Skip
+          }
+        } else if (goResult && goResult.overallStatus === 'GO' && !goResult.skipped) {
+          this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
+          chapterDone = true;
+        } else {
+          // No GO/NO-GO (skipped) — insert directly
+          this._insertMultiAgentProse(result.prose, existingContent, chapterTitle);
+          chapterDone = true;
+        }
+
+        if (chapterDone && result.prose && result.prose.length > 100) {
+          this._scoreProse(result.prose);
+        }
       }
 
       this._showContinueBar(true);
-
-      // Score the final prose
-      if (result.prose && result.prose.length > 100) {
-        this._scoreProse(result.prose);
-      }
 
     } catch (err) {
       this._showMultiAgentOverlay(false);
@@ -1654,78 +1782,121 @@ class App {
       this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes, chapterOutline: chInfo.outline };
 
       if (isMultiAgent) {
-        // Multi-agent pipeline for this chapter
-        const systemPrompt = this.generator._buildSystemPrompt({
-          tone, style, genre, genreRules,
-          voice: project.voice || '',
-          errorPatternsPrompt,
-          poetryLevel: project.poetryLevel || 3,
-          authorPalette: project.authorPalette || ''
-        });
-
-        const userPrompt = this.generator._buildUserPrompt({
-          plot, existingContent, chapterTitle: chInfo.title, characters, notes,
-          aiInstructions, chapterOutline: chInfo.outline, wordTarget: wordsToGenerate,
-          concludeStory: false, genre, genreRules,
-          projectGoal: project.wordCountGoal || 0
-        });
-
+        // Multi-agent pipeline for this chapter with NO-GO retry loop
         this.orchestrator.configure({ agentCount, chapterAgentsEnabled: project.chapterAgentsEnabled !== false });
-
-        // Reset agent grid for this chapter
-        this._showMultiAgentOverlay(true, agentCount);
-
         const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
 
-        try {
-          const result = await this.orchestrator.runFullPipeline({
-            systemPrompt, userPrompt, maxTokens,
-            genre, voice: project.voice || '',
-            authorPalette: project.authorPalette || '',
-            qualityThreshold: project.qualityThreshold || 90,
-            currentChapterId: chInfo.chapterId,
-            currentChapterTitle: chInfo.title,
-            chapters: allChapters
+        let chapterComplete = false;
+        let conflictCorrections = ''; // Accumulated from NO-GO solutions
+        const MAX_RETRIES = 3;
+
+        for (let attempt = 0; attempt < MAX_RETRIES && !chapterComplete && !this._generateCancelled; attempt++) {
+          // Build prompts — include conflict corrections if retrying
+          const systemPrompt = this.generator._buildSystemPrompt({
+            tone, style, genre, genreRules,
+            voice: project.voice || '',
+            errorPatternsPrompt,
+            poetryLevel: project.poetryLevel || 3,
+            authorPalette: project.authorPalette || ''
           });
 
-          if (this._generateCancelled) break;
+          let augmentedOutline = chInfo.outline;
+          if (conflictCorrections) {
+            augmentedOutline += `\n\nCRITICAL CONTINUITY CORRECTIONS (from previous GO/NO-GO check — you MUST respect these):\n${conflictCorrections}`;
+          }
 
-          // Handle GO/NO-GO result
-          const goResult = result.goNoGoResult;
-          let acceptProse = true;
+          const userPrompt = this.generator._buildUserPrompt({
+            plot: augmentedOutline, existingContent, chapterTitle: chInfo.title, characters, notes,
+            aiInstructions, chapterOutline: augmentedOutline, wordTarget: wordsToGenerate,
+            concludeStory: false, genre, genreRules,
+            projectGoal: project.wordCountGoal || 0
+          });
 
-          if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
-            // Show GO/NO-GO overlay and wait for user decision
-            acceptProse = await new Promise((resolve) => {
-              this._showGoNoGoOverlay(goResult,
-                () => { resolve(true); },   // Accept
-                () => { resolve(false); },  // Reject
-                () => { resolve(true); }    // Override
-              );
+          // Reset agent grid for this attempt
+          this._showMultiAgentOverlay(true, agentCount);
+
+          if (attempt > 0) {
+            this._updateIterativeLog(`  Retry ${attempt}: Regenerating "${chInfo.title}" with conflict corrections...`);
+          }
+
+          try {
+            const result = await this.orchestrator.runFullPipeline({
+              systemPrompt, userPrompt, maxTokens,
+              genre, voice: project.voice || '',
+              authorPalette: project.authorPalette || '',
+              qualityThreshold: project.qualityThreshold || 90,
+              currentChapterId: chInfo.chapterId,
+              currentChapterTitle: chInfo.title,
+              chapters: allChapters
             });
-          }
 
-          if (acceptProse && result.prose) {
-            this._insertMultiAgentProse(result.prose, existingContent, chInfo.title);
-            this._updateIterativeLog(`  Chapter "${chInfo.title}" complete — prose inserted.`);
+            if (this._generateCancelled) break;
 
-            // Refresh all chapters list for next GO/NO-GO (updated content)
-            try {
-              allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
-            } catch (_) {}
+            // Handle GO/NO-GO result
+            const goResult = result.goNoGoResult;
 
-            // Score the prose
-            if (result.prose.length > 100) {
-              this._scoreProse(result.prose);
+            if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
+              // Show GO/NO-GO overlay with solution options and wait for user decision
+              const decision = await new Promise((resolve) => {
+                this._showGoNoGoOverlay(goResult,
+                  null, // no plain accept for NO-GO
+                  () => { resolve({ action: 'skip' }); },
+                  () => { resolve({ action: 'override', prose: result.prose }); },
+                  (solutions) => { resolve({ action: 'retry', solutions }); }
+                );
+              });
+
+              if (decision.action === 'override') {
+                this._insertMultiAgentProse(result.prose, existingContent, chInfo.title);
+                this._updateIterativeLog(`  Chapter "${chInfo.title}" — user overrode NO-GO. Prose inserted.`);
+                chapterComplete = true;
+              } else if (decision.action === 'retry' && decision.solutions?.length > 0) {
+                // Build correction instructions from selected solutions
+                conflictCorrections = decision.solutions.map(s =>
+                  `- [${s.category}] ${s.solution} (Established: "${s.established}" — do NOT contradict this)`
+                ).join('\n');
+                this._updateIterativeLog(`  NO-GO: ${decision.solutions.length} solutions selected. Retrying...`);
+                // Loop will retry with corrections
+              } else {
+                // Skip chapter
+                this._updateIterativeLog(`  Chapter "${chInfo.title}" — skipped by user.`);
+                chapterComplete = true; // Mark to exit retry loop
+              }
+            } else {
+              // GO or skipped — insert prose
+              if (goResult && goResult.overallStatus === 'GO' && !goResult.skipped) {
+                this._showGoNoGoOverlay(goResult,
+                  () => {}, null, null
+                );
+                // Brief display, then continue
+                await new Promise(r => setTimeout(r, 1500));
+                const goOverlay = document.getElementById('go-nogo-overlay');
+                if (goOverlay) goOverlay.classList.remove('visible');
+              }
+
+              this._insertMultiAgentProse(result.prose, existingContent, chInfo.title);
+              this._updateIterativeLog(`  Chapter "${chInfo.title}" complete — prose inserted.`);
+              chapterComplete = true;
+
+              // Score the prose
+              if (result.prose.length > 100) {
+                this._scoreProse(result.prose);
+              }
             }
-          } else {
-            this._updateIterativeLog(`  Chapter "${chInfo.title}" — prose rejected by GO/NO-GO.`);
-          }
 
-        } catch (err) {
-          if (err.name === 'AbortError') break;
-          console.error(`Multi-chapter: chapter "${chInfo.title}" failed:`, err);
-          this._updateIterativeLog(`  ERROR: Chapter "${chInfo.title}" — ${err.message}`);
+            // Refresh chapters for next GO/NO-GO
+            if (chapterComplete) {
+              try {
+                allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+              } catch (_) {}
+            }
+
+          } catch (err) {
+            if (err.name === 'AbortError') break;
+            console.error(`Multi-chapter: chapter "${chInfo.title}" attempt ${attempt + 1} failed:`, err);
+            this._updateIterativeLog(`  ERROR: Chapter "${chInfo.title}" — ${err.message}`);
+            break; // Don't retry on errors
+          }
         }
 
       } else {

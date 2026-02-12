@@ -48,7 +48,7 @@ class MultiAgentOrchestrator {
    * Configure orchestrator settings.
    */
   configure({ agentCount, chapterAgentsEnabled }) {
-    if (agentCount !== undefined) this.agentCount = Math.max(2, Math.min(5, agentCount));
+    if (agentCount !== undefined) this.agentCount = Math.max(2, agentCount);
     if (chapterAgentsEnabled !== undefined) this.chapterAgentsEnabled = chapterAgentsEnabled;
   }
 
@@ -457,7 +457,7 @@ PRESERVE THESE QUALITIES: ${warnings.join('; ')}`;
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  PHASE 5: CHAPTER AGENTS — CONTINUITY TRACKING
+  //  CHAPTER AGENTS — CONTINUITY TRACKING
   // ═══════════════════════════════════════════════════════════
 
   /**
@@ -569,7 +569,7 @@ Output valid JSON only:
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  PHASE 6: GO/NO-GO — LAUNCH CONTROL SEQUENCE
+  //  GO/NO-GO — LAUNCH CONTROL SEQUENCE
   // ═══════════════════════════════════════════════════════════
 
   /**
@@ -605,6 +605,8 @@ NOT a conflict:
 
 Be STRICT but FAIR. Only flag genuine contradictions.
 
+For each conflict, propose 2-3 possible SOLUTIONS. Mark the solution you recommend as "recommended": true.
+
 Output valid JSON only:
 {
   "status": "GO" or "NO-GO",
@@ -614,7 +616,14 @@ Output valid JSON only:
       "category": "character|timeline|location|plot|object|relationship|knowledge",
       "established": "<what your chapter established>",
       "contradicted": "<what the new prose says that contradicts it>",
-      "suggestion": "<how to resolve>"
+      "solutions": [
+        {
+          "id": 1,
+          "description": "<specific fix to resolve the conflict>",
+          "approach": "<brief label: e.g. 'Remove reference', 'Correct detail', 'Add clarification'>",
+          "recommended": true or false
+        }
+      ]
     }
   ],
   "notes": "<observations that aren't conflicts but worth noting>"
@@ -723,6 +732,124 @@ Output valid JSON only:
   }
 
   // ═══════════════════════════════════════════════════════════
+  //  PHASE 5: ITERATIVE MICRO-FIX REFINEMENT
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Run the iterative scoring and micro-fix loop on the prose.
+   * This is the same quality refinement used by the single-agent path,
+   * applied AFTER multi-agent generation and collaborative fixes.
+   *
+   * @param {string} prose - The prose to refine
+   * @param {Object} params - { qualityThreshold, genre, voice, aiInstructions, maxIterations }
+   * @returns {{ refinedProse, bestScore, iterations }}
+   */
+  async runIterativeRefinement(prose, { qualityThreshold = 90, genre = '', voice = '', aiInstructions = '', maxIterations = 6 } = {}) {
+    this._emit('refinement-start', `Iterative refinement: up to ${maxIterations} micro-fix passes (threshold: ${qualityThreshold}/100)...`);
+
+    let currentText = prose;
+    let bestScore = 0;
+    let bestText = prose;
+    let previousFixes = [];
+    let attemptedFixes = [];
+    let noImprovementCount = 0;
+
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      if (this._abortController?.signal?.aborted) break;
+
+      const isFinalPass = iteration === maxIterations;
+      this._emit('refinement-pass', `Refinement pass ${iteration}/${maxIterations}${isFinalPass ? ' (final score)' : ''}...`, {
+        iteration, maxIterations
+      });
+
+      let result;
+      try {
+        result = await this.generator.scoreAndMicroFix(currentText, {
+          threshold: qualityThreshold,
+          iterationNum: iteration,
+          maxIterations,
+          previousFixes,
+          attemptedFixes,
+          lintDefects: [],
+          intentLedger: null,
+          genre,
+          voice,
+          aiInstructions
+        });
+      } catch (err) {
+        this._emit('refinement-error', `Refinement pass ${iteration} failed: ${err.message}`);
+        break;
+      }
+
+      if (!result || result.beforeScore === 0) {
+        this._emit('refinement-error', `Refinement pass ${iteration}: scoring returned 0. Stopping.`);
+        break;
+      }
+
+      const beforeScore = result.beforeScore;
+      const afterScore = result.afterScore || beforeScore;
+
+      if (iteration === 1 && bestScore === 0) {
+        bestScore = beforeScore;
+        bestText = currentText;
+      }
+
+      this._emit('refinement-score', `Pass ${iteration}: Before ${beforeScore}/100 | After ${afterScore}/100 (${result.label})`, {
+        iteration, beforeScore, afterScore, label: result.label
+      });
+
+      // Track attempted fixes
+      if (result.fixTarget) {
+        attemptedFixes.push(result.fixApplied || result.fixTarget);
+      }
+
+      // Evaluate fix
+      if (result.microFixedProse && afterScore > beforeScore) {
+        // Validate word count drift
+        const preWords = (currentText.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+        const postWords = (result.microFixedProse.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+        const drift = Math.abs(postWords - preWords) / Math.max(preWords, 1);
+
+        if (drift <= 0.15) {
+          currentText = result.microFixedProse;
+          if (afterScore > bestScore) {
+            bestScore = afterScore;
+            bestText = currentText;
+          }
+          previousFixes.push(result.fixApplied || 'fix applied');
+          noImprovementCount = 0;
+
+          this._emit('refinement-fix-accepted', `Fix accepted: ${beforeScore} -> ${afterScore}. Best: ${bestScore}/100`, {
+            beforeScore, afterScore, bestScore
+          });
+
+          if (afterScore >= qualityThreshold) {
+            this._emit('refinement-threshold', `PASSED threshold (${qualityThreshold}). Score: ${afterScore}/100`);
+            break;
+          }
+        } else {
+          noImprovementCount++;
+          this._emit('refinement-fix-rejected', `Fix rejected — word count drift ${Math.round(drift * 100)}%`);
+        }
+      } else {
+        noImprovementCount++;
+        if (result.fixApplied) {
+          this._emit('refinement-no-improvement', `No improvement: ${result.fixApplied}`);
+        }
+      }
+
+      // Stop if we've had 2 consecutive passes with no improvement
+      if (noImprovementCount >= 2) {
+        this._emit('refinement-plateau', `No improvement for ${noImprovementCount} passes. Best: ${bestScore}/100. Stopping.`);
+        break;
+      }
+    }
+
+    this._emit('refinement-complete', `Iterative refinement complete. Best score: ${bestScore}/100`, { bestScore });
+    return { refinedProse: bestText, bestScore, iterations: previousFixes.length };
+  }
+
+  // ═══════════════════════════════════════════════════════════
   //  FULL PIPELINE: Orchestrate all phases
   // ═══════════════════════════════════════════════════════════
 
@@ -732,10 +859,11 @@ Output valid JSON only:
    *   Phase 2 → Judge selects best candidate
    *   Phase 3 → Agents collaborate on fixes
    *   Phase 4 → Editor applies fixes
-   *   Phase 5 → Chapter agents GO/NO-GO
+   *   Phase 5 → Iterative micro-fix refinement (quality grinding)
+   *   Phase 6 → Chapter agents GO/NO-GO
    *
    * @param {Object} params
-   * @returns {{ prose, candidates, judgeReport, fixPlan, goNoGoResult, winner }}
+   * @returns {{ prose, candidates, judgeReport, fixPlan, goNoGoResult, winner, refinementScore }}
    */
   async runFullPipeline(params) {
     const {
@@ -773,20 +901,33 @@ Output valid JSON only:
         this._emit('pipeline', '=== PHASE 4: Skipped (no fixes needed) ===');
       }
 
-      // Phase 5
+      // Phase 5: Iterative micro-fix refinement
+      let refinementScore = 0;
+      this._emit('pipeline', '=== PHASE 5: Iterative Quality Refinement ===');
+      const refinement = await this.runIterativeRefinement(finalProse, {
+        qualityThreshold: qualityThreshold || 90,
+        genre,
+        voice,
+        aiInstructions: '',
+        maxIterations: 6
+      });
+      finalProse = refinement.refinedProse;
+      refinementScore = refinement.bestScore;
+
+      // Phase 6: GO/NO-GO
       let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
       if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
-        this._emit('pipeline', '=== PHASE 5: GO/NO-GO Launch Control ===');
+        this._emit('pipeline', '=== PHASE 6: GO/NO-GO Launch Control ===');
         goNoGoResult = await this.runGoNoGo(
           finalProse, currentChapterId, chapters, currentChapterTitle
         );
       } else {
-        this._emit('pipeline', '=== PHASE 5: Skipped (single chapter or agents disabled) ===');
+        this._emit('pipeline', '=== PHASE 6: Skipped (single chapter or agents disabled) ===');
       }
 
       this._abortController = null;
 
-      return { prose: finalProse, candidates, judgeReport: report, fixPlan, goNoGoResult, winner };
+      return { prose: finalProse, candidates, judgeReport: report, fixPlan, goNoGoResult, winner, refinementScore };
     } catch (err) {
       this._abortController = null;
       throw err;
