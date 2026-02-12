@@ -1234,15 +1234,17 @@ class App {
       // Build agent grid
       const grid = document.getElementById('ma-agent-grid');
       if (grid) {
-        const labels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold'];
+        const labels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold',
+          'Precision', 'Sensory', 'Rhythmic', 'Restraint', 'Accumulative'];
         grid.innerHTML = '';
         for (let i = 1; i <= agentCount; i++) {
           const card = document.createElement('div');
           card.className = 'ma-agent-card';
           card.id = `ma-agent-${i}`;
+          const agentType = i <= 5 ? 'palette' : 'wildcard';
           card.innerHTML = `
             <div class="ma-agent-label">Agent ${i}</div>
-            <div class="ma-agent-status">${labels[i - 1] || 'Agent'}</div>
+            <div class="ma-agent-status">${labels[i - 1] || 'Agent'}${agentType === 'wildcard' ? ' *' : ''}</div>
             <div class="ma-agent-score"></div>
           `;
           grid.appendChild(card);
@@ -1429,7 +1431,7 @@ class App {
       projectGoal: project.wordCountGoal || 0
     });
 
-    const agentCount = project.agentCount || 1;
+    const agentCount = project.agentCount || 5;
     const chapterAgentsEnabled = project.chapterAgentsEnabled !== false;
     this.orchestrator.configure({ agentCount, chapterAgentsEnabled });
 
@@ -1463,6 +1465,12 @@ class App {
       const wordsToGenerate = Math.max(wordTarget, projectWpc - existingWc);
       const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
 
+      // Gather error patterns for the chimera pipeline
+      let errorPatterns = [];
+      if (this.errorDb) {
+        try { errorPatterns = await this.errorDb.getPatterns({ minFrequency: 1, limit: 50 }); } catch (_) {}
+      }
+
       const result = await this.orchestrator.runFullPipeline({
         systemPrompt, userPrompt, maxTokens,
         genre, voice: project.voice || '',
@@ -1470,7 +1478,8 @@ class App {
         qualityThreshold: project.qualityThreshold || 90,
         currentChapterId: this.state.currentChapterId,
         currentChapterTitle: chapterTitle,
-        chapters
+        chapters,
+        errorPatterns
       });
 
       this._showMultiAgentOverlay(false);
@@ -1567,7 +1576,7 @@ class App {
     }
 
     const totalChapters = chapterOutlines.length;
-    const agentCount = project.agentCount || 1;
+    const agentCount = project.agentCount || 5;
     const isMultiAgent = agentCount > 1;
 
     // Gather generation settings from the UI
@@ -1684,6 +1693,12 @@ class App {
         const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
 
         try {
+          // Gather error patterns for the chimera pipeline
+          let errorPatterns = [];
+          if (this.errorDb) {
+            try { errorPatterns = await this.errorDb.getPatterns({ minFrequency: 1, limit: 50 }); } catch (_) {}
+          }
+
           const result = await this.orchestrator.runFullPipeline({
             systemPrompt, userPrompt, maxTokens,
             genre, voice: project.voice || '',
@@ -1691,7 +1706,8 @@ class App {
             qualityThreshold: project.qualityThreshold || 90,
             currentChapterId: chInfo.chapterId,
             currentChapterTitle: chInfo.title,
-            chapters: allChapters
+            chapters: allChapters,
+            errorPatterns
           });
 
           if (this._generateCancelled) break;
@@ -1758,7 +1774,7 @@ class App {
 
   async _runGeneration(options = {}) {
     // Route to multi-agent pipeline if agentCount > 1
-    const agentCount = this._currentProject?.agentCount || 1;
+    const agentCount = this._currentProject?.agentCount || 5;
     if (agentCount > 1 && !options.isContinuation && !options._isMultiChapterStep) {
       return this._runMultiAgentGeneration(options);
     }
@@ -2834,7 +2850,7 @@ class App {
     }
 
     const projectName = this._currentProject?.title || 'genesis';
-    const agentCount = this._currentProject?.agentCount || 1;
+    const agentCount = this._currentProject?.agentCount || 5;
 
     let md = `# Multi-Agent Pipeline Log\n\n`;
     md += `**Project:** ${projectName}\n`;
@@ -3613,8 +3629,13 @@ class App {
     }
 
     // Populate Multi-Agent settings
+    const agentCountVal = project.agentCount || 5;
     const agentCountEl = document.getElementById('bs-agent-count');
-    if (agentCountEl) agentCountEl.value = project.agentCount || 1;
+    if (agentCountEl) agentCountEl.value = agentCountVal;
+    const agentSliderEl = document.getElementById('agent-count-slider');
+    if (agentSliderEl) agentSliderEl.value = agentCountVal;
+    const agentDisplayEl = document.getElementById('agent-count-display');
+    if (agentDisplayEl) agentDisplayEl.textContent = agentCountVal;
     const chapterAgentsEl = document.getElementById('bs-chapter-agents');
     if (chapterAgentsEl) chapterAgentsEl.value = project.chapterAgentsEnabled === false ? 'disabled' : 'enabled';
 
@@ -4054,7 +4075,7 @@ class App {
     const authorPalette = this._currentProject?.authorPalette && typeof this._currentProject.authorPalette === 'object'
       ? this._currentProject.authorPalette
       : (document.getElementById('bs-author-palette')?.value?.trim() || '');
-    const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
+    const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 5;
     const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
 
     // Gather genre, subgenre, and voice from Book Setup tab
@@ -6315,6 +6336,18 @@ class App {
       this._triggerPaletteSelection(true);
     });
 
+    // --- Agent Count Slider ---
+    const agentSlider = document.getElementById('agent-count-slider');
+    const agentDisplay = document.getElementById('agent-count-display');
+    const agentHidden = document.getElementById('bs-agent-count');
+    if (agentSlider) {
+      agentSlider.addEventListener('input', (e) => {
+        const count = parseInt(e.target.value);
+        if (agentDisplay) agentDisplay.textContent = count;
+        if (agentHidden) agentHidden.value = count;
+      });
+    }
+
     // --- Error Database (from Settings tab) ---
     document.getElementById('btn-error-database-popup')?.addEventListener('click', () => {
       this._closeSetupBookModal();
@@ -6455,7 +6488,7 @@ class App {
       // Auto-save agent settings immediately on change
       if (e.target.id === 'bs-agent-count' || e.target.id === 'bs-chapter-agents') {
         if (this.state.currentProjectId) {
-          const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 1;
+          const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 5;
           const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
           await this.fs.updateProject(this.state.currentProjectId, { agentCount, chapterAgentsEnabled });
           this._currentProject = { ...this._currentProject, agentCount, chapterAgentsEnabled };

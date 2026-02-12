@@ -541,15 +541,18 @@
           </p>
           <div class="setup-form-row">
             <div class="form-group">
-              <label data-tooltip="Number of Writing Agents — How many parallel AI agents will generate competing prose drafts. More agents = more diversity but higher API cost. Each agent writes with a different creative 'temperature' for variety.">Writing Agents</label>
-              <select class="form-input" id="bs-agent-count">
-                <option value="1" selected>1 — Single agent (standard)</option>
-                <option value="2">2 — Dual agent</option>
-                <option value="3">3 — Triple agent (recommended)</option>
-                <option value="4">4 — Quad agent</option>
-                <option value="5">5 — Full squad</option>
-              </select>
-              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">More agents = better selection but higher API usage. 1 = standard mode (no multi-agent).</p>
+              <label data-tooltip="Number of Writing Agents — How many parallel AI agents will generate competing prose drafts. More agents = more diversity but higher API cost. 1-5 use your Author Palette voices; 6-10 add wildcard agents for extra diversity.">Writing Agents</label>
+              <div class="agent-count-control">
+                <input type="range" id="agent-count-slider" min="1" max="10" value="5" step="1">
+                <span id="agent-count-display" class="agent-count-value">5</span>
+              </div>
+              <div class="agent-count-labels">
+                <span>1 (single voice)</span>
+                <span>5 (default)</span>
+                <span>10 (maximum diversity)</span>
+              </div>
+              <input type="hidden" id="bs-agent-count" value="5">
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">1-5 use palette authors. 6-10 add wildcard agents with unique prose strategies. More agents = better chimera selection but higher API usage.</p>
             </div>
             <div class="form-group">
               <label data-tooltip="Chapter Agents — When enabled, each chapter maintains a continuity agent that tracks every detail (characters, locations, timeline, plot points). Before new prose is accepted, all chapter agents are polled for conflicts — like NASA launch control GO/NO-GO.">Chapter Agents</label>

@@ -4650,3 +4650,59 @@ select.form-input {
     font-size: 0.65rem;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Agent Count Slider
+   ═══════════════════════════════════════════════════════════ */
+
+.agent-count-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0;
+}
+
+#agent-count-slider {
+  flex: 1;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  outline: none;
+}
+
+#agent-count-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffc832;
+  cursor: pointer;
+  border: 2px solid rgba(0, 0, 0, 0.3);
+}
+
+#agent-count-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffc832;
+  cursor: pointer;
+  border: 2px solid rgba(0, 0, 0, 0.3);
+}
+
+.agent-count-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: #ffc832;
+  min-width: 28px;
+  text-align: center;
+}
+
+.agent-count-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 0 2px;
+}
