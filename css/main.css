@@ -1355,14 +1355,15 @@ body.no-bounce {
 }
 
 .btn-primary {
-  background: var(--accent-primary);
-  color: #1a1a2e;
-  border-color: var(--accent-primary);
+  background: #007AFF;
+  color: #ffffff;
+  border-color: #007AFF;
   font-weight: 600;
 }
 
 .btn-primary:hover {
-  background: var(--accent-secondary);
+  background: #0062CC;
+  border-color: #0062CC;
 }
 
 .btn-sm {
@@ -3802,11 +3803,11 @@ select.form-input {
   gap: 20px;
 }
 
-/* Wider matter grid in enlarged modal */
-.setup-tab-content .matter-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+/* Matter grids inside side-by-side columns stay single-column */
+.matter-columns .matter-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* Wider translation grid */
@@ -3877,5 +3878,166 @@ select.form-input {
 
   .setup-export-grid {
     grid-template-columns: 1fr;
+  }
+
+  .matter-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   Outline Review Popup (overlays Setup Book)
+   ============================================ */
+.outline-review-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.outline-review-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.outline-review-modal {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  width: min(900px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: scale(0.95);
+  transition: transform 0.2s;
+}
+
+.outline-review-overlay.visible .outline-review-modal {
+  transform: scale(1);
+}
+
+.outline-review-header {
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+}
+
+.outline-review-header h2 {
+  font-family: var(--font-serif);
+  font-size: 1.3rem;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.outline-review-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 24px 28px;
+}
+
+.outline-review-body .outline-chapter {
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.outline-chapter h4 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent-primary);
+  margin-bottom: 8px;
+}
+
+.outline-chapter .outline-text {
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.outline-chapter textarea.outline-edit {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.outline-chapter textarea.outline-edit:focus {
+  outline: none;
+  border-color: #007AFF;
+}
+
+.outline-review-footer {
+  padding: 16px 28px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+}
+
+.outline-review-footer .btn {
+  min-width: 140px;
+}
+
+/* Rethink Comments Popup (overlays Outline Review) */
+.rethink-comments-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 450;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.rethink-comments-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.rethink-comments-modal {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  width: min(560px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .outline-review-modal {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
   }
 }
