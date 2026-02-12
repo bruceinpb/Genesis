@@ -2928,6 +2928,9 @@ class App {
     if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
     if (genBtn) genBtn.disabled = true;
 
+    // Store generation params for rethink
+    this._outlineGenParams = { title, subtitle, genre, totalWords, numChapters, characters, notes, aiInstructions };
+
     try {
       const outlines = await this.generator.generateOutlines({
         title, subtitle, genre, totalWords, numChapters, characters, notes, aiInstructions
@@ -2937,37 +2940,10 @@ class App {
         throw new Error('No outlines were generated.');
       }
 
-      // Save book structure first
-      await this.fs.updateProject(this.state.currentProjectId, {
-        title, subtitle, wordCountGoal: totalWords, numChapters
-      });
-      this._currentProject = { ...this._currentProject, title, subtitle, wordCountGoal: totalWords, numChapters };
+      // Store outlines for review instead of immediately saving
+      this._pendingOutlines = outlines;
+      this._showOutlineReview(outlines);
 
-      // Create chapters from outlines
-      for (let i = 0; i < outlines.length; i++) {
-        const outline = outlines[i];
-        const ch = await this.fs.createChapter({
-          projectId: this.state.currentProjectId,
-          chapterNumber: i + 1,
-          title: outline.title || `Chapter ${i + 1}`,
-          content: '',
-          outline: outline.outline || ''
-        });
-        this._chapterWordCounts[ch.id] = 0;
-      }
-
-      // Refresh chapter list and load first chapter
-      await this._renderChapterList();
-      await this.renderChapterNav();
-      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
-      if (chapters.length > 0) {
-        await this._loadChapter(chapters[0].id);
-      }
-
-      document.getElementById('project-title').textContent = title;
-      this._updateStatusBarLocal();
-      this._closeAllPanels();
-      alert(`Generated ${outlines.length} chapter outlines. Review each chapter's outline in the editor.`);
     } catch (err) {
       console.error('Outline generation failed:', err);
       if (errorEl) {
@@ -2981,7 +2957,148 @@ class App {
   }
 
   // ========================================
-  //  Rethink Chapter Outline
+  //  Outline Review Popup
+  // ========================================
+
+  _showOutlineReview(outlines) {
+    const body = document.getElementById('outline-review-body');
+    if (!body) return;
+
+    // Render each chapter outline as an editable card
+    body.innerHTML = outlines.map((outline, i) => {
+      const title = outline.title || `Chapter ${i + 1}`;
+      const text = outline.outline || '';
+      return `<div class="outline-chapter" data-index="${i}">
+        <h4>Chapter ${i + 1}: ${this._escapeHtml(title)}</h4>
+        <textarea class="outline-edit" data-index="${i}" rows="6">${this._escapeHtml(text)}</textarea>
+      </div>`;
+    }).join('');
+
+    const overlay = document.getElementById('outline-review-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  async _acceptOutlines() {
+    const outlines = this._pendingOutlines;
+    if (!outlines || outlines.length === 0) return;
+
+    // Read any user edits from the textareas
+    const editedOutlines = outlines.map((outline, i) => {
+      const textarea = document.querySelector(`#outline-review-body textarea[data-index="${i}"]`);
+      return {
+        title: outline.title || `Chapter ${i + 1}`,
+        outline: textarea ? textarea.value : (outline.outline || '')
+      };
+    });
+
+    const params = this._outlineGenParams || {};
+
+    // Save book structure first
+    await this.fs.updateProject(this.state.currentProjectId, {
+      title: params.title, subtitle: params.subtitle,
+      wordCountGoal: params.totalWords, numChapters: params.numChapters
+    });
+    this._currentProject = { ...this._currentProject, title: params.title, subtitle: params.subtitle, wordCountGoal: params.totalWords, numChapters: params.numChapters };
+
+    // Create chapters from outlines
+    for (let i = 0; i < editedOutlines.length; i++) {
+      const outline = editedOutlines[i];
+      const ch = await this.fs.createChapter({
+        projectId: this.state.currentProjectId,
+        chapterNumber: i + 1,
+        title: outline.title,
+        content: '',
+        outline: outline.outline
+      });
+      this._chapterWordCounts[ch.id] = 0;
+    }
+
+    // Refresh chapter list and load first chapter
+    await this._renderChapterList();
+    await this.renderChapterNav();
+    const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    if (chapters.length > 0) {
+      await this._loadChapter(chapters[0].id);
+    }
+
+    document.getElementById('project-title').textContent = params.title || '';
+    this._updateStatusBarLocal();
+
+    // Close popups
+    document.getElementById('outline-review-overlay')?.classList.remove('visible');
+    this._closeAllPanels();
+
+    this._pendingOutlines = null;
+  }
+
+  _openRethinkCommentsPopup() {
+    document.getElementById('rethink-comments-prompt').value = '';
+    document.getElementById('rethink-comments-status').style.display = 'none';
+    document.getElementById('btn-rethink-comments-submit').disabled = false;
+    const overlay = document.getElementById('rethink-comments-overlay');
+    if (overlay) overlay.classList.add('visible');
+  }
+
+  async _submitRethinkComments() {
+    const userInstructions = document.getElementById('rethink-comments-prompt')?.value?.trim();
+    if (!userInstructions) {
+      alert('Please enter instructions for how to revise the outline.');
+      return;
+    }
+
+    const outlines = this._pendingOutlines;
+    if (!outlines || outlines.length === 0) return;
+
+    // Read any user edits from the textareas in the review popup
+    const currentOutlines = outlines.map((outline, i) => {
+      const textarea = document.querySelector(`#outline-review-body textarea[data-index="${i}"]`);
+      return {
+        title: outline.title || `Chapter ${i + 1}`,
+        outline: textarea ? textarea.value : (outline.outline || '')
+      };
+    });
+
+    const params = this._outlineGenParams || {};
+
+    document.getElementById('rethink-comments-status').style.display = '';
+    document.getElementById('btn-rethink-comments-submit').disabled = true;
+
+    try {
+      // Build a combined outline text for the AI to revise
+      const combinedOutline = currentOutlines.map((ch, i) =>
+        `Chapter ${i + 1}: ${ch.title}\n${ch.outline}`
+      ).join('\n\n---\n\n');
+
+      const revisedOutlines = await this.generator.generateOutlines({
+        ...params,
+        aiInstructions: (params.aiInstructions || '') +
+          '\n\nIMPORTANT REVISION INSTRUCTIONS: The user has reviewed a previous outline and wants the following changes applied:\n' +
+          userInstructions +
+          '\n\nHere is the previous outline to revise:\n' + combinedOutline
+      });
+
+      if (!revisedOutlines || !Array.isArray(revisedOutlines) || revisedOutlines.length === 0) {
+        throw new Error('No revised outlines were generated.');
+      }
+
+      // Update pending outlines and refresh the review popup
+      this._pendingOutlines = revisedOutlines;
+      this._showOutlineReview(revisedOutlines);
+
+      // Close rethink comments popup
+      document.getElementById('rethink-comments-overlay')?.classList.remove('visible');
+
+    } catch (err) {
+      console.error('Rethink outlines failed:', err);
+      alert('Rethink failed: ' + err.message);
+    } finally {
+      document.getElementById('rethink-comments-status').style.display = 'none';
+      document.getElementById('btn-rethink-comments-submit').disabled = false;
+    }
+  }
+
+  // ========================================
+  //  Rethink Chapter Outline (single chapter)
   // ========================================
 
   async _openRethinkModal() {
@@ -2992,7 +3109,7 @@ class App {
 
     const chapter = await this.fs.getChapter(this.state.currentChapterId);
     if (!chapter?.outline) {
-      alert('This chapter has no outline to rethink. Generate outlines first from the Book Structure panel.');
+      alert('This chapter has no outline to rethink. Generate outlines first from the AI Writer tab.');
       return;
     }
 
@@ -4862,6 +4979,20 @@ class App {
       if (e.target.id === 'setup-book-overlay') this._closeSetupBookModal();
     });
 
+    // Outline Review popup: close on overlay click
+    document.getElementById('outline-review-overlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'outline-review-overlay') {
+        document.getElementById('outline-review-overlay')?.classList.remove('visible');
+      }
+    });
+
+    // Rethink Comments popup: close on overlay click
+    document.getElementById('rethink-comments-overlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'rethink-comments-overlay') {
+        document.getElementById('rethink-comments-overlay')?.classList.remove('visible');
+      }
+    });
+
     // --- Setup Book Modal: tab switching ---
     document.querySelectorAll('.setup-tab').forEach(tab => {
       tab.addEventListener('click', () => this._switchSetupTab(tab.dataset.setupTab));
@@ -5168,6 +5299,23 @@ class App {
       }
       if (e.target.id === 'btn-rethink-cancel') {
         document.getElementById('rethink-overlay')?.classList.remove('visible');
+      }
+      // --- Outline Review popup events ---
+      if (e.target.id === 'btn-outline-accept') {
+        await this._acceptOutlines();
+      }
+      if (e.target.id === 'btn-outline-rethink') {
+        this._openRethinkCommentsPopup();
+      }
+      if (e.target.id === 'btn-close-outline-review') {
+        document.getElementById('outline-review-overlay')?.classList.remove('visible');
+      }
+      // --- Rethink Comments popup events ---
+      if (e.target.id === 'btn-rethink-comments-submit') {
+        await this._submitRethinkComments();
+      }
+      if (e.target.id === 'btn-rethink-comments-cancel') {
+        document.getElementById('rethink-comments-overlay')?.classList.remove('visible');
       }
       // --- Prose Review events ---
       if (e.target.id === 'btn-prose-review-accept') {
@@ -7903,6 +8051,11 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
     // Collapse runs of 3+ newlines into double newlines
     text = text.replace(/\n{3,}/g, '\n\n');
     return text.trim();
+  }
+
+  _escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   // ========================================

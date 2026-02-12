@@ -426,123 +426,124 @@
         </div>
 
         <div class="analysis-section">
-          <h3>&#128214; Front Matter</h3>
+          <h3>Front &amp; Back Matter</h3>
           <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-            Select pages to include before Chapter 1. These will be AI-generated based on your book details.
+            Select pages to include before Chapter 1 and after the final chapter.
           </p>
-          <div class="matter-grid" id="bs-front-matter-grid">
-            <label class="matter-option">
-              <input type="checkbox" id="bs-fm-title-page" value="title-page" checked>
-              <div class="matter-info">
-                <span class="matter-name">Title Page</span>
-                <span class="matter-desc">Title, subtitle, and author name</span>
+          <div class="matter-columns" style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+            <div>
+              <h4 style="font-size:0.9rem;font-weight:600;color:var(--text-primary);margin-bottom:10px;">&#128214; Front Matter</h4>
+              <div class="matter-grid" id="bs-front-matter-grid" style="display:flex;flex-direction:column;gap:6px;">
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-fm-title-page" value="title-page" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">Title Page</span>
+                    <span class="matter-desc">Title, subtitle, and author name</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-fm-copyright" value="copyright" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">Copyright Page</span>
+                    <span class="matter-desc">Copyright notice, ISBN, publisher info</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-fm-dedication" value="dedication">
+                  <div class="matter-info">
+                    <span class="matter-name">Dedication</span>
+                    <span class="matter-desc">Personal dedication page</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-fm-epigraph" value="epigraph">
+                  <div class="matter-info">
+                    <span class="matter-name">Epigraph</span>
+                    <span class="matter-desc">Opening quotation or excerpt</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-fm-table-of-contents" value="table-of-contents" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">Table of Contents</span>
+                    <span class="matter-desc">Auto-generated from chapter titles</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-fm-prologue" value="prologue">
+                  <div class="matter-info">
+                    <span class="matter-name">Prologue</span>
+                    <span class="matter-desc">Story preface or prologue chapter</span>
+                  </div>
+                </label>
               </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-fm-copyright" value="copyright" checked>
-              <div class="matter-info">
-                <span class="matter-name">Copyright Page</span>
-                <span class="matter-desc">Copyright notice, ISBN, publisher info</span>
+            </div>
+            <div>
+              <h4 style="font-size:0.9rem;font-weight:600;color:var(--text-primary);margin-bottom:10px;">&#128218; Back Matter</h4>
+              <div class="matter-grid" id="bs-back-matter-grid" style="display:flex;flex-direction:column;gap:6px;">
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-bm-epilogue" value="epilogue">
+                  <div class="matter-info">
+                    <span class="matter-name">Epilogue</span>
+                    <span class="matter-desc">Story closing or aftermath</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-bm-acknowledgments" value="acknowledgments">
+                  <div class="matter-info">
+                    <span class="matter-name">Acknowledgments</span>
+                    <span class="matter-desc">Thank-you page for contributors</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-bm-about-author" value="about-author" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">About the Author</span>
+                    <span class="matter-desc">Author bio and background</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-bm-also-by" value="also-by">
+                  <div class="matter-info">
+                    <span class="matter-name">Also By This Author</span>
+                    <span class="matter-desc">List of other published works</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-bm-glossary" value="glossary">
+                  <div class="matter-info">
+                    <span class="matter-name">Glossary</span>
+                    <span class="matter-desc">Terms and definitions</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-bm-appendix" value="appendix">
+                  <div class="matter-info">
+                    <span class="matter-name">Appendix</span>
+                    <span class="matter-desc">Supplementary material, maps, timelines</span>
+                  </div>
+                </label>
               </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-fm-dedication" value="dedication">
-              <div class="matter-info">
-                <span class="matter-name">Dedication</span>
-                <span class="matter-desc">Personal dedication page</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-fm-epigraph" value="epigraph">
-              <div class="matter-info">
-                <span class="matter-name">Epigraph</span>
-                <span class="matter-desc">Opening quotation or excerpt</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-fm-table-of-contents" value="table-of-contents" checked>
-              <div class="matter-info">
-                <span class="matter-name">Table of Contents</span>
-                <span class="matter-desc">Auto-generated from chapter titles</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-fm-prologue" value="prologue">
-              <div class="matter-info">
-                <span class="matter-name">Prologue</span>
-                <span class="matter-desc">Story preface or prologue chapter</span>
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <div class="analysis-section">
-          <h3>&#128218; Back Matter</h3>
-          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-            Select pages to include after the final chapter.
-          </p>
-          <div class="matter-grid" id="bs-back-matter-grid">
-            <label class="matter-option">
-              <input type="checkbox" id="bs-bm-epilogue" value="epilogue">
-              <div class="matter-info">
-                <span class="matter-name">Epilogue</span>
-                <span class="matter-desc">Story closing or aftermath</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-bm-acknowledgments" value="acknowledgments">
-              <div class="matter-info">
-                <span class="matter-name">Acknowledgments</span>
-                <span class="matter-desc">Thank-you page for contributors</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-bm-about-author" value="about-author" checked>
-              <div class="matter-info">
-                <span class="matter-name">About the Author</span>
-                <span class="matter-desc">Author bio and background</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-bm-also-by" value="also-by">
-              <div class="matter-info">
-                <span class="matter-name">Also By This Author</span>
-                <span class="matter-desc">List of other published works</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-bm-glossary" value="glossary">
-              <div class="matter-info">
-                <span class="matter-name">Glossary</span>
-                <span class="matter-desc">Terms and definitions</span>
-              </div>
-            </label>
-            <label class="matter-option">
-              <input type="checkbox" id="bs-bm-appendix" value="appendix">
-              <div class="matter-info">
-                <span class="matter-name">Appendix</span>
-                <span class="matter-desc">Supplementary material, maps, timelines</span>
-              </div>
-            </label>
+            </div>
           </div>
         </div>
 
         <button class="btn btn-primary" id="btn-save-book-structure" style="width:100%;margin-top:12px;">Save Book Structure</button>
-        <button class="btn" id="btn-ai-populate-matter" style="width:100%;margin-top:8px;" data-tooltip="AI Populate — Use AI to auto-generate content for all selected front and back matter pages based on your manuscript prose, characters, and project details.">
-          &#x2728; AI Populate Front &amp; Back Matter
-        </button>
+      </div>
 
-        <div class="analysis-section" style="margin-top:20px;">
+      <!-- ═══ Tab: AI Writer ═══ -->
+      <div class="setup-tab-content" id="setup-tab-ai-writer">
+        <div class="analysis-section">
           <h3>AI Outline Generation</h3>
           <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
             Generate a detailed outline for each chapter based on your notes, characters, and book structure.
             The AI will analyze all your project information and create ~200-250 word outlines per chapter,
-            auto-name each chapter, and populate the sidebar. Review and edit outlines before generating prose.
+            auto-name each chapter, and populate the sidebar.
           </p>
           <div id="bs-outline-status" style="display:none;margin-bottom:12px;">
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="generate-spinner"></div>
-              <span id="bs-outline-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating outlines...</span>
+              <span id="bs-outline-status-text" style="font-size:0.85rem;color:#007AFF;">Generating outlines...</span>
             </div>
           </div>
           <div id="bs-outline-error" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
@@ -551,10 +552,7 @@
             This will create chapters with outlines. Existing chapters will not be affected. Make sure you have entered notes, characters, and book structure information first.
           </p>
         </div>
-      </div>
 
-      <!-- ═══ Tab: AI Writer ═══ -->
-      <div class="setup-tab-content" id="setup-tab-ai-writer">
         <div class="analysis-section">
           <h3>Quality &amp; Style</h3>
           <div class="setup-form-row">
@@ -589,7 +587,7 @@
             Persistent rules the AI must follow for every generation in this project. These are given high priority in the prompt.
           </p>
           <textarea class="form-input" id="generate-ai-instructions" rows="4" data-tooltip="Enter rules or constraints the AI must follow for every prose generation." placeholder="e.g. Each chapter covers exactly 10 years. Write in a formal, historical narrative style."></textarea>
-          <button class="btn btn-sm" id="btn-save-ai-instructions" data-tooltip="Save these AI instructions to your project so they persist across sessions." style="width:100%;margin-top:6px;">Save Instructions</button>
+          <button class="btn btn-primary" id="btn-save-ai-instructions" data-tooltip="Save these AI instructions to your project so they persist across sessions." style="width:100%;margin-top:6px;">Save Instructions</button>
         </div>
 
         <div class="analysis-section">
@@ -639,23 +637,19 @@
         <div id="generate-status" style="display:none;margin-bottom:16px;">
           <div style="display:flex;align-items:center;gap:10px;">
             <div class="generate-spinner"></div>
-            <span id="generate-status-text" style="font-size:0.85rem;color:var(--accent-primary);">Generating...</span>
+            <span id="generate-status-text" style="font-size:0.85rem;color:#007AFF;">Generating...</span>
           </div>
         </div>
 
         <div id="generate-error" style="display:none;margin-bottom:16px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
 
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-primary" id="btn-generate-prose" data-tooltip="Generate Prose — Send your scene description to Claude AI." style="flex:1;">Generate Prose</button>
-          <button class="btn" id="btn-iterative-write" data-tooltip="Iterative Write — Generate ~100 words at a time with quality scoring." style="flex:1;color:var(--accent-primary);border-color:var(--accent-primary);">Iterative Write</button>
-          <button class="btn" id="btn-generate-cancel" style="display:none;">Stop</button>
-        </div>
+        <button class="btn" id="btn-generate-cancel" style="display:none;width:100%;">Stop</button>
 
         <div id="generate-no-key" style="display:none;margin-top:16px;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-md);text-align:center;">
           <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
             You need an Anthropic API key to generate prose.
           </p>
-          <button class="btn btn-sm btn-primary" id="btn-generate-open-settings">Open Settings to Add Key</button>
+          <button class="btn btn-primary" id="btn-generate-open-settings">Open Settings to Add Key</button>
         </div>
       </div>
 
@@ -920,6 +914,48 @@
     <div class="modal-footer">
       <button class="btn" id="btn-rethink-cancel">Cancel</button>
       <button class="btn btn-primary" id="btn-rethink-submit">Rethink</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Outline Review Popup (overlays Setup Book) ===== -->
+<div class="outline-review-overlay" id="outline-review-overlay">
+  <div class="outline-review-modal">
+    <div class="outline-review-header">
+      <h2>Review Generated Outlines</h2>
+      <button class="panel-close" id="btn-close-outline-review" aria-label="Close">&times;</button>
+    </div>
+    <div class="outline-review-body" id="outline-review-body">
+      <!-- Populated dynamically with chapter outlines -->
+    </div>
+    <div class="outline-review-footer">
+      <button class="btn" id="btn-outline-rethink" style="background:#dc3545;color:#fff;border-color:#dc3545;">Rethink Outline</button>
+      <button class="btn btn-primary" id="btn-outline-accept">Accept Outline</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Rethink Comments Popup (overlays Outline Review) ===== -->
+<div class="rethink-comments-overlay" id="rethink-comments-overlay">
+  <div class="rethink-comments-modal">
+    <div class="modal-header" style="padding:20px 24px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+      <h2 style="font-size:1.2rem;font-weight:700;">Rethink Outline</h2>
+    </div>
+    <div class="modal-body" style="padding:24px;">
+      <p style="font-size:0.9rem;color:var(--text-secondary);margin-bottom:14px;line-height:1.5;">
+        Describe the changes you want applied to the outline. The AI will revise all chapter outlines based on your instructions.
+      </p>
+      <textarea class="form-input" id="rethink-comments-prompt" rows="5" placeholder='e.g. "Delete all references to character X" or "Make the conflict more intense in chapters 5-10" or "Add a subplot involving..."'></textarea>
+      <div id="rethink-comments-status" style="display:none;margin-top:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="generate-spinner"></div>
+          <span style="font-size:0.85rem;color:#007AFF;">Rethinking outlines...</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="padding:16px 24px;border-top:1px solid var(--border-color);display:flex;justify-content:flex-end;gap:10px;">
+      <button class="btn" id="btn-rethink-comments-cancel">Cancel</button>
+      <button class="btn btn-primary" id="btn-rethink-comments-submit">Rethink &amp; Regenerate</button>
     </div>
   </div>
 </div>
