@@ -4401,3 +4401,39 @@ select.form-input {
   font-weight: 600;
   letter-spacing: 0.5px;
 }
+
+/* Responsive fixes for multi-agent overlays on laptop/desktop */
+@media (min-width: 768px) {
+  #multi-agent-overlay .modal,
+  #go-nogo-overlay .modal {
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+
+  .ma-agent-grid {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  }
+
+  .ma-status-log {
+    max-height: 160px;
+  }
+
+  .go-nogo-results {
+    max-height: 300px;
+  }
+}
+
+@media (max-width: 767px) {
+  .ma-agent-grid {
+    grid-template-columns: repeat(auto-fit, minmax(75px, 1fr));
+    gap: 6px;
+  }
+
+  .ma-agent-card {
+    padding: 8px 6px;
+  }
+
+  .ma-agent-label {
+    font-size: 0.65rem;
+  }
+}

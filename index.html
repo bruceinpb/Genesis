@@ -792,6 +792,9 @@
           <button class="btn btn-sm" id="btn-error-database-popup" data-tooltip="View and manage the cross-project error pattern database." style="width:100%;margin-bottom:8px;">
             &#9888; Error Pattern Database
           </button>
+          <button class="btn btn-sm" id="btn-download-agent-log" data-tooltip="Download multi-agent pipeline logs as a Markdown file. Logs include all agent activity: generation, judging, scoring, fixes, and GO/NO-GO results." style="width:100%;margin-bottom:8px;">
+            &#128196; Download Agent Log (.md)
+          </button>
         </div>
       </div>
 
@@ -916,7 +919,7 @@
 </div>
 
 <!-- ===== Multi-Agent Progress Overlay ===== -->
-<div class="modal-overlay" id="multi-agent-overlay" style="display:none;">
+<div class="modal-overlay" id="multi-agent-overlay">
   <div class="modal" style="width:min(520px, 92vw);">
     <div class="modal-body" style="padding:28px 24px;text-align:center;">
       <div style="font-size:1rem;font-weight:700;color:var(--text-primary);margin-bottom:4px;">Multi-Agent Pipeline</div>
@@ -952,7 +955,7 @@
 </div>
 
 <!-- ===== GO/NO-GO Mission Control Overlay ===== -->
-<div class="modal-overlay" id="go-nogo-overlay" style="display:none;">
+<div class="modal-overlay" id="go-nogo-overlay">
   <div class="modal" style="width:min(560px, 92vw);">
     <div class="modal-body" style="padding:0;">
       <div class="go-nogo-header">

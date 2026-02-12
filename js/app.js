@@ -1247,9 +1247,9 @@ class App {
         }
       }
 
-      overlay.style.display = 'flex';
+      overlay.classList.add('visible');
     } else {
-      overlay.style.display = 'none';
+      overlay.classList.remove('visible');
     }
   }
 
@@ -1313,18 +1313,18 @@ class App {
     // Buttons
     if (acceptBtn) {
       acceptBtn.style.display = isGo ? '' : 'none';
-      acceptBtn.onclick = () => { overlay.style.display = 'none'; if (onAccept) onAccept(); };
+      acceptBtn.onclick = () => { overlay.classList.remove('visible'); if (onAccept) onAccept(); };
     }
     if (rejectBtn) {
       rejectBtn.style.display = isGo ? 'none' : '';
-      rejectBtn.onclick = () => { overlay.style.display = 'none'; if (onReject) onReject(); };
+      rejectBtn.onclick = () => { overlay.classList.remove('visible'); if (onReject) onReject(); };
     }
     if (overrideBtn) {
       overrideBtn.style.display = isGo ? 'none' : '';
-      overrideBtn.onclick = () => { overlay.style.display = 'none'; if (onOverride) onOverride(); };
+      overrideBtn.onclick = () => { overlay.classList.remove('visible'); if (onOverride) onOverride(); };
     }
 
-    overlay.style.display = 'flex';
+    overlay.classList.add('visible');
   }
 
   /**
@@ -1547,10 +1547,213 @@ class App {
     if (wordsEl) wordsEl.textContent = wc.length.toLocaleString();
   }
 
+  /**
+   * Run sequential prose generation across multiple chapters.
+   * Each chapter is loaded, generated, saved, and optionally GO/NO-GO checked
+   * before moving to the next chapter.
+   */
+  async _runMultiChapterSequentialGeneration(chapterOutlines, allChapters) {
+    const project = this._currentProject;
+    if (!project) return;
+    if (!this.generator.hasApiKey()) {
+      alert('No API key set. Go to Settings to add your Anthropic API key.');
+      return;
+    }
+
+    const totalChapters = chapterOutlines.length;
+    const agentCount = project.agentCount || 1;
+    const isMultiAgent = agentCount > 1;
+
+    // Gather generation settings from the UI
+    const tone = document.getElementById('generate-tone')?.value?.trim() || '';
+    const style = document.getElementById('generate-style')?.value?.trim() || '';
+    const useCharacters = document.getElementById('generate-use-characters')?.checked;
+    const useNotes = document.getElementById('generate-use-notes')?.checked;
+    const wordTarget = parseInt(document.getElementById('generate-word-target')?.value) || 500;
+
+    let characters = [];
+    if (useCharacters && this.state.currentProjectId) {
+      characters = await this.localStorage.getProjectCharacters(this.state.currentProjectId);
+    }
+
+    let notes = '';
+    if (useNotes && this.state.currentProjectId) {
+      const projectNotes = await this.localStorage.getProjectNotes(this.state.currentProjectId);
+      if (projectNotes.length > 0) {
+        notes = projectNotes.map(n => {
+          let entry = n.title;
+          if (n.type && n.type !== 'general') entry = `[${n.type}] ${entry}`;
+          if (n.content) entry += '\n' + n.content;
+          return entry;
+        }).join('\n\n');
+      }
+    }
+
+    const knowledgePromptMain = await this._getProjectKnowledge();
+    if (knowledgePromptMain) {
+      notes = notes ? notes + '\n\n' + knowledgePromptMain : knowledgePromptMain;
+    }
+
+    const aiInstructions = project.aiInstructions || '';
+    const genreId = project.genre || '';
+    const subgenreId = project.subgenre || '';
+    const genreInfo = this._getGenreRules(genreId, subgenreId);
+    const genre = genreInfo ? genreInfo.label : '';
+    const genreRules = genreInfo ? genreInfo.rules : '';
+
+    let errorPatternsPrompt = '';
+    if (this.errorDb) {
+      try {
+        errorPatternsPrompt = await this.errorDb.buildNegativePrompt({ maxPatterns: 20, minFrequency: 2 });
+      } catch (_) {}
+    }
+
+    // Calculate words per chapter
+    const projectWpc = Math.round(
+      (project.wordCountGoal || 80000) / (project.numChapters || 20)
+    );
+
+    // Show the iterative overlay
+    this._closeAllPanels();
+    this._hideWelcome();
+    this._generateCancelled = false;
+    this._showContinueBar(false);
+    this._showIterativeOverlay(true, { showAgentPanel: isMultiAgent, agentCount });
+    if (isMultiAgent) this._showMultiAgentOverlay(true, agentCount);
+
+    const logEl = document.getElementById('iterative-status-log');
+    if (logEl) logEl.textContent = `Multi-chapter generation: ${totalChapters} chapters selected\n`;
+
+    for (let idx = 0; idx < totalChapters; idx++) {
+      if (this._generateCancelled) break;
+
+      const chInfo = chapterOutlines[idx];
+      const chapterNum = idx + 1;
+
+      // Update overlay with chapter progress
+      this._updateIterativePhase(`Chapter ${chapterNum}/${totalChapters}: ${chInfo.title}`);
+      this._updateIterativeLog(`\n--- Chapter ${chapterNum}/${totalChapters}: "${chInfo.title}" ---`);
+
+      // Load this chapter
+      await this._loadChapter(chInfo.chapterId);
+      this._currentChapterOutline = chInfo.outline;
+
+      const existingContent = this.editor.getContent();
+      const existingWc = (existingContent.replace(/<[^>]+>/g, '').match(/[a-zA-Z'''\u2019-]+/g) || []).length;
+      const wordsToGenerate = Math.max(0, projectWpc - existingWc);
+
+      if (wordsToGenerate < 50) {
+        this._updateIterativeLog(`  Skipping "${chInfo.title}" — already has ${existingWc} words (target: ${projectWpc})`);
+        continue;
+      }
+
+      // Build prompts for this specific chapter
+      const plot = chInfo.outline;
+
+      // Store gen settings for potential continuations
+      this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes, chapterOutline: chInfo.outline };
+
+      if (isMultiAgent) {
+        // Multi-agent pipeline for this chapter
+        const systemPrompt = this.generator._buildSystemPrompt({
+          tone, style, genre, genreRules,
+          voice: project.voice || '',
+          errorPatternsPrompt,
+          poetryLevel: project.poetryLevel || 3,
+          authorPalette: project.authorPalette || ''
+        });
+
+        const userPrompt = this.generator._buildUserPrompt({
+          plot, existingContent, chapterTitle: chInfo.title, characters, notes,
+          aiInstructions, chapterOutline: chInfo.outline, wordTarget: wordsToGenerate,
+          concludeStory: false, genre, genreRules,
+          projectGoal: project.wordCountGoal || 0
+        });
+
+        this.orchestrator.configure({ agentCount, chapterAgentsEnabled: project.chapterAgentsEnabled !== false });
+
+        // Reset agent grid for this chapter
+        this._showMultiAgentOverlay(true, agentCount);
+
+        const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
+
+        try {
+          const result = await this.orchestrator.runFullPipeline({
+            systemPrompt, userPrompt, maxTokens,
+            genre, voice: project.voice || '',
+            authorPalette: project.authorPalette || '',
+            qualityThreshold: project.qualityThreshold || 90,
+            currentChapterId: chInfo.chapterId,
+            currentChapterTitle: chInfo.title,
+            chapters: allChapters
+          });
+
+          if (this._generateCancelled) break;
+
+          // Handle GO/NO-GO result
+          const goResult = result.goNoGoResult;
+          let acceptProse = true;
+
+          if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
+            // Show GO/NO-GO overlay and wait for user decision
+            acceptProse = await new Promise((resolve) => {
+              this._showGoNoGoOverlay(goResult,
+                () => { resolve(true); },   // Accept
+                () => { resolve(false); },  // Reject
+                () => { resolve(true); }    // Override
+              );
+            });
+          }
+
+          if (acceptProse && result.prose) {
+            this._insertMultiAgentProse(result.prose, existingContent, chInfo.title);
+            this._updateIterativeLog(`  Chapter "${chInfo.title}" complete — prose inserted.`);
+
+            // Refresh all chapters list for next GO/NO-GO (updated content)
+            try {
+              allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+            } catch (_) {}
+
+            // Score the prose
+            if (result.prose.length > 100) {
+              this._scoreProse(result.prose);
+            }
+          } else {
+            this._updateIterativeLog(`  Chapter "${chInfo.title}" — prose rejected by GO/NO-GO.`);
+          }
+
+        } catch (err) {
+          if (err.name === 'AbortError') break;
+          console.error(`Multi-chapter: chapter "${chInfo.title}" failed:`, err);
+          this._updateIterativeLog(`  ERROR: Chapter "${chInfo.title}" — ${err.message}`);
+        }
+
+      } else {
+        // Single-agent chunked generation for this chapter
+        // Set plot field and run standard generation
+        const plotEl = document.getElementById('generate-plot');
+        if (plotEl) plotEl.value = plot;
+
+        try {
+          await this._runGeneration({ _isMultiChapterStep: true });
+        } catch (err) {
+          console.error(`Multi-chapter: chapter "${chInfo.title}" failed:`, err);
+          this._updateIterativeLog(`  ERROR: Chapter "${chInfo.title}" — ${err.message}`);
+        }
+      }
+    }
+
+    // Done with all chapters
+    this._showMultiAgentOverlay(false);
+    this._showIterativeOverlay(false);
+    this._showContinueBar(true);
+    this._updateIterativeLog(`\n=== Multi-chapter generation complete (${totalChapters} chapters) ===`);
+  }
+
   async _runGeneration(options = {}) {
     // Route to multi-agent pipeline if agentCount > 1
     const agentCount = this._currentProject?.agentCount || 1;
-    if (agentCount > 1 && !options.isContinuation) {
+    if (agentCount > 1 && !options.isContinuation && !options._isMultiChapterStep) {
       return this._runMultiAgentGeneration(options);
     }
 
@@ -2607,6 +2810,117 @@ class App {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Download the multi-agent pipeline log as a Markdown file.
+   */
+  _downloadAgentLog() {
+    if (!this.orchestrator) {
+      alert('No agent pipeline data available.');
+      return;
+    }
+
+    const log = this.orchestrator.getPipelineLog();
+    if (log.length === 0) {
+      alert('No agent log entries yet. Run a multi-agent generation first.');
+      return;
+    }
+
+    const projectName = this._currentProject?.title || 'genesis';
+    const agentCount = this._currentProject?.agentCount || 1;
+
+    let md = `# Multi-Agent Pipeline Log\n\n`;
+    md += `**Project:** ${projectName}\n`;
+    md += `**Exported:** ${new Date().toLocaleString()}\n`;
+    md += `**Agent Count:** ${agentCount}\n`;
+    md += `**Total Log Entries:** ${log.length}\n\n`;
+    md += `---\n\n`;
+
+    // Group log entries by pipeline phase
+    let currentPhaseGroup = '';
+    for (const entry of log) {
+      const time = new Date(entry.timestamp).toLocaleTimeString();
+      const phase = entry.phase || 'unknown';
+
+      // Insert headers for major pipeline transitions
+      if (phase === 'pipeline' && entry.message.startsWith('===')) {
+        md += `\n## ${entry.message.replace(/===/g, '').trim()}\n\n`;
+        currentPhaseGroup = phase;
+        continue;
+      }
+
+      // Phase grouping
+      const phaseLabel = this._getAgentPhaseLabel(phase);
+      if (phaseLabel && phaseLabel !== currentPhaseGroup) {
+        currentPhaseGroup = phaseLabel;
+      }
+
+      md += `- \`${time}\` **[${phase}]** ${entry.message}\n`;
+
+      // Include relevant data
+      if (entry.data) {
+        if (entry.data.report?.scores) {
+          md += `\n  **Scores:**\n`;
+          for (const s of entry.data.report.scores) {
+            md += `  - Agent ${s.agentId}: ${s.totalScore}/100 — ${s.summary || ''}\n`;
+          }
+          md += `\n`;
+        }
+        if (entry.data.fixPlan?.fixList) {
+          md += `\n  **Fix Plan:**\n`;
+          for (const f of entry.data.fixPlan.fixList) {
+            md += `  - [${f.type}] ${f.description}\n`;
+          }
+          md += `\n`;
+        }
+        if (entry.data.overallStatus) {
+          md += `  **Overall Status:** ${entry.data.overallStatus}\n`;
+        }
+        if (entry.data.conflicts && entry.data.conflicts.length > 0) {
+          md += `\n  **Conflicts:**\n`;
+          for (const c of entry.data.conflicts) {
+            md += `  - [${c.severity}] ${c.category}: ${c.established} vs. ${c.contradicted}\n`;
+          }
+          md += `\n`;
+        }
+      }
+    }
+
+    // Download
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `agent_log_${projectName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 40)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  _getAgentPhaseLabel(phase) {
+    const labels = {
+      'generating': 'Generation',
+      'agent-started': 'Generation',
+      'agent-done': 'Generation',
+      'agent-error': 'Generation',
+      'generation-complete': 'Generation',
+      'judging': 'Judging',
+      'judging-complete': 'Judging',
+      'fixing': 'Fix Planning',
+      'fixing-complete': 'Fix Planning',
+      'editing': 'Editing',
+      'editing-complete': 'Editing',
+      'digests': 'Chapter Digests',
+      'digest-building': 'Chapter Digests',
+      'digests-complete': 'Chapter Digests',
+      'go-nogo-start': 'GO/NO-GO',
+      'go-nogo-polling': 'GO/NO-GO',
+      'go-nogo-chapter': 'GO/NO-GO',
+      'go-nogo-complete': 'GO/NO-GO'
+    };
+    return labels[phase] || null;
   }
 
   _initApiKeyPinLock() {
@@ -5716,6 +6030,11 @@ class App {
       this.openErrorDatabasePanel();
     });
 
+    // --- Agent Log Download (from Settings tab) ---
+    document.getElementById('btn-download-agent-log')?.addEventListener('click', () => {
+      this._downloadAgentLog();
+    });
+
     // Translation language selection — SINGLE SELECT (radio behavior with checkboxes)
     const translationLangs = ['spanish', 'french', 'italian', 'german', 'portuguese', 'japanese'];
     for (const lang of translationLangs) {
@@ -6647,11 +6966,11 @@ class App {
       return;
     }
 
-    // Multi-chapter mode: save all edited outlines, then combine for plot
+    // Multi-chapter mode: save all edited outlines, then generate each chapter sequentially
     if (this._multiOutlineChapterIds && this._multiOutlineChapterIds.length > 1) {
-      const combinedOutlines = [];
       const allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
       const chapterMap = new Map(allChapters.map((ch, i) => [ch.id, { ...ch, orderIdx: i }]));
+      const chapterOutlines = [];
 
       for (const chId of this._multiOutlineChapterIds) {
         const textarea = document.querySelector(`#accept-outline-multi textarea[data-chapter-id="${chId}"]`);
@@ -6662,24 +6981,14 @@ class App {
         if (textarea && editedOutline !== (ch.outline || '')) {
           await this.fs.updateChapter(chId, { outline: editedOutline });
         }
-        combinedOutlines.push(`=== Chapter ${ch.orderIdx + 1}: ${ch.title || 'Untitled'} ===\n${editedOutline}`);
+        chapterOutlines.push({ chapterId: chId, title: ch.title || 'Untitled', orderIdx: ch.orderIdx, outline: editedOutline });
       }
 
       this._closeAcceptOutlineDialog();
-
-      // Load the first selected chapter if not already loaded
-      if (!this.state.currentChapterId || !this._multiOutlineChapterIds.includes(this.state.currentChapterId)) {
-        await this._loadChapter(this._multiOutlineChapterIds[0]);
-      }
-
-      const combined = combinedOutlines.join('\n\n');
-      this._currentChapterOutline = combined;
-
-      await this.openGeneratePanel();
-      const plotEl = document.getElementById('generate-plot');
-      if (plotEl) plotEl.value = combined;
       this._closeSetupBookModal();
-      await this._runGeneration();
+
+      // Run sequential generation across all selected chapters
+      await this._runMultiChapterSequentialGeneration(chapterOutlines, allChapters);
       return;
     }
 
