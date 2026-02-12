@@ -1,19 +1,30 @@
 /**
- * Genesis 2 — Multi-Agent Prose Orchestrator (v2: Chimera Pipeline)
+ * Genesis 2 — Multi-Agent Prose Orchestrator (v2.1: Anti-Detection Pipeline)
  *
  * Architecture:
  * - Writing Agents: N parallel agents (1-10) generate competing prose drafts
  * - Chimera Selection: Paragraph-level best-of selection across all agents
- * - Transition Smoothing: Junction sentences between different-author paragraphs
- * - Iterative Micro-Fix: Diagnose ONE weakness → fix → re-score → repeat
+ * - Voice Unification: Rewrite non-dominant paragraphs in dominant voice ★ NEW
+ * - Transition Smoothing: Junction sentences with continuity constraints ★ UPGRADED
+ * - Adversarial Audit: Forensic AI-detection scoring ★ NEW
+ * - Iterative Micro-Fix: Repair manual strategies + adversarial findings ★ UPGRADED
+ * - Roughness Injection: Controlled human-like imperfections ★ NEW
  * - Chapter Agents: Per-chapter continuity guardians (GO/NO-GO)
+ * - Footnote Insertion: Scholarly citation generation (conditional) ★ NEW
+ * - Index Compilation: Back-of-book index (conditional) ★ NEW
  *
  * Pipeline:
- *   1. Deploy N writing agents in parallel → N candidate drafts
- *   2. Paragraph-level chimera selection (best paragraph from each agent per position)
- *   3. Transition smoothing (only junction sentences between different-author paragraphs)
- *   4. Iterative micro-fix loop (one fix at a time, validate each, stop at 93+ or 3 passes)
- *   5. Chapter agents GO/NO-GO sequence
+ *   1.   Deploy N writing agents in parallel → N candidate drafts
+ *   2.   Paragraph-level chimera selection
+ *   2.5  Voice unification pass (rewrite non-native paragraphs in dominant voice)
+ *   3.   Transition smoothing (with continuity digest constraints)
+ *   3.5  Adversarial audit (human-likeness scoring, 0-100)
+ *   4.   Iterative micro-fix loop (repair manual + adversarial fix priorities)
+ *        Dual Score Gate: Quality >= 93 AND Human-Likeness >= 85 (max 3 loops)
+ *   4.5  Roughness injection (controlled imperfections)
+ *   5.   Chapter agents GO/NO-GO sequence
+ *   6.   Footnote insertion (conditional on scholarlyApparatus.footnotesEnabled)
+ *   7.   Index compilation (conditional on scholarlyApparatus.indexEnabled)
  */
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -844,7 +855,34 @@ Output valid JSON only:
 
     this._logPipeline('smoothing', `Smoothing ${flaggedTransitions.length} cross-agent transitions...`);
 
-    const systemPrompt = `You are a prose transition specialist. A passage has been assembled by selecting the best paragraphs from different authors. Some transitions between paragraphs feel slightly abrupt because they were written by different voices.
+    // Build continuity digest context if available
+    let continuityContext = '';
+    if (context.chapterDigest) {
+      continuityContext = `\n\nCHAPTER CONTINUITY DIGEST:\n${JSON.stringify(context.chapterDigest, null, 2)}\n`;
+    }
+
+    const systemPrompt = `You are a prose transition specialist smoothing transitions between paragraphs from different author-agents in a chimera assembly. Your goal is seamless reading flow.
+
+ABSOLUTE CONSTRAINTS:
+- You may ONLY modify sentence structure, word choice, clause order, and connecting phrases.
+- You may NOT introduce any new factual claims, attributions, dates, numbers, character motivations, or historical assertions.
+- You may NOT remove established facts.
+- You may NOT contradict any information in the CHAPTER CONTINUITY DIGEST provided below.
+- If a smooth transition REQUIRES new factual content to work, output: "[TRANSITION FLAG: Needs factual bridge — user review required]" and leave the transition as-is.
+${continuityContext}
+PERMITTED OPERATIONS:
+- Reorder clauses within a sentence
+- Change descriptors using ONLY information already present in the text
+- Add a subordinate clause using ONLY information already present in the preceding or following paragraph
+- Adjust tense or aspect for flow
+- Replace a period with a semicolon or comma to merge sentences
+
+FORBIDDEN OPERATIONS:
+- Adding characterization not present in source paragraphs
+- Adding motivation not present in source paragraphs
+- Adding historical claims not present in source paragraphs
+- Inventing dialogue or quotations
+- Adding dates, numbers, or proper nouns not already in the text
 
 YOUR TASK: Smooth the flagged transitions by modifying ONLY:
 - The LAST sentence of the preceding paragraph, AND/OR
@@ -853,12 +891,11 @@ YOUR TASK: Smooth the flagged transitions by modifying ONLY:
 === RULES ===
 1. Change NO MORE than 2 sentences total per transition
 2. Preserve the quality, voice, and content of both paragraphs
-3. Do NOT add new narrative content or remove existing content
-4. Do NOT change any sentence that is NOT at a transition junction
-5. The goal is seamlessness — a reader should not notice the author change
-6. Return the COMPLETE passage with smoothed transitions
-7. Word count must stay within 5% of the input
-8. After the passage, add a line "---SMOOTHING_LOG---" followed by a brief note on what you changed at each transition (1 line per transition)`;
+3. Do NOT change any sentence that is NOT at a transition junction
+4. The goal is seamlessness — a reader should not notice the author change
+5. Return the COMPLETE passage with smoothed transitions
+6. Word count must stay within 5% of the input
+7. After the passage, add a line "---SMOOTHING_LOG---" followed by a brief note on what you changed at each transition (1 line per transition)`;
 
     const transitionDescriptions = flaggedTransitions.map(t =>
       `Between P${t.fromPosition} (by ${t.fromAgent}) and P${t.toPosition} (by ${t.toAgent})`
@@ -1037,6 +1074,8 @@ Be HONEST. Most AI-generated prose has at least one tricolon or formulaic patter
    * Fix a single diagnosed weakness.
    */
   async _fixSingleElement(prose, diagnosis, context) {
+    const repairManual = this._buildRepairManualPrompt();
+
     const systemPrompt = `You are a surgical prose editor. Fix EXACTLY ONE weakness in this passage.
 
 THE WEAKNESS:
@@ -1044,6 +1083,8 @@ Exact text: "${diagnosis.text || ''}"
 Category: ${diagnosis.category}
 Diagnosis: ${diagnosis.diagnosis}
 Suggested approach: ${diagnosis.suggestedApproach || 'Rewrite to avoid the identified pattern'}
+
+${repairManual}
 
 === ABSOLUTE RULES ===
 1. Change ONLY the identified weak text and at most 1 adjacent sentence for flow
@@ -1056,7 +1097,8 @@ Suggested approach: ${diagnosis.suggestedApproach || 'Rewrite to avoid the ident
    - NO formulaic structures
 5. Return the COMPLETE passage with the single fix applied
 6. Word count must stay within 5% of the original
-7. If you cannot fix this without introducing new problems, return the original unchanged`;
+7. If you cannot fix this without introducing new problems, return the original unchanged
+8. State which repair strategy letter you used at the end, after a "---STRATEGY---" marker`;
 
     const response = await this._callApi(systemPrompt, `PROSE (${this._countWords(prose)} words):\n\n${prose}`, {
       temperature: 0.35,
@@ -1363,19 +1405,26 @@ Output valid JSON only:
   // ═══════════════════════════════════════════════════════════
 
   /**
-   * Run the complete multi-agent chimera pipeline:
-   *   Phase 1 → N writing agents generate in parallel
-   *   Phase 2 → Paragraph-level chimera selection (NEW)
-   *   Phase 3 → Transition smoothing (NEW)
-   *   Phase 4 → Iterative micro-fix loop (NEW)
-   *   Phase 5 → Chapter agents GO/NO-GO (unchanged)
+   * Run the complete multi-agent chimera pipeline (v2.1):
+   *   Phase 1   → N writing agents generate in parallel
+   *   Phase 2   → Paragraph-level chimera selection
+   *   Phase 2.5 → Voice unification pass ★ NEW
+   *   Phase 3   → Transition smoothing (UPGRADED — continuity digest)
+   *   Phase 3.5 → Adversarial audit ★ NEW
+   *   Phase 4   → Iterative micro-fix loop (UPGRADED — repair manual + adversarial findings)
+   *   Phase 4.5 → Roughness injection ★ NEW
+   *   Phase 5   → Chapter agents GO/NO-GO
+   *   Phase 6   → Footnote insertion ★ NEW (conditional)
+   *   Phase 7   → Index compilation ★ NEW (conditional)
+   *
+   * Dual Score Gate: Quality >= 93 AND Human-Likeness >= 85
    */
   async runFullPipeline(params) {
     const {
       systemPrompt, userPrompt, maxTokens,
       genre, voice, authorPalette, qualityThreshold,
       currentChapterId, currentChapterTitle, chapters,
-      errorPatterns
+      errorPatterns, scholarlyApparatus
     } = params;
 
     this._abortController = new AbortController();
@@ -1384,19 +1433,26 @@ Output valid JSON only:
       genre, voice, authorPalette, qualityThreshold,
       chapterTitle: currentChapterTitle,
       currentChapterTitle,
-      errorPatterns: errorPatterns || []
+      errorPatterns: errorPatterns || [],
+      scholarlyApparatus: scholarlyApparatus || {}
     };
 
     try {
       // ============ PHASE 1: Multi-Agent Generation ============
       this._emit('pipeline', '=== PHASE 1: Multi-Agent Generation ===');
 
+      // Inject source specificity and kicker budget into the system prompt
+      let augmentedSystemPrompt = systemPrompt;
+      const sourceSpecPrompt = this._buildSourceSpecificityPrompt(scholarlyApparatus);
+      if (sourceSpecPrompt) augmentedSystemPrompt += sourceSpecPrompt;
+      augmentedSystemPrompt += this._buildKickerBudgetPrompt();
+
       const roster = this._buildAgentRoster(this.agentCount, authorPalette, context);
 
       this._logPipeline('generating', `Deploying ${roster.length} ${roster.length === 1 ? 'agent' : 'AI-selected author-voice agents'}...`);
 
       const candidates = await this.generateWithAgents({
-        systemPrompt, userPrompt, maxTokens, roster, errorPatterns
+        systemPrompt: augmentedSystemPrompt, userPrompt, maxTokens, roster, errorPatterns
       });
 
       this._logPipeline('generation-complete', `${candidates.length} of ${roster.length} agents produced candidates.`);
@@ -1416,27 +1472,113 @@ Output valid JSON only:
       let currentProse = chimeraResult.prose;
       let currentScore = chimeraResult.score;
 
+      // ============ PHASE 2.5: Voice Unification Pass ============
+      if (chimeraResult.method === 'paragraph-chimera' && chimeraResult.selections.length > 1) {
+        this._emit('pipeline', '=== PHASE 2.5: Voice Unification Pass ===');
+        currentProse = await this._voiceUnify(currentProse, chimeraResult.selections, context);
+        this._logPipeline('voice-unify-complete', 'Voice unification complete.');
+      } else {
+        this._emit('pipeline', '=== PHASE 2.5: Skipped (single voice) ===');
+      }
+
       // ============ PHASE 3: Transition Smoothing ============
       if (chimeraResult.method === 'paragraph-chimera' && chimeraResult.selections.length > 1) {
         this._emit('pipeline', '=== PHASE 3: Transition Smoothing ===');
+
+        // Build continuity digest for the transition smoother if chapter agents are enabled
+        if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
+          try {
+            const otherChapters = chapters.filter(ch =>
+              ch.id !== currentChapterId &&
+              ch.content && ch.content.replace(/<[^>]+>/g, '').trim().length > 50
+            );
+            if (otherChapters.length > 0) {
+              await this.refreshAllDigests(otherChapters);
+              // Merge all digests into a combined context
+              const allFacts = [];
+              for (const ch of otherChapters) {
+                const digest = this._chapterDigests.get(ch.id);
+                if (digest && !digest.isEmpty) {
+                  allFacts.push(...(digest.establishedFacts || []));
+                }
+              }
+              if (allFacts.length > 0) {
+                context.chapterDigest = { establishedFacts: allFacts };
+              }
+            }
+          } catch (_) {
+            // Continue without digest if it fails
+          }
+        }
+
         currentProse = await this._smoothTransitions(currentProse, chimeraResult.selections, context);
         this._logPipeline('smoothing-complete', 'Transitions smoothed.');
       } else {
         this._emit('pipeline', '=== PHASE 3: Skipped (no cross-agent transitions) ===');
       }
 
-      // ============ PHASE 4: Iterative Micro-Fix Loop ============
+      // ============ PHASE 3.5: Adversarial Audit ============
+      this._emit('pipeline', '=== PHASE 3.5: Adversarial Audit ===');
+      const auditResult = await this._adversarialAudit(currentProse, context);
+      let humanLikenessScore = auditResult.humanLikenessScore || 75;
+
+      // ============ PHASE 4: Iterative Micro-Fix Loop (with Dual Score Gate) ============
       this._emit('pipeline', '=== PHASE 4: Iterative Micro-Fix Loop ===');
 
+      // If adversarial audit failed, prepend its fix priorities to the micro-fix context
+      if (humanLikenessScore < 85 && auditResult.topThreeFixPriorities) {
+        context.adversarialFixPriorities = auditResult.topThreeFixPriorities;
+        this._logPipeline('microfix', `Adversarial findings prepended: ${auditResult.topThreeFixPriorities.length} priority fixes.`);
+      }
+
       const microFixResult = await this._iterativeMicroFix(
-        currentProse, context, currentScore, 93, 3
+        currentProse, context, currentScore, qualityThreshold || 93, 3
       );
 
       currentProse = microFixResult.prose;
       currentScore = microFixResult.score;
 
       this._logPipeline('microfix-complete',
-        `Final score: ${currentScore}. Fixes applied: ${microFixResult.fixesApplied.length}`);
+        `Final quality score: ${currentScore}. Fixes applied: ${microFixResult.fixesApplied.length}`);
+
+      // Dual Score Gate: loop back if either gate fails (max 3 iterations)
+      let dualGateIterations = 0;
+      const maxDualGateLoops = 3;
+      while (dualGateIterations < maxDualGateLoops) {
+        const qualityPass = currentScore >= (qualityThreshold || 93);
+        const humanPass = humanLikenessScore >= 85;
+
+        if (qualityPass && humanPass) {
+          this._logPipeline('dual-gate', `DUAL GATE: PASS. Quality: ${currentScore} >= ${qualityThreshold || 93}, Human-Likeness: ${humanLikenessScore} >= 85.`);
+          break;
+        }
+
+        dualGateIterations++;
+        this._logPipeline('dual-gate', `DUAL GATE: FAIL (iteration ${dualGateIterations}/${maxDualGateLoops}). Quality: ${currentScore}, Human-Likeness: ${humanLikenessScore}. Looping back to micro-fix.`);
+
+        // Re-run adversarial audit to get fresh findings
+        const reAudit = await this._adversarialAudit(currentProse, context);
+        humanLikenessScore = reAudit.humanLikenessScore || humanLikenessScore;
+
+        if (reAudit.topThreeFixPriorities) {
+          context.adversarialFixPriorities = reAudit.topThreeFixPriorities;
+        }
+
+        const reFixResult = await this._iterativeMicroFix(
+          currentProse, context, currentScore, qualityThreshold || 93, 3
+        );
+        currentProse = reFixResult.prose;
+        currentScore = reFixResult.score;
+      }
+
+      if (dualGateIterations >= maxDualGateLoops) {
+        this._logPipeline('dual-gate', `DUAL GATE: Max iterations reached. Flagging for user review. Quality: ${currentScore}, Human-Likeness: ${humanLikenessScore}`);
+      }
+
+      // ============ PHASE 4.5: Roughness Injection ============
+      this._emit('pipeline', '=== PHASE 4.5: Roughness Injection ===');
+      currentProse = await this._roughnessInjection(currentProse, context);
+      this._logPipeline('roughness-complete', 'Roughness injection complete.');
 
       // ============ PHASE 5: GO/NO-GO Launch Control ============
       let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
@@ -1449,17 +1591,43 @@ Output valid JSON only:
         this._emit('pipeline', '=== PHASE 5: Skipped (single chapter or agents disabled) ===');
       }
 
+      // ============ PHASE 6: Footnote Insertion (conditional) ============
+      let footnoteResult = { prose: currentProse, footnotes: [], endnotes: [] };
+      if (scholarlyApparatus && scholarlyApparatus.footnotesEnabled) {
+        this._emit('pipeline', '=== PHASE 6: Footnote Insertion ===');
+        footnoteResult = await this._generateFootnotes(currentProse, context);
+        currentProse = footnoteResult.prose;
+        this._logPipeline('footnotes-complete', `Generated ${footnoteResult.footnotes.length} footnotes.`);
+      } else {
+        this._emit('pipeline', '=== PHASE 6: Skipped (footnotes disabled) ===');
+      }
+
+      // ============ PHASE 7: Index Compilation (conditional) ============
+      let indexResult = { entries: [], type: null };
+      if (scholarlyApparatus && scholarlyApparatus.indexEnabled) {
+        this._emit('pipeline', '=== PHASE 7: Index Compilation ===');
+        indexResult = await this._compileIndex(currentProse, context);
+        this._logPipeline('index-complete', `Compiled ${indexResult.entries.length} index entries.`);
+      } else {
+        this._emit('pipeline', '=== PHASE 7: Skipped (index disabled) ===');
+      }
+
       this._abortController = null;
 
       return {
         prose: currentProse,
         score: currentScore,
+        humanLikenessScore,
         candidates,
         chimeraMethod: chimeraResult.method,
         chimeraRationale: chimeraResult.rationale,
         fixesApplied: microFixResult.fixesApplied,
         goNoGoResult,
+        auditResult,
+        footnoteResult,
+        indexResult,
         wordCount: this._countWords(currentProse),
+        dualGateIterations,
         // Legacy compatibility fields
         judgeReport: chimeraResult.judgeReport || null,
         fixPlan: null,
@@ -1469,6 +1637,620 @@ Output valid JSON only:
       this._abortController = null;
       throw err;
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  SOURCE SPECIFICITY MODE — PROMPT INJECTION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Build the source specificity prompt addition when mode is active.
+   */
+  _buildSourceSpecificityPrompt(scholarlyApparatus) {
+    if (!scholarlyApparatus || !scholarlyApparatus.sourceSpecificityMode) return '';
+
+    return `
+
+=== SOURCE ATTRIBUTION RULES (Source Specificity Mode Active) ===
+
+NEVER use vague attributions. Every factual claim attributed to a source
+MUST include at least TWO of the following:
+  - A specific date (month/day/year or at minimum month/year)
+  - A document type with identifying detail (e.g., "memo to Sorensen dated March 4, 1924")
+  - A page number or page range
+  - An archival collection reference (e.g., "Box 14, Acc. 285, Benson Ford Research Center")
+  - A publication with volume/issue/page
+
+BANNED ATTRIBUTION PATTERNS (zero tolerance when Source Specificity is on):
+  - "according to one account"
+  - "contemporary accounts suggest"
+  - "correspondence from the period"
+  - "sources indicate"
+  - "as one [role] later recalled"
+  - "records from that era show"
+  - Any attribution that a reader cannot independently verify
+
+If the source material does not provide specific attribution data,
+state the fact WITHOUT attribution rather than inventing soft anchoring.
+Better to say "Ford visited the Rouge plant in January" than
+"according to contemporary accounts, Ford visited the Rouge plant."
+
+=== END SOURCE ATTRIBUTION RULES ===`;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  KICKER BUDGET — PROMPT INJECTION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Build the kicker budget prompt addition for all generation agents.
+   */
+  _buildKickerBudgetPrompt() {
+    return `
+
+=== KICKER BUDGET ===
+Maximum 2 paragraphs per chunk (750 words) may end on a deliberately resonant,
+ironic, or dramatic note. All other paragraphs MUST end in one of these ways:
+  - Mid-thought, with the next paragraph continuing the idea
+  - On a plain factual statement with no ironic subtext
+  - With a clause that propels forward ("which meant that..." /
+    "a decision that would take another three months to resolve")
+  - On a quotation that is informational rather than thematic
+
+A "kicker" is defined as: a short sentence (under 15 words) that closes
+a paragraph with deliberate resonance, irony, understatement, or thematic
+weight. Examples of kickers to avoid overusing:
+  - "He did not specify which people he meant."
+  - "It also came in blue."
+  - "Ford did not retract it."
+  - "He kept his eyes on the gears."
+
+ADDITIONAL RULE: No two consecutive paragraphs may BOTH end on kickers.
+At least one "pass-through" paragraph must separate any two kicker endings.
+=== END KICKER BUDGET ===`;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 2.5: VOICE UNIFICATION PASS
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Unify the voice of a chimera assembly by rewriting non-dominant-voice
+   * paragraphs in the dominant voice.
+   */
+  async _voiceUnify(prose, selections, context) {
+    if (!selections || selections.length === 0) {
+      this._logPipeline('voice-unify', 'No selection log available. Skipping voice unification.');
+      return prose;
+    }
+
+    // Count paragraphs per agent to find the dominant voice
+    const agentCounts = {};
+    for (const sel of selections) {
+      agentCounts[sel.agent] = (agentCounts[sel.agent] || 0) + 1;
+    }
+
+    // Find dominant voice
+    let dominantAgent = null;
+    let maxCount = 0;
+    for (const [agent, count] of Object.entries(agentCounts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        dominantAgent = agent;
+      } else if (count === maxCount) {
+        // Tie-break: prefer agent with opening or closing paragraph
+        const firstAgent = selections[0]?.agent;
+        const lastAgent = selections[selections.length - 1]?.agent;
+        if (agent === firstAgent || agent === lastAgent) {
+          dominantAgent = agent;
+        }
+      }
+    }
+
+    if (!dominantAgent) {
+      this._logPipeline('voice-unify', 'Could not determine dominant voice. Skipping.');
+      return prose;
+    }
+
+    // Find non-native paragraphs
+    const nonNative = selections.filter(s => s.agent !== dominantAgent);
+
+    if (nonNative.length === 0) {
+      this._logPipeline('voice-unify', `All paragraphs from ${dominantAgent}. No unification needed.`);
+      return prose;
+    }
+
+    this._logPipeline('voice-unify',
+      `Dominant voice: ${dominantAgent} — ${maxCount} of ${selections.length} paragraphs`);
+
+    // Find the dominant agent's voice prompt from the author palette
+    let dominantVoice = '';
+    if (context.authorPalette && typeof context.authorPalette === 'object' && context.authorPalette.authors) {
+      const author = context.authorPalette.authors.find(a => a.name === dominantAgent);
+      if (author) {
+        dominantVoice = author.voicePrompt || '';
+      }
+    }
+
+    const paragraphs = this._segmentParagraphs(prose);
+    let modified = false;
+    let unifiedParagraphs = [...paragraphs];
+
+    for (const sel of nonNative) {
+      const idx = sel.position - 1;
+      if (idx < 0 || idx >= paragraphs.length) continue;
+
+      this._logPipeline('voice-unify', `Rewriting P${sel.position} (was: ${sel.agent}) in ${dominantAgent} voice...`);
+
+      const preceding = idx > 0 ? paragraphs[idx - 1] : '';
+      const following = idx < paragraphs.length - 1 ? paragraphs[idx + 1] : '';
+
+      const systemPrompt = `You are ${dominantAgent}. Rewrite the following paragraph to match your voice and style. Preserve ALL factual content, proper nouns, dates, numbers, and quotations exactly. Change ONLY: sentence structure, word choice, rhythm, and cadence. Do not add or remove information.
+
+${dominantVoice ? `YOUR VOICE:\n${dominantVoice}\n` : ''}
+CONTEXT (for flow — do NOT rewrite these):
+${preceding ? `PRECEDING PARAGRAPH:\n${preceding}\n` : ''}
+${following ? `FOLLOWING PARAGRAPH:\n${following}\n` : ''}
+
+Return ONLY the rewritten paragraph. No preamble, no explanation.`;
+
+      try {
+        const rewritten = await this._callApi(systemPrompt,
+          `Rewrite this paragraph in your voice:\n\n${paragraphs[idx]}`,
+          { temperature: 0.4, maxTokens: 1000 }
+        );
+
+        if (rewritten && rewritten.trim().length > 20) {
+          unifiedParagraphs[idx] = rewritten.trim();
+          modified = true;
+        }
+      } catch (err) {
+        this._logPipeline('voice-unify', `Failed to rewrite P${sel.position}: ${err.message}`);
+      }
+    }
+
+    if (!modified) {
+      this._logPipeline('voice-unify', 'No paragraphs were modified. Keeping original.');
+      return prose;
+    }
+
+    const unifiedProse = unifiedParagraphs.join('\n\n');
+
+    // Score the unified version vs the original
+    const originalScore = await this._quickScore(prose, context);
+    const unifiedScore = await this._quickScore(unifiedProse, context);
+
+    if (unifiedScore >= originalScore - 2) {
+      this._logPipeline('voice-unify', `Unified chimera score: ${unifiedScore} (was ${originalScore}). Accepted.`);
+      return unifiedProse;
+    } else {
+      this._logPipeline('voice-unify', `Unified score ${unifiedScore} dropped > 2 from ${originalScore}. Keeping original, flagging for review.`);
+      return prose;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 3.5: ADVERSARIAL AUDIT
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Adversarial audit pass that evaluates prose for AI-detection signals.
+   * Returns a humanLikenessScore (0-100) and fix priorities.
+   */
+  async _adversarialAudit(prose, context) {
+    this._logPipeline('adversarial', 'Running adversarial audit...');
+
+    // Build the error pattern database section for injection
+    let patternDbSection = '';
+    if (context.errorPatterns && context.errorPatterns.length > 0) {
+      const patterns = context.errorPatterns
+        .filter(p => !p.dismissed)
+        .slice(0, 38);
+      patternDbSection = patterns.map(p =>
+        `- [${p.category}] "${(p.text || '').substring(0, 60)}" — ${p.problem || p.category}`
+      ).join('\n');
+    }
+
+    const systemPrompt = `ROLE: You are a forensic literary analyst hired by a major publishing house to determine whether a submitted manuscript was written by an experienced human author or generated by AI. You are adversarial — your job is to find every possible AI signal. You are not evaluating quality. Quality can be high and still be detectably AI.
+
+Score the following prose on a 0-100 HUMAN-LIKENESS scale where:
+  100 = Certainly written by an experienced human author
+  75  = Probably human, minor concerns
+  50  = Could go either way
+  25  = Probably AI-generated or AI-assisted
+  0   = Certainly AI-generated
+
+EVALUATE THESE DIMENSIONS (score each 0-10, then compute weighted total):
+
+1. ATTRIBUTION AUTHENTICITY (weight: 15%)
+   Are source citations specific and auditable (dates, page numbers, archival box numbers, document identifiers)? Or are they vaguely plausible ("according to one account," "correspondence from the period")?
+   - Each vague/soft attribution: -2 from this dimension
+   - Specific, verifiable attributions: +1 each (max 10)
+
+2. CADENCE NATURALNESS (weight: 15%)
+   Is sentence rhythm varied organically, or consistently cinematic?
+   Measure:
+   - Paragraph length variance (standard deviation)
+   - Sentence length variance within paragraphs
+   - If paragraph length SD < 20 words: score <= 4
+   - If all paragraphs are 50-80 words: score <= 3
+   - Genuinely uneven paragraph lengths (30, 95, 45, 120, 15): score >= 8
+
+3. KICKER DENSITY (weight: 15%)
+   What percentage of paragraphs end on a deliberately resonant, ironic, or dramatic note?
+   - Above 60%: score <= 2
+   - Above 40%: score <= 5
+   - 20-30%: score 7-8 (normal human range)
+   - Below 20%: score 9-10
+
+4. VOICE CONSISTENCY (weight: 15%)
+   Does the prose read as one author's voice throughout?
+   - Detectable register shifts between paragraphs: -2 each
+   - Consistent voice with natural variation: score 8-10
+   - "Committee prose" feel (competent everywhere, distinctive nowhere): score <= 4
+
+5. PATTERN DENSITY (weight: 15%)
+   Check against the KNOWN AI PATTERN DATABASE below. Count instances:
+${patternDbSection || '(No project-specific patterns available — use general AI pattern knowledge)'}
+   Scoring:
+   - 0-2 patterns found: score 9-10
+   - 3-5 patterns: score 6-8
+   - 6-10 patterns: score 3-5
+   - 11+ patterns: score <= 2
+
+6. HUMAN ARTIFACTS (weight: 10%)
+   Does the prose contain signals of human drafting?
+   Positive signals (each found adds +1):
+   - A slightly awkward transition that works but could be smoother
+   - One sentence that runs longer than ideal
+   - A citation more specific than strictly necessary
+   - Asymmetric paragraph lengths
+   - A factual aside that's interesting but not perfectly integrated
+   - One instance of slightly elevated or slightly flat register
+   If zero human artifacts found: score <= 3 (too clean = AI signal)
+
+7. STRUCTURAL OSCILLATION (weight: 15%)
+   Does the text alternate mechanically between analytical passages and dramatic scenes?
+   - Metronomic A-B-A-B alternation: score <= 3
+   - Organic, unpredictable structure: score 8-10
+   - Occasionally predictable but not mechanical: score 5-7
+
+OUTPUT FORMAT:
+Return ONLY valid JSON, no markdown, no backticks:
+{
+  "humanLikenessScore": 72,
+  "dimensionScores": {
+    "attributionAuthenticity": { "score": 4, "findings": ["..."] },
+    "cadenceNaturalness": { "score": 5, "findings": ["..."] },
+    "kickerDensity": { "score": 3, "findings": ["..."] },
+    "voiceConsistency": { "score": 6, "findings": ["..."] },
+    "patternDensity": { "score": 5, "findings": ["..."] },
+    "humanArtifacts": { "score": 2, "findings": ["..."] },
+    "structuralOscillation": { "score": 6, "findings": ["..."] }
+  },
+  "topThreeFixPriorities": [
+    { "dimension": "...", "specificFinding": "...", "suggestedFix": "..." },
+    { "dimension": "...", "specificFinding": "...", "suggestedFix": "..." },
+    { "dimension": "...", "specificFinding": "...", "suggestedFix": "..." }
+  ]
+}
+
+Be STRICT. Real human nonfiction scores 80-95. AI prose typically scores 40-70.`;
+
+    const response = await this._callApi(systemPrompt, `PROSE TO AUDIT:\n\n${prose}`, {
+      temperature: 0.15,
+      maxTokens: 2000
+    });
+
+    const result = this._parseJSON(response);
+
+    if (!result || typeof result.humanLikenessScore !== 'number') {
+      this._logPipeline('adversarial', 'Failed to parse adversarial audit result. Defaulting to score 75.');
+      return {
+        humanLikenessScore: 75,
+        dimensionScores: {},
+        topThreeFixPriorities: [],
+        parseError: true
+      };
+    }
+
+    // Log results
+    this._logPipeline('adversarial', `Human-Likeness Score: ${result.humanLikenessScore}`);
+    if (result.dimensionScores) {
+      for (const [dim, data] of Object.entries(result.dimensionScores)) {
+        const score = typeof data === 'object' ? data.score : data;
+        const findings = typeof data === 'object' && data.findings ? data.findings.join('; ') : '';
+        this._logPipeline('adversarial', `  ${dim}: ${score}/10${findings ? ' — ' + findings.substring(0, 100) : ''}`);
+      }
+    }
+
+    if (result.humanLikenessScore >= 85) {
+      this._logPipeline('adversarial', `GATE: PASS (${result.humanLikenessScore} >= 85).`);
+    } else {
+      this._logPipeline('adversarial', `GATE: FAIL (${result.humanLikenessScore} < 85). Routing top 3 fixes to micro-fix loop.`);
+      if (result.topThreeFixPriorities) {
+        result.topThreeFixPriorities.forEach((fix, i) => {
+          this._logPipeline('adversarial', `  Priority ${i + 1}: ${fix.dimension} — ${fix.specificFinding}`);
+        });
+      }
+    }
+
+    return result;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 4 ENHANCEMENT: MICRO-FIX REPAIR MANUAL
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Build the repair manual prompt section for the micro-fix agent.
+   */
+  _buildRepairManualPrompt() {
+    return `
+REPAIR STRATEGIES — When fixing an identified pattern, use ONLY these strategies:
+
+TRICOLON (three-item lists/structures):
+  Strategy A: Reduce to two items. Delete the weakest of the three.
+  Strategy B: Expand to four or more items, breaking the rhythmic pattern.
+  Strategy C: Collapse into a single compound sentence with subordinate clauses.
+  Strategy D: Keep three items but vary their grammatical structure (noun phrase, then clause, then single word).
+  NEVER: Replace a tricolon with a different tricolon.
+
+DRAMATIC KICKER (resonant/ironic paragraph-ending sentence):
+  Strategy A: Delete the kicker entirely. Let the preceding sentence end the paragraph. Often the kicker is redundant.
+  Strategy B: Move the kicker content to the MIDDLE of the next paragraph, where it becomes a bridge rather than a landing.
+  Strategy C: Replace with a continuation clause that propels into the next paragraph (e.g., change period to comma or semicolon and add forward momentum).
+  Strategy D: Convert to a plain factual statement. Strip the irony/resonance. Sometimes "He signed the papers on March 4" is better than "He signed the papers. He did not enjoy signing them."
+  NEVER: Replace one kicker with a differently-worded kicker.
+
+FORMULAIC STRUCTURE (data -> pivot -> dramatic reversal):
+  Strategy A: Reorder. Start with the reversal, then backfill context.
+  Strategy B: Embed the pivot mid-paragraph rather than at a boundary.
+  Strategy C: Remove the pivot entirely. Let the data speak and trust the reader to notice the tension.
+  Strategy D: Split into two paragraphs with different content between the data and the reversal.
+  NEVER: Rewrite a pivot sentence with a differently-worded pivot.
+
+RHETORICAL PARALLELISM (repeated grammatical structures):
+  Strategy A: Vary the grammar. If you have "He did X. He did Y. He did Z," change to "He did X. The Y happened on its own. As for Z, that required a different kind of attention."
+  Strategy B: Subordinate one element: "He did X, and because of that, Y followed, though Z proved harder."
+  Strategy C: Break with a parenthetical or aside between parallel elements.
+  NEVER: Replace parallel structure with different parallel structure.
+
+SOFT ATTRIBUTION:
+  Strategy A: Add specificity — date, document ID, page number, archive box.
+  Strategy B: Remove the attribution entirely. State the fact directly.
+  Strategy C: Attribute to a named person with a specific context: "Sorensen told interviewers in 1956" not "one executive later recalled."
+  NEVER: Replace one vague attribution with a differently-worded vague attribution.
+
+TELLING VS SHOWING:
+  Strategy A: Replace the emotional label with a physical action or gesture that is NOT a stock image (NOT "looked at the floor" or "clenched his fists" — those are stock).
+  Strategy B: Delete the telling sentence. If the scene is well-written, the emotion is already implicit.
+  Strategy C: Convert to dialogue that reveals the emotion indirectly.
+  NEVER: Replace one telling statement with another telling statement using different emotion words.
+
+For EACH fix you apply, state which strategy letter you are using.`;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 4.5: ROUGHNESS INJECTION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Inject controlled imperfections that mimic natural human writing.
+   */
+  async _roughnessInjection(prose, context) {
+    this._logPipeline('roughness', 'Injecting controlled imperfections...');
+
+    const sourceSpecificityOn = context.scholarlyApparatus?.sourceSpecificityMode === true;
+
+    const systemPrompt = `ROLE: You are an editor performing a final pass to ensure this prose reads like it was written by a human author in a normal drafting process, not generated by a machine. Your job is to introduce CONTROLLED IMPERFECTIONS that mimic natural human writing.
+
+REQUIRED CHANGES (apply exactly these, no more):
+
+1. PARAGRAPH LENGTH VARIANCE
+   Identify the current paragraph length pattern. If paragraphs cluster within +/-20 words of each other, adjust ONE paragraph to be notably shorter (under 30 words) and ONE to be notably longer (over 100 words) by either splitting a sentence from one paragraph into its own short paragraph, or combining two short paragraphs.
+
+2. ONE FUNCTIONAL TRANSITION
+   Find one transition between paragraphs that is currently elegant or crafted. Replace it with a plain functional transition:
+   - "By that spring," or "The following month," or "Meanwhile," or "The situation was more complicated than that."
+   These are the transitions real authors use when they are moving the narrative forward without performing.
+
+3. ONE SLIGHTLY LONG SENTENCE
+   Find one sentence in the 15-20 word range that could be tightened. Instead of tightening it, EXTEND it by 5-8 words with a subordinate clause or parenthetical aside that adds minor texture but is not strictly necessary. Real authors often leave these in because they like the detail even though an editor might trim it.
+
+${sourceSpecificityOn ? `4. ONE OVER-SPECIFIC CITATION
+   Find one attribution and make it MORE specific than needed — add the day of the week, or the box number AND the folder number, or mention the physical condition of the document. Real archival historians sometimes include too much detail because they remember the experience of finding the document.` : `4. ONE MINOR RHYTHM BREAK
+   Find a sequence of 3+ sentences with similar lengths. Vary one sentence length by adding or removing a subordinate clause.`}
+
+CONSTRAINTS:
+- Do NOT introduce grammatical errors. Human nonfiction authors do not make grammar mistakes. The roughness is in rhythm, structure, and proportion.
+- Do NOT reduce prose quality. Every change should be indistinguishable from a normal human authorial choice.
+- Do NOT change more than 5% of the total word count.
+- Preserve all factual content exactly.
+- Return the COMPLETE modified passage.
+- After the passage, add a line "---ROUGHNESS_LOG---" followed by a brief description of each change made (one line per change).`;
+
+    const response = await this._callApi(systemPrompt,
+      `PROSE (${this._countWords(prose)} words):\n\n${prose}`,
+      { temperature: 0.4, maxTokens: 2500 }
+    );
+
+    let roughened = response.trim();
+    const logMarker = roughened.indexOf('---ROUGHNESS_LOG---');
+    if (logMarker !== -1) {
+      const log = roughened.substring(logMarker + '---ROUGHNESS_LOG---'.length).trim();
+      roughened = roughened.substring(0, logMarker).trim();
+      for (const line of log.split('\n').filter(l => l.trim())) {
+        this._logPipeline('roughness', `  ${line.trim()}`);
+      }
+    }
+
+    // Validate word count drift
+    const originalWords = this._countWords(prose);
+    const roughenedWords = this._countWords(roughened);
+    const drift = Math.abs(roughenedWords - originalWords) / originalWords;
+
+    if (drift > 0.05) {
+      this._logPipeline('roughness', `Word count drift ${Math.round(drift * 100)}% exceeds 5%. Using original.`);
+      return prose;
+    }
+
+    this._logPipeline('roughness', `Words: ${originalWords} -> ${roughenedWords}. Changes applied.`);
+    return roughened;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 6: FOOTNOTE INSERTION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Generate footnotes for approved prose.
+   * Only runs when scholarlyApparatus.footnotesEnabled is true.
+   */
+  async _generateFootnotes(prose, context) {
+    const sa = context.scholarlyApparatus;
+    if (!sa || !sa.footnotesEnabled) {
+      return { prose, footnotes: [], endnotes: [] };
+    }
+
+    this._logPipeline('footnotes', `Generating ${sa.footnoteFormat || 'endnotes'}...`);
+
+    const formatInstructions = {
+      endnotes: 'Number footnotes sequentially within the chapter (1, 2, 3...). They will be collected at chapter end under a "Notes" heading. Use full Chicago Manual of Style citations on first reference, short form on subsequent references.',
+      footnotes: 'Number footnotes sequentially per page, using superscript numbers. Use full Chicago Manual of Style citations.',
+      inline: 'Insert (Author, Year, p. XX) at point of reference. Collect full citations for a bibliography section.'
+    };
+
+    const sourceSpecificityRules = sa.sourceSpecificityMode
+      ? `\nSOURCE SPECIFICITY MODE IS ON: Footnotes must include archival detail (collection, box, folder, document type, date) whenever available.`
+      : '';
+
+    const systemPrompt = `ROLE: You are a professional research assistant preparing footnotes for a narrative nonfiction manuscript. You have access to the source material and must create accurate, properly formatted scholarly citations.
+
+FORMAT: ${formatInstructions[sa.footnoteFormat] || formatInstructions.endnotes}
+${sourceSpecificityRules}
+
+RULES:
+- NEVER invent citations. If you cannot identify the source for a claim, output: "[SOURCE NEEDED: (description of claim)]"
+- Follow Chicago Manual of Style, 17th Edition (Notes-Bibliography system)
+- First reference: full citation. Subsequent references: short form.
+- For archival materials: Collection name, Box/Folder, Repository.
+- For interviews/oral histories: Name, interview date, interviewer if known.
+- For newspaper articles: Author (if known), "Title," Publication, date, page.
+
+SCAN the prose for citation-worthy elements:
+- Direct quotations attributed to a source
+- Specific dates, figures, or statistics
+- Claims about archival documents
+- Named publications or studies
+- Paraphrased accounts from named individuals
+
+OUTPUT FORMAT:
+Return ONLY valid JSON:
+{
+  "annotatedProse": "The prose with superscript markers inserted like [1] at appropriate positions",
+  "footnotes": [
+    { "number": 1, "text": "Full citation text here", "type": "archival|book|article|interview|document" },
+    { "number": 2, "text": "[SOURCE NEEDED: description]", "type": "unknown" }
+  ]
+}`;
+
+    const response = await this._callApi(systemPrompt,
+      `Generate footnotes for this prose:\n\n${prose}`,
+      { temperature: 0.1, maxTokens: 3000 }
+    );
+
+    const result = this._parseJSON(response);
+
+    if (!result || !result.footnotes) {
+      this._logPipeline('footnotes', 'Failed to parse footnote response. Returning prose without footnotes.');
+      return { prose, footnotes: [], endnotes: [] };
+    }
+
+    const sourceNeeded = result.footnotes.filter(f => f.text?.includes('[SOURCE NEEDED'));
+    this._logPipeline('footnotes', `Generated ${result.footnotes.length} footnotes. ${sourceNeeded.length} need source verification.`);
+
+    return {
+      prose: result.annotatedProse || prose,
+      footnotes: result.footnotes,
+      endnotes: sa.footnoteFormat === 'endnotes' ? result.footnotes : [],
+      format: sa.footnoteFormat || 'endnotes'
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 7: INDEX COMPILATION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Compile index entries from completed chapter text.
+   * Runs as post-processing after all chapters are complete.
+   */
+  async _compileIndex(allChaptersText, context) {
+    const sa = context.scholarlyApparatus;
+    if (!sa || !sa.indexEnabled) {
+      return { entries: [], type: null };
+    }
+
+    const indexType = sa.indexType || 'combined';
+    this._logPipeline('index', `Compiling ${indexType} index...`);
+
+    const typeInstructions = {
+      subject: 'Create a SUBJECT INDEX only. Include key concepts, organizations, places, events, and technologies. Do NOT include individual people.',
+      name: 'Create a NAME INDEX only. Include all named individuals with their role on first appearance. Format: Last name, First name.',
+      combined: 'Create a COMBINED INDEX with both subjects and names in one alphabetical sequence.',
+      separate: 'Create TWO SEPARATE INDEXES: first a NAME INDEX, then a SUBJECT INDEX. Each alphabetized independently.'
+    };
+
+    const systemPrompt = `ROLE: You are a professional book indexer preparing a back-of-book index for a narrative nonfiction work. You follow the conventions of the Chicago Manual of Style, 17th Edition, Chapter 16.
+
+INDEX TYPE: ${typeInstructions[indexType]}
+
+INDEXING RULES:
+- Index significant discussions, not passing mentions
+- Use page ranges for extended treatment (e.g., "45-52" not "45, 46, 47...")
+- Create "See" references for alternate forms (e.g., "GM. See General Motors")
+- Create "See also" references for related topics
+- Sub-entries should be substantive, not just page locators
+- Alphabetize letter-by-letter (ignoring spaces and punctuation)
+- People: Last name, First name
+- Numbers: file under spelled-out form
+- Prepositions in sub-entries: avoid starting with articles (a, an, the)
+
+For page numbers, use the chapter number as a prefix (e.g., "1-5" means chapter 1, approximate page 5).
+
+OUTPUT FORMAT:
+Return ONLY valid JSON:
+{
+  "type": "${indexType}",
+  "entries": [
+    {
+      "term": "Ford, Henry",
+      "pageRefs": "1-5, 2-12, 3-18",
+      "subEntries": [
+        { "term": "and Dodge brothers lawsuit", "pageRefs": "6-7" },
+        { "term": "and Rouge River plant", "pageRefs": "1-5, 2-12" }
+      ],
+      "seeAlso": ["Ford Motor Company"],
+      "category": "name"
+    }
+  ]
+}`;
+
+    const response = await this._callApi(systemPrompt,
+      `Compile an index from this text:\n\n${allChaptersText.substring(0, 15000)}`,
+      { temperature: 0.1, maxTokens: 4096 }
+    );
+
+    const result = this._parseJSON(response);
+
+    if (!result || !result.entries) {
+      this._logPipeline('index', 'Failed to parse index response.');
+      return { entries: [], type: indexType };
+    }
+
+    this._logPipeline('index', `Compiled ${result.entries.length} index entries.`);
+    return result;
   }
 }
 
