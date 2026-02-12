@@ -245,9 +245,9 @@ Output ONLY a JSON array like: [{"title": "Chapter Title", "outline": "Detailed 
       throw new Error('No API key set.');
     }
 
-    const systemPrompt = `You are a master book architect revising a chapter outline. Output ONLY the revised outline text (200-250 words). No commentary, no labels, no JSON — just the outline text.`;
+    const systemPrompt = `You are a master book architect revising a chapter outline. The author has given MANDATORY revision instructions that MUST be applied. Every instruction the author gives is a hard requirement — not a suggestion. If the author says to remove something, it MUST be removed. If the author says to change something, it MUST be changed. Output ONLY the revised outline text (200-250 words). No commentary, no labels, no JSON — just the outline text.`;
 
-    let userPrompt = `Revise this chapter outline based on the author's instructions.
+    let userPrompt = `Revise this chapter outline. The author's instructions below are MANDATORY — every single one must be fully applied.
 
 Book: ${bookTitle}${genre ? ` (${genre})` : ''}
 Chapter: ${chapterTitle}
@@ -255,8 +255,10 @@ Chapter: ${chapterTitle}
 Current Outline:
 ${currentOutline}
 
-Author's Revision Instructions:
-${userInstructions}`;
+MANDATORY Author Revision Instructions (apply ALL of these):
+${userInstructions}
+
+IMPORTANT: You MUST apply every one of the author's instructions above. Do not preserve any element the author has asked to remove or change. The revised outline must clearly reflect ALL requested changes.`;
 
     if (characters && characters.length > 0) {
       userPrompt += '\n\nCharacters: ' + characters.map(c => `${c.name} (${c.role})`).join(', ');
@@ -1380,6 +1382,44 @@ SWITCH TO BOLD MODE:
 This prose has been rewritten ${rewriteIteration - 1} time(s). Focus on quality over caution: make each fix count. If a previous rewrite introduced new issues, fix those too. The goal is prose that scores 90+, not prose that is merely unchanged.
 - Still change ONLY sentences with listed issues
 - But make each change EXCELLENT, not minimal`;
+    }
+
+    // Inject score context so the rewriter knows what dimensions need the most help
+    if (previousScore != null && previousSubscores) {
+      const subScoreLabels = {
+        sentenceVariety: { label: 'Sentence Variety & Rhythm', max: 15 },
+        dialogueAuthenticity: { label: 'Dialogue Authenticity', max: 15 },
+        sensoryDetail: { label: 'Sensory Detail / Show vs Tell', max: 15 },
+        emotionalResonance: { label: 'Emotional Resonance & Depth', max: 15 },
+        vocabularyPrecision: { label: 'Vocabulary Precision', max: 10 },
+        narrativeFlow: { label: 'Narrative Flow & Pacing', max: 10 },
+        originalityVoice: { label: 'Originality & Voice', max: 10 },
+        technicalExecution: { label: 'Technical Execution', max: 10 }
+      };
+
+      // Find the weakest dimensions (sorted by how far below maximum)
+      const dims = Object.entries(subScoreLabels).map(([key, info]) => {
+        const val = previousSubscores[key] ?? 0;
+        const pct = Math.round((val / info.max) * 100);
+        return { key, label: info.label, val, max: info.max, pct, gap: info.max - val };
+      }).sort((a, b) => b.gap - a.gap);
+
+      const weakest = dims.filter(d => d.pct < 80).slice(0, 3);
+
+      systemPrompt += `
+
+=== SCORE CONTEXT (use this to prioritize fixes) ===
+Current score: ${previousScore}/100. Target: 90+. Gap: ${Math.max(0, 90 - previousScore)} points needed.
+${rewriteIteration ? `Rewrite iteration: ${rewriteIteration}` : ''}
+
+Sub-score breakdown (weakest first):
+${dims.map(d => `  ${d.label}: ${d.val}/${d.max} (${d.pct}%)`).join('\n')}
+
+${weakest.length > 0 ? `PRIORITY DIMENSIONS (biggest opportunities for improvement):
+${weakest.map(d => `  - ${d.label}: ${d.val}/${d.max} — ${d.gap} points recoverable`).join('\n')}
+
+Focus your fixes on these weak dimensions FIRST. A fix that improves a weak dimension by 2+ points is more valuable than a fix that marginally improves an already-strong dimension.` : 'All dimensions are reasonably strong. Focus on the listed issues.'}
+=== END SCORE CONTEXT ===`;
     }
 
     // Add genre/voice context minimally — just enough to maintain consistency
