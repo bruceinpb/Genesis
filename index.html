@@ -231,30 +231,7 @@
         <span class="pane-lang" id="pane-lang-original">English</span>
         <button class="btn btn-sm" id="btn-close-translation" title="Close translation view">&times;</button>
       </div>
-      <div id="chapter-outline-display" class="chapter-outline-section" style="display:none;">
-        <div class="outline-review-header-bar">
-          <h4>Chapter Outline</h4>
-          <button class="btn btn-sm outline-review-collapse-btn" id="btn-outline-review-toggle" title="Collapse/Expand">&#9660;</button>
-        </div>
-        <div id="outline-review-panel-body" class="outline-review-panel-body">
-          <p id="chapter-outline-text"></p>
-          <div class="outline-review-actions" id="outline-review-actions">
-            <button class="btn btn-primary" id="btn-outline-review-accept">Accept &amp; Generate</button>
-            <button class="btn" id="btn-outline-review-rethink">Rethink</button>
-          </div>
-          <div class="outline-rethink-input" id="outline-rethink-input" style="display:none;">
-            <textarea class="form-input" id="outline-rethink-prompt" rows="3" placeholder='Describe changes: e.g. "Add a confrontation scene between X and Y" or "Remove the subplot about Z"'></textarea>
-            <div class="outline-rethink-actions">
-              <button class="btn" id="btn-outline-rethink-cancel">Cancel</button>
-              <button class="btn btn-primary" id="btn-outline-rethink-submit">Apply Changes</button>
-            </div>
-            <div id="outline-rethink-status" class="outline-rethink-status" style="display:none;">
-              <div class="generate-spinner"></div>
-              <span>Rethinking outline...</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div id="outline-review-mount"></div>
       <div id="editor" class="editor" data-placeholder="Begin writing your story..."></div>
       <div id="welcome-overlay" class="welcome" style="display:none;">
         <h2>Genesis 2</h2>

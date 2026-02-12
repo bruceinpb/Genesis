@@ -1141,9 +1141,9 @@ class App {
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
 
-    // Hide outline review actions once generation begins
-    this._showOutlineReviewActions(false);
-    this._showOutlineRethinkInput(false);
+    // Hide outline review panel once generation begins
+    const outlineMount = document.getElementById('outline-review-mount');
+    if (outlineMount) outlineMount.innerHTML = '';
 
     this._closeAllPanels();
     this._hideWelcome();
@@ -3256,29 +3256,61 @@ class App {
   // ========================================
 
   _updateOutlineReviewPanel(chapterContent) {
-    const outlineDisplay = document.getElementById('chapter-outline-display');
-    const outlineText = document.getElementById('chapter-outline-text');
-    if (!outlineDisplay || !outlineText) return;
+    const mount = document.getElementById('outline-review-mount');
+    if (!mount) return;
 
-    if (this._currentChapterOutline) {
-      outlineText.textContent = this._currentChapterOutline;
-      outlineDisplay.style.display = 'block';
+    // Clear previous panel
+    mount.innerHTML = '';
 
-      // Show Accept/Rethink actions when chapter is ready for generation
-      const plainText = (chapterContent || '').replace(/<[^>]*>/g, '').trim();
-      const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
-      const readyForGeneration = wordCount < 50;
-      this._showOutlineReviewActions(readyForGeneration);
+    if (!this._currentChapterOutline) return;
+
+    // Determine if chapter is ready for generation (little/no prose yet)
+    const plainText = (chapterContent || '').replace(/<[^>]*>/g, '').trim();
+    const wordCount = plainText ? (plainText.match(/[a-zA-Z'''\u2019-]+/g) || []).length : 0;
+    const readyForGeneration = wordCount < 50;
+
+    // Build the panel HTML
+    const panel = document.createElement('div');
+    panel.className = 'chapter-outline-section';
+    panel.id = 'outline-review-panel';
+    panel.innerHTML = `
+      <div class="outline-review-header-bar">
+        <h4>Chapter Outline</h4>
+        <button class="outline-review-collapse-btn" id="btn-outline-review-toggle" title="Collapse/Expand">&#9660;</button>
+      </div>
+      <div class="outline-review-panel-body" id="outline-review-panel-body">
+        <p id="chapter-outline-text"></p>
+        <div class="outline-review-actions" id="outline-review-actions" style="display:${readyForGeneration ? 'flex' : 'none'};">
+          <button class="btn btn-primary" id="btn-outline-review-accept">Accept &amp; Generate</button>
+          <button class="btn" id="btn-outline-review-rethink">Rethink</button>
+        </div>
+        <div class="outline-rethink-input" id="outline-rethink-input" style="display:none;">
+          <textarea id="outline-rethink-prompt" class="form-control" rows="3"
+            placeholder="Describe what to add, remove, or change..."></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+            <button class="btn btn-primary" id="btn-outline-rethink-submit">Submit</button>
+            <button class="btn" id="btn-outline-rethink-cancel">Cancel</button>
+            <span id="outline-rethink-status" style="display:none;font-size:0.8rem;color:var(--text-muted);">Rethinking...</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    mount.appendChild(panel);
+
+    // Set outline text via textContent to avoid XSS
+    document.getElementById('chapter-outline-text').textContent = this._currentChapterOutline;
+
+    // Wire up event listeners directly
+    document.getElementById('btn-outline-review-toggle').addEventListener('click', () => this._toggleOutlineReviewCollapse());
+    document.getElementById('btn-outline-review-accept').addEventListener('click', () => this._acceptOutlineReviewAndGenerate());
+    document.getElementById('btn-outline-review-rethink').addEventListener('click', () => {
+      this._showOutlineRethinkInput(true);
+    });
+    document.getElementById('btn-outline-rethink-submit').addEventListener('click', () => this._submitOutlineReviewRethink());
+    document.getElementById('btn-outline-rethink-cancel').addEventListener('click', () => {
       this._showOutlineRethinkInput(false);
-
-      // Reset collapsed state
-      const panelBody = document.getElementById('outline-review-panel-body');
-      const toggleBtn = document.getElementById('btn-outline-review-toggle');
-      if (panelBody) panelBody.classList.remove('collapsed');
-      if (toggleBtn) { toggleBtn.classList.remove('collapsed'); toggleBtn.innerHTML = '&#9660;'; }
-    } else {
-      outlineDisplay.style.display = 'none';
-    }
+    });
   }
 
   _showOutlineReviewActions(show) {
@@ -4864,8 +4896,8 @@ class App {
     const editorEl = document.getElementById('editor');
     if (overlay) overlay.style.display = '';
     if (editorEl) editorEl.style.display = 'none';
-    const outlineDisplay = document.getElementById('chapter-outline-display');
-    if (outlineDisplay) outlineDisplay.style.display = 'none';
+    const outlineMount = document.getElementById('outline-review-mount');
+    if (outlineMount) outlineMount.innerHTML = '';
     document.getElementById('project-title').textContent = 'Genesis 2';
   }
 
@@ -5516,22 +5548,6 @@ class App {
       }
       if (e.target.id === 'btn-rethink-cancel') {
         document.getElementById('rethink-overlay')?.classList.remove('visible');
-      }
-      // --- Inline Outline Review panel events (editor area) ---
-      if (e.target.id === 'btn-outline-review-accept') {
-        await this._acceptOutlineReviewAndGenerate();
-      }
-      if (e.target.id === 'btn-outline-review-rethink') {
-        this._showOutlineRethinkInput(true);
-      }
-      if (e.target.id === 'btn-outline-rethink-cancel') {
-        this._showOutlineRethinkInput(false);
-      }
-      if (e.target.id === 'btn-outline-rethink-submit') {
-        await this._submitOutlineReviewRethink();
-      }
-      if (e.target.id === 'btn-outline-review-toggle') {
-        this._toggleOutlineReviewCollapse();
       }
       // --- Outline Review popup events ---
       if (e.target.id === 'btn-outline-accept') {
