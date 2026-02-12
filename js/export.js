@@ -26,7 +26,7 @@ class ExportManager {
       output += '\n' + chapter.title.toUpperCase() + '\n';
       output += '-'.repeat(chapter.title.length) + '\n\n';
 
-      const text = this._htmlToText(chapter.content);
+      const text = this._htmlToText(this._stripLeadingHeading(chapter.content));
       output += text + '\n\n';
     }
 
@@ -140,7 +140,7 @@ ${project.coverImage ? `<div class="cover-page">
   <h1>${this._escapeHtml(chapter.title)}</h1>
 </div>\n\n`;
 
-      const paragraphs = this._contentToParagraphs(chapter.content);
+      const paragraphs = this._contentToParagraphs(this._stripLeadingHeading(chapter.content));
       paragraphs.forEach(p => {
         const trimmed = p.trim();
         if (trimmed === '* * *' || trimmed === '***' || trimmed === '---') {
@@ -238,7 +238,7 @@ ${project.coverImage ? `<div class="cover-page">
 
     for (const chapter of chapters) {
       html += `\n<h1 class="chapter-title">${this._escapeHtml(chapter.title)}</h1>\n\n`;
-      html += this._sanitizeContent(chapter.content) + '\n';
+      html += this._sanitizeContent(this._stripLeadingHeading(chapter.content)) + '\n';
     }
 
     html += '\n</body>\n</html>';
@@ -318,6 +318,13 @@ ${project.coverImage ? `<div class="cover-page">
     }
 
     return paragraphs;
+  }
+
+  _stripLeadingHeading(html) {
+    if (!html) return '';
+    // Remove the first H1-H6 element from the content to avoid duplication
+    // since export formats add their own chapter heading
+    return html.replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
   }
 
   _sanitizeContent(html) {
