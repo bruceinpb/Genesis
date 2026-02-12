@@ -7,7 +7,7 @@
  *  - Everything else  → cache-first with background refresh (icons, CSS, manifest)
  */
 
-const CACHE_NAME = 'genesis2-v45';
+const CACHE_NAME = 'genesis2-v46';
 
 // Use relative paths so caching works whether hosted at root or a subdirectory
 // (e.g. GitHub Pages at /Genesis/)
@@ -29,6 +29,7 @@ const ASSET_PATHS = [
   './js/firebase-config.js',
   './js/firestore-storage.js',
   './js/genres.js',
+  './js/multi-agent.js',
   './icons/icon-192.svg',
   './icons/icon-512.svg'
 ];
