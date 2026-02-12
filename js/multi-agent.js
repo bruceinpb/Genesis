@@ -1,23 +1,19 @@
 /**
- * Genesis 2 — Multi-Agent Prose Orchestrator
- *
- * Implements a NASA Mission Control pattern for prose generation and quality assurance.
+ * Genesis 2 — Multi-Agent Prose Orchestrator (v2: Chimera Pipeline)
  *
  * Architecture:
- * - Writing Agents: N parallel agents generate competing prose drafts (different temperatures)
- * - Judge Agent: Evaluates all candidates and selects the best one
- * - Fix Agents: Collaborate on identifying and prioritizing improvements
- * - Editor Agent: Single agent applies the agreed fixes
- * - Chapter Agents: Per-chapter continuity guardians that perform GO/NO-GO conflict checks
+ * - Writing Agents: N parallel agents (1-10) generate competing prose drafts
+ * - Chimera Selection: Paragraph-level best-of selection across all agents
+ * - Transition Smoothing: Junction sentences between different-author paragraphs
+ * - Iterative Micro-Fix: Diagnose ONE weakness → fix → re-score → repeat
+ * - Chapter Agents: Per-chapter continuity guardians (GO/NO-GO)
  *
- * The pipeline:
+ * Pipeline:
  *   1. Deploy N writing agents in parallel → N candidate drafts
- *   2. Judge agent scores and selects best candidate
- *   3. Agents collaborate on a fix list for the winner
- *   4. Single editor agent applies fixes
- *   5. Chapter agents perform GO/NO-GO sequence (NASA launch control pattern)
- *   6. If all chapters report GO → prose is accepted
- *   7. If any chapter reports NO-GO → conflicts shown to user for resolution
+ *   2. Paragraph-level chimera selection (best paragraph from each agent per position)
+ *   3. Transition smoothing (only junction sentences between different-author paragraphs)
+ *   4. Iterative micro-fix loop (one fix at a time, validate each, stop at 93+ or 3 passes)
+ *   5. Chapter agents GO/NO-GO sequence
  */
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -28,7 +24,7 @@ class MultiAgentOrchestrator {
     this.storage = storage;
 
     // Configuration
-    this.agentCount = 3;
+    this.agentCount = 5;
     this.chapterAgentsEnabled = true;
 
     // Chapter digests cache: chapterId → { contentHash, digest }
@@ -48,13 +44,12 @@ class MultiAgentOrchestrator {
    * Configure orchestrator settings.
    */
   configure({ agentCount, chapterAgentsEnabled }) {
-    if (agentCount !== undefined) this.agentCount = Math.max(2, Math.min(5, agentCount));
+    if (agentCount !== undefined) this.agentCount = Math.max(1, Math.min(10, agentCount));
     if (chapterAgentsEnabled !== undefined) this.chapterAgentsEnabled = chapterAgentsEnabled;
   }
 
   /**
    * Register a callback for status updates during the pipeline.
-   * callback(phase, message, data)
    */
   onStatus(callback) {
     this._statusCallback = callback;
@@ -70,7 +65,7 @@ class MultiAgentOrchestrator {
     }
   }
 
-  /** @private Emit a status update. */
+  /** @private Emit a status update and log it. */
   _emit(phase, message, data = {}) {
     this._pipelineLog.push({
       timestamp: new Date().toISOString(),
@@ -83,9 +78,13 @@ class MultiAgentOrchestrator {
     }
   }
 
+  /** Alias used by new pipeline methods for consistency. */
+  _logPipeline(phase, message, data = {}) {
+    this._emit(phase, message, data);
+  }
+
   /**
    * Get the accumulated pipeline log entries.
-   * @returns {Array} Log entries with timestamp, phase, message, data
    */
   getPipelineLog() {
     return [...this._pipelineLog];
@@ -106,6 +105,12 @@ class MultiAgentOrchestrator {
       hash |= 0;
     }
     return hash.toString(36);
+  }
+
+  /** @private Count words in a text string. */
+  _countWords(text) {
+    if (!text) return 0;
+    return (text.match(/[a-zA-Z\u00C0-\u024F'''\u2019-]+/g) || []).length;
   }
 
   /**
@@ -158,7 +163,25 @@ class MultiAgentOrchestrator {
     return JSON.parse(jsonStr);
   }
 
-  /** @private Format author palette for the judge prompt. Handles both structured and string palettes. */
+  /** @private Generic JSON parser with common formatting cleanup. */
+  _parseJSON(responseText) {
+    if (!responseText) return null;
+    let cleaned = responseText.trim();
+    cleaned = cleaned.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+    const jsonStart = cleaned.indexOf('{');
+    const jsonEnd = cleaned.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
+    try {
+      return JSON.parse(cleaned);
+    } catch (e) {
+      console.error('JSON parse failed:', e, 'Raw:', responseText.substring(0, 200));
+      return null;
+    }
+  }
+
+  /** @private Format author palette for the judge prompt. */
   _formatPaletteForJudge(authorPalette) {
     if (!authorPalette) return '';
     if (typeof authorPalette === 'object' && authorPalette.authors) {
@@ -171,91 +194,257 @@ class MultiAgentOrchestrator {
     return '';
   }
 
+  /** @private Statistical mode (most common value). */
+  _mode(arr) {
+    const freq = {};
+    let maxCount = 0;
+    let mode = arr[0];
+    for (const val of arr) {
+      freq[val] = (freq[val] || 0) + 1;
+      if (freq[val] > maxCount) {
+        maxCount = freq[val];
+        mode = val;
+      }
+    }
+    return mode;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  AGENT ROSTER BUILDER (1-10 agents, palette + wildcards)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Build the agent roster based on user-selected count and available palette.
+   *
+   * @param {number} agentCount - User-selected count (1-10)
+   * @param {Object} authorPalette - The AI-selected author palette (5 authors)
+   * @param {Object} context - Generation context (genre, subgenre, POV, etc.)
+   * @returns {Array} Array of agent configs ready for parallel generation
+   */
+  _buildAgentRoster(agentCount, authorPalette, context) {
+    const roster = [];
+    const paletteAuthors = (authorPalette && typeof authorPalette === 'object' && authorPalette.authors)
+      ? authorPalette.authors
+      : [];
+
+    // Case 1: Single agent mode
+    if (agentCount === 1) {
+      if (paletteAuthors.length > 0) {
+        roster.push({ ...paletteAuthors[0], agentType: 'palette' });
+      } else {
+        roster.push({
+          id: 'default', name: 'Default Voice', label: 'Balanced',
+          temperature: 0.7, voicePrompt: '', agentType: 'default'
+        });
+      }
+      return roster;
+    }
+
+    // Case 2: Agent count <= palette size — use first N palette authors
+    if (agentCount <= paletteAuthors.length) {
+      for (let i = 0; i < agentCount; i++) {
+        roster.push({ ...paletteAuthors[i], agentType: 'palette' });
+      }
+      return roster;
+    }
+
+    // Case 3: Agent count > palette size — all palette authors + wildcards
+    // If no palette, use temperature-varied fallback agents
+    if (paletteAuthors.length === 0) {
+      const fallbackTemps = [0.70, 0.85, 1.00, 0.75, 0.95, 0.45, 0.82, 0.78, 0.55, 0.72];
+      const fallbackLabels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold',
+        'Precision', 'Sensory', 'Rhythmic', 'Restraint', 'Accumulative'];
+      for (let i = 0; i < agentCount; i++) {
+        roster.push({
+          id: `fallback-${i}`, name: fallbackLabels[i] || `Agent ${i + 1}`,
+          label: fallbackLabels[i] || `Agent ${i + 1}`,
+          temperature: fallbackTemps[i] || 0.7, voicePrompt: '', agentType: 'fallback'
+        });
+      }
+      return roster;
+    }
+
+    for (const author of paletteAuthors) {
+      roster.push({ ...author, agentType: 'palette' });
+    }
+
+    // Generate wildcard agents to fill remaining slots
+    const wildcardsNeeded = agentCount - paletteAuthors.length;
+    const wildcardConfigs = this._generateWildcardAgents(wildcardsNeeded, paletteAuthors, context);
+
+    for (const wc of wildcardConfigs) {
+      roster.push({ ...wc, agentType: 'wildcard' });
+    }
+
+    return roster;
+  }
+
+  /**
+   * Generate wildcard agent configs that complement the palette authors.
+   */
+  _generateWildcardAgents(count, paletteAuthors, context) {
+    const wildcards = [];
+
+    const strategies = [
+      {
+        id: 'wildcard-precision', name: 'Precision Variant', label: 'Maximum Precision',
+        temperature: 0.45,
+        voicePrompt: `Write with extreme precision and economy. Every word must earn its place. Prefer short, declarative sentences. Avoid all ornamentation. No metaphors unless they reveal something that literal description cannot. Sentences should average 8-15 words. Paragraphs should be 2-4 sentences. Let silence and white space do emotional work. The goal is a prose style so clean it becomes invisible — the reader sees only the scene, never the writer.`
+      },
+      {
+        id: 'wildcard-sensory', name: 'Sensory Immersion Variant', label: 'Deep Sensory',
+        temperature: 0.82,
+        voicePrompt: `Write with radical sensory commitment. Every paragraph must anchor the reader in at least two physical senses (not just sight). Temperature, texture, smell, the quality of light, the weight of objects, the feel of air. Sentences should vary dramatically in length — short punches followed by long accumulative sentences that pile physical detail. Emotion should be rendered through the body, never named directly. If a character feels grief, describe what grief does to their posture, their breathing, their relationship to physical space.`
+      },
+      {
+        id: 'wildcard-rhythm', name: 'Rhythmic Variant', label: 'Musical Prose',
+        temperature: 0.78,
+        voicePrompt: `Write with intense attention to sentence rhythm and sonic quality. Vary sentence length dramatically: follow a 30-word sentence with a 5-word sentence. Use consonant clusters for tension, open vowels for release. Every paragraph should have a distinct rhythmic shape — building, cresting, resolving. Read every sentence aloud in your mind. If two consecutive sentences have the same rhythm, rewrite one. The prose should feel like music: theme, variation, development, resolution.`
+      },
+      {
+        id: 'wildcard-restraint', name: 'Maximum Restraint Variant', label: 'Radical Restraint',
+        temperature: 0.55,
+        voicePrompt: `Write with radical understatement. The most powerful moments should be rendered in the simplest possible language. Never explain what a detail means — trust the reader. Avoid all similes and metaphors. Use only concrete nouns and active verbs. When emotion is highest, the prose should be most restrained. Dialogue should be spare and incomplete — people don't say what they mean. The unsaid should carry more weight than the said. Paragraphs should end mid-thought, not with neat resolution.`
+      },
+      {
+        id: 'wildcard-accumulative', name: 'Accumulative Variant', label: 'Documentary Accumulation',
+        temperature: 0.72,
+        voicePrompt: `Write in long, layered sentences that accumulate detail the way an archivist accumulates evidence. Sentences should contain subordinate clauses, parenthetical qualifications, and embedded facts. The reader should feel the weight of research behind every claim. Use specific dates, measurements, proper nouns, and archival references. Paragraphs should be substantial — 5-8 sentences that build a complete evidentiary picture. Avoid all dramatic effects. Let facts speak.`
+      }
+    ];
+
+    // Sort strategies by temperature distance from palette average (maximize diversity)
+    const paletteTemps = paletteAuthors.map(a => a.temperature || 0.7);
+    const avgPaletteTemp = paletteTemps.reduce((a, b) => a + b, 0) / paletteTemps.length;
+
+    const sorted = [...strategies].sort((a, b) => {
+      const distA = Math.abs(a.temperature - avgPaletteTemp);
+      const distB = Math.abs(b.temperature - avgPaletteTemp);
+      return distB - distA;
+    });
+
+    for (let i = 0; i < Math.min(count, sorted.length); i++) {
+      wildcards.push(sorted[i]);
+    }
+
+    return wildcards;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  ERROR PATTERN INTEGRATION
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Build a banned-patterns prompt section from the project's error pattern database.
+   */
+  _buildBannedPatternsFromErrorDB(errorPatterns) {
+    if (!errorPatterns || !Array.isArray(errorPatterns) || errorPatterns.length === 0) return '';
+
+    const topPatterns = errorPatterns
+      .filter(p => !p.dismissed)
+      .filter(p => p.severity === 'high' || (p.frequency || p.occurrences || 0) >= 2)
+      .sort((a, b) => {
+        const scoreA = (a.frequency || a.occurrences || 1) * (a.severity === 'high' ? 3 : a.severity === 'medium' ? 2 : 1);
+        const scoreB = (b.frequency || b.occurrences || 1) * (b.severity === 'high' ? 3 : b.severity === 'medium' ? 2 : 1);
+        return scoreB - scoreA;
+      })
+      .slice(0, 12);
+
+    if (topPatterns.length === 0) return '';
+
+    let section = `\n\n=== PROJECT-SPECIFIC BANNED PATTERNS (from error database — ZERO TOLERANCE) ===\n`;
+    section += `These patterns have been repeatedly flagged in this project. Do NOT use them:\n\n`;
+
+    for (const pattern of topPatterns) {
+      const example = pattern.text ? `"${pattern.text.substring(0, 80)}"` : '';
+      section += `- [${pattern.category || 'pattern'}] ${example} — ${pattern.problem || pattern.description || pattern.category}\n`;
+    }
+
+    section += `\nIf you catch yourself writing any of these patterns, STOP and rewrite the sentence.\n`;
+    return section;
+  }
+
   // ═══════════════════════════════════════════════════════════
   //  PHASE 1: MULTI-AGENT PROSE GENERATION
   // ═══════════════════════════════════════════════════════════
 
   /**
-   * Generate prose using multiple writing agents in parallel.
-   * When an AI-selected author palette is available, each agent channels a specific author's voice.
-   * Otherwise, each agent uses a different temperature for creative diversity.
-   *
-   * @param {Object} params - { systemPrompt, userPrompt, maxTokens, authorPalette }
-   * @returns {Array} Array of { agentId, text, temperature, label } candidates.
+   * Build an author-voice-specific system prompt by injecting the voice prompt
+   * into the base system prompt.
+   * @private
    */
-  async generateWithAgents(params) {
-    const { systemPrompt, userPrompt, maxTokens = 4096, authorPalette } = params;
+  _buildAuthorVoiceSystemPrompt(baseSystemPrompt, authorName, voicePrompt, errorPatterns) {
+    const authorBlock = `\n\n=== AUTHOR VOICE: ${authorName} ===\nYou are channeling the prose approach of ${authorName}.\n${voicePrompt}\n=== END AUTHOR VOICE ===\n`;
 
-    // If we have a structured AI-selected palette, use author-voice agents
-    const useAuthorVoices = authorPalette &&
-      typeof authorPalette === 'object' &&
-      authorPalette.authors &&
-      authorPalette.authors.length >= 2;
+    // Find the AUTHOR PALETTE section and replace it with the specific author voice
+    const paletteStart = baseSystemPrompt.indexOf('=== AUTHOR PALETTE ===');
+    const paletteEnd = baseSystemPrompt.indexOf('=== HARD CONSTRAINTS');
 
-    let agentProfiles;
-
-    if (useAuthorVoices) {
-      // Each agent channels a specific author voice with their own temperature
-      agentProfiles = authorPalette.authors.map(author => ({
-        temp: author.temperature || 0.70,
-        label: `${author.name} (${author.label})`,
-        authorName: author.name,
-        voicePrompt: author.voicePrompt,
-        role: author.role,
-        authorId: author.id
-      }));
-      this._emit('generating', `Deploying ${agentProfiles.length} AI-selected author-voice agents...`, {
-        agentCount: agentProfiles.length,
-        authors: agentProfiles.map(p => p.authorName)
-      });
+    let prompt;
+    if (paletteStart !== -1 && paletteEnd !== -1) {
+      prompt = baseSystemPrompt.substring(0, paletteStart) +
+        authorBlock +
+        baseSystemPrompt.substring(paletteEnd);
     } else {
-      // Fallback: temperature-varied agents (original behavior)
-      const profiles = [
-        { temp: 0.70, label: 'Focused' },
-        { temp: 0.85, label: 'Balanced' },
-        { temp: 1.00, label: 'Creative' },
-        { temp: 0.75, label: 'Precise' },
-        { temp: 0.95, label: 'Bold' }
-      ];
-      agentProfiles = profiles.slice(0, this.agentCount);
-      this._emit('generating', `Deploying ${this.agentCount} writing agents...`, {
-        agentCount: this.agentCount
-      });
+      prompt = authorBlock + baseSystemPrompt;
     }
 
+    // Add project-specific banned patterns from error database
+    const errorPatternSection = this._buildBannedPatternsFromErrorDB(errorPatterns);
+    if (errorPatternSection) {
+      prompt += errorPatternSection;
+    }
+
+    return prompt;
+  }
+
+  /**
+   * Generate prose using multiple writing agents in parallel.
+   * Supports 1-10 agents via the roster builder.
+   *
+   * @param {Object} params - { systemPrompt, userPrompt, maxTokens, authorPalette, roster, errorPatterns }
+   * @returns {Array} Array of candidate objects.
+   */
+  async generateWithAgents(params) {
+    const { systemPrompt, userPrompt, maxTokens = 4096, roster, errorPatterns } = params;
+
+    this._emit('generating',
+      `Deploying ${roster.length} ${roster.length === 1 ? 'agent' : 'AI-selected author-voice agents'}...`,
+      { agentCount: roster.length, authors: roster.map(a => a.name || a.label) }
+    );
+
     // Launch all agents with slight stagger to reduce rate-limit risk
-    const promises = agentProfiles.map((profile, i) => {
+    const promises = roster.map((agent, i) => {
       return new Promise(async (resolve) => {
-        // 300ms stagger between agent starts
         if (i > 0) await new Promise(r => setTimeout(r, i * 300));
 
         const agentId = i + 1;
-        this._emit('agent-started', `Agent ${agentId} (${profile.label}) writing...`, {
-          agentId, profile: profile.label
+        const agentLabel = agent.name ? `${agent.name} (${agent.label})` : agent.label;
+        this._emit('agent-started', `Agent ${agentId} (${agentLabel}) writing...`, {
+          agentId, profile: agentLabel, agentType: agent.agentType
         });
 
         // Build the system prompt for this agent
         let agentSystemPrompt = systemPrompt;
-        if (profile.voicePrompt) {
-          // Inject author-specific voice prompt into the system prompt
+        if (agent.voicePrompt) {
           agentSystemPrompt = this._buildAuthorVoiceSystemPrompt(
-            systemPrompt, profile.authorName, profile.voicePrompt
+            systemPrompt, agent.name || agent.label, agent.voicePrompt, errorPatterns
           );
         }
 
+        const temp = agent.temperature || 0.7;
+
         try {
           const text = await this._callApi(agentSystemPrompt, userPrompt, {
-            maxTokens,
-            temperature: profile.temp
+            maxTokens, temperature: temp
           });
-          this._emit('agent-done', `Agent ${agentId} (${profile.label}) complete.`, { agentId });
+          this._emit('agent-done', `Agent ${agentId} (${agentLabel}) complete.`, { agentId });
           resolve({
-            agentId,
-            text,
-            temperature: profile.temp,
-            label: profile.label,
-            authorName: profile.authorName || null,
-            authorId: profile.authorId || null,
+            agentId, text, temperature: temp, label: agentLabel,
+            authorName: agent.name || agent.label,
+            authorId: agent.id || null,
+            paletteName: agent.label || '',
+            agentType: agent.agentType || 'unknown',
             error: null
           });
         } catch (err) {
@@ -265,28 +454,30 @@ class MultiAgentOrchestrator {
             await new Promise(r => setTimeout(r, 5000));
             try {
               const text = await this._callApi(agentSystemPrompt, userPrompt, {
-                maxTokens,
-                temperature: profile.temp
+                maxTokens, temperature: temp
               });
-              this._emit('agent-done', `Agent ${agentId} (${profile.label}) complete (retry).`, { agentId });
+              this._emit('agent-done', `Agent ${agentId} (${agentLabel}) complete (retry).`, { agentId });
               resolve({
-                agentId, text, temperature: profile.temp, label: profile.label,
-                authorName: profile.authorName || null, authorId: profile.authorId || null, error: null
+                agentId, text, temperature: temp, label: agentLabel,
+                authorName: agent.name || agent.label, authorId: agent.id || null,
+                paletteName: agent.label || '', agentType: agent.agentType || 'unknown', error: null
               });
               return;
             } catch (retryErr) {
               this._emit('agent-error', `Agent ${agentId} retry failed: ${retryErr.message}`, { agentId });
               resolve({
-                agentId, text: '', temperature: profile.temp, label: profile.label,
-                authorName: profile.authorName || null, authorId: profile.authorId || null, error: retryErr.message
+                agentId, text: '', temperature: temp, label: agentLabel,
+                authorName: agent.name || agent.label, authorId: agent.id || null,
+                paletteName: agent.label || '', agentType: agent.agentType || 'unknown', error: retryErr.message
               });
               return;
             }
           }
           this._emit('agent-error', `Agent ${agentId} failed: ${err.message}`, { agentId });
           resolve({
-            agentId, text: '', temperature: profile.temp, label: profile.label,
-            authorName: profile.authorName || null, authorId: profile.authorId || null, error: err.message
+            agentId, text: '', temperature: temp, label: agentLabel,
+            authorName: agent.name || agent.label, authorId: agent.id || null,
+            paletteName: agent.label || '', agentType: agent.agentType || 'unknown', error: err.message
           });
         }
       });
@@ -300,134 +491,294 @@ class MultiAgentOrchestrator {
     }
 
     this._emit('generation-complete',
-      `${valid.length} of ${agentProfiles.length} agents produced candidates.`,
-      { total: agentProfiles.length, successful: valid.length }
+      `${valid.length} of ${roster.length} agents produced candidates.`,
+      { total: roster.length, successful: valid.length }
     );
 
     return valid;
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 2: PARAGRAPH-LEVEL CHIMERA SELECTION
+  // ═══════════════════════════════════════════════════════════
+
   /**
-   * Build an author-voice-specific system prompt by injecting the voice prompt
-   * into the base system prompt.
-   * @private
+   * Segment prose into paragraphs.
    */
-  _buildAuthorVoiceSystemPrompt(baseSystemPrompt, authorName, voicePrompt) {
-    // Insert the author voice instruction right after the opening of the system prompt
-    const authorBlock = `\n\n=== AUTHOR VOICE: ${authorName} ===\nYou are channeling the prose approach of ${authorName}.\n${voicePrompt}\n=== END AUTHOR VOICE ===\n`;
-
-    // Find the AUTHOR PALETTE section and replace it with the specific author voice
-    const paletteStart = baseSystemPrompt.indexOf('=== AUTHOR PALETTE ===');
-    const paletteEnd = baseSystemPrompt.indexOf('=== HARD CONSTRAINTS');
-
-    if (paletteStart !== -1 && paletteEnd !== -1) {
-      return baseSystemPrompt.substring(0, paletteStart) +
-        authorBlock +
-        baseSystemPrompt.substring(paletteEnd);
-    }
-
-    // If no palette section found, prepend to the prompt
-    return authorBlock + baseSystemPrompt;
+  _segmentParagraphs(prose) {
+    if (!prose) return [];
+    return prose
+      .split(/\n\s*\n/)
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+      .filter(p => !/^\*\s*\*\s*\*$/.test(p));
   }
 
-  // ═══════════════════════════════════════════════════════════
-  //  PHASE 2: JUDGE AGENT — SELECT BEST CANDIDATE
-  // ═══════════════════════════════════════════════════════════
+  /**
+   * Paragraph-Level Chimera Selection.
+   * Evaluates each paragraph position across all agents and selects the best.
+   */
+  async _chimeraSelect(candidates, context) {
+    // Single candidate — no chimera possible
+    if (candidates.length === 1) {
+      return {
+        prose: candidates[0].text || candidates[0].prose,
+        score: null,
+        rationale: 'Single agent mode — no chimera selection.',
+        selections: [],
+        sourceCandidates: candidates,
+        method: 'single'
+      };
+    }
+
+    // Two candidates — fall back to whole-output judging
+    if (candidates.length === 2) {
+      const result = await this._judgeWholeOutput(candidates, context);
+      return { ...result, method: 'whole-output' };
+    }
+
+    // 3+ candidates — paragraph-level chimera
+    this._logPipeline('chimera', `Segmenting ${candidates.length} candidates into paragraphs...`);
+
+    const segmented = candidates.map(c => ({
+      ...c,
+      prose: c.text || c.prose,
+      paragraphs: this._segmentParagraphs(c.text || c.prose)
+    }));
+
+    segmented.forEach(c => {
+      this._logPipeline('chimera', `  ${c.authorName}: ${c.paragraphs.length} paragraphs`);
+    });
+
+    // Determine target paragraph count (mode)
+    const counts = segmented.map(c => c.paragraphs.length);
+    const targetCount = this._mode(counts);
+
+    // Filter to compatible candidates (paragraph count within ±1 of target)
+    const compatible = segmented.filter(c =>
+      Math.abs(c.paragraphs.length - targetCount) <= 1
+    );
+
+    this._logPipeline('chimera', `Target: ${targetCount} paragraphs. ${compatible.length} of ${segmented.length} agents compatible.`);
+
+    if (compatible.length < 3) {
+      this._logPipeline('chimera', 'Too few compatible candidates. Falling back to whole-output judging.');
+      const result = await this._judgeWholeOutput(candidates, context);
+      return { ...result, method: 'whole-output-fallback' };
+    }
+
+    // Normalize paragraph counts
+    const normalized = compatible.map(c => {
+      const paras = [...c.paragraphs];
+      if (paras.length > targetCount) {
+        const excess = paras.splice(targetCount - 1);
+        paras.push(excess.join('\n\n'));
+      }
+      return { ...c, normalizedParagraphs: paras };
+    });
+
+    // Shuffle candidate labels to prevent position bias
+    const shuffled = [...normalized];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    const labels = shuffled.map((_, i) => String.fromCharCode(65 + i));
+
+    // Build the chimera selection prompt
+    const systemPrompt = `You are an expert literary chimera synthesizer. You will see ${shuffled.length} versions of the same passage, each written by a different author-voice agent. Each version is divided into paragraphs.
+
+YOUR TASK: For each paragraph position, select the BEST version from across all agents.
+You are building a composite passage that takes the strongest paragraph from whichever agent wrote it best at that position.
+
+=== EVALUATION CRITERIA PER PARAGRAPH ===
+1. Prose quality — sentence rhythm, word choice, sonic texture
+2. Absence of AI patterns — NO tricolons (lists of three), NO PET phrases (throat tightened, hands shook, heart hammered), NO formulaic structures (observation → detail → reflection), NO dramatic kicker endings
+3. Sensory specificity — concrete, physical, embodied detail
+4. Narrative advancement — does this paragraph move the story forward?
+5. Voice distinctiveness — does this paragraph sound like a human author, not an AI?
+
+=== TRANSITION AWARENESS ===
+When selecting paragraphs from different agents for adjacent positions, consider whether the transition between them will feel natural. If two brilliant paragraphs from different agents would create a jarring transition, prefer a slightly-less-brilliant paragraph that flows better from the previous selection.
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON, no markdown, no backticks, no preamble:
+{
+  "selections": [
+    { "position": 1, "selected": "C", "reason": "One sentence why this version is best at this position", "needsSmoothing": false },
+    { "position": 2, "selected": "A", "reason": "One sentence why", "needsSmoothing": true }
+  ],
+  "overallScore": 93,
+  "chimeraRationale": "2-3 sentences explaining the chimera strategy and why this combination works"
+}
+
+SCORING GUIDANCE for overallScore:
+- 95-100: Exceptional — every paragraph is the best it could be, transitions seamless, no AI patterns
+- 90-94: Excellent — strong throughout with minor imperfections
+- 85-89: Good — solid prose but with noticeable AI patterns or weak paragraphs
+- Below 85: Needs significant work
+
+Be HONEST. Do not inflate.`;
+
+    let userPrompt = `CHAPTER CONTEXT: ${context.chapterTitle || context.currentChapterTitle || 'Current chapter'}\n`;
+    if (context.beats) {
+      userPrompt += `BEATS TO COVER: ${context.beats}\n`;
+    }
+    userPrompt += `\n`;
+
+    for (let pos = 0; pos < targetCount; pos++) {
+      userPrompt += `========== PARAGRAPH ${pos + 1} of ${targetCount} ==========\n\n`;
+      shuffled.forEach((c, j) => {
+        const para = c.normalizedParagraphs[pos] || '[agent did not produce a paragraph at this position]';
+        userPrompt += `--- Version ${labels[j]} ---\n${para}\n\n`;
+      });
+    }
+
+    userPrompt += `\nSelect the best version for each paragraph position. Remember: you're building a chimera from the best parts of each agent.`;
+
+    this._logPipeline('chimera', `Evaluating ${targetCount} paragraph positions across ${shuffled.length} agents...`);
+
+    const response = await this._callApi(systemPrompt, userPrompt, {
+      temperature: 0.2,
+      maxTokens: 2000
+    });
+
+    const result = this._parseChimeraResponse(response);
+
+    if (!result || !result.selections || result.selections.length === 0) {
+      this._logPipeline('chimera', 'Failed to parse chimera selection. Falling back to whole-output judging.');
+      const fallback = await this._judgeWholeOutput(candidates, context);
+      return { ...fallback, method: 'whole-output-parse-fallback' };
+    }
+
+    // Assemble the chimera
+    const chimeraParagraphs = [];
+    const selectionLog = [];
+
+    for (const sel of result.selections) {
+      const labelIndex = sel.selected.charCodeAt(0) - 65;
+      const agent = shuffled[labelIndex];
+      const para = agent?.normalizedParagraphs[sel.position - 1];
+
+      if (para) {
+        chimeraParagraphs.push(para);
+        selectionLog.push({
+          position: sel.position,
+          agent: agent.authorName,
+          label: agent.paletteName,
+          reason: sel.reason,
+          needsSmoothing: sel.needsSmoothing
+        });
+        this._logPipeline('chimera', `  P${sel.position}: ${agent.authorName} (${agent.paletteName}) — ${sel.reason}`);
+      } else {
+        const fallbackPara = normalized[0]?.normalizedParagraphs[sel.position - 1] || '';
+        chimeraParagraphs.push(fallbackPara);
+        selectionLog.push({
+          position: sel.position,
+          agent: normalized[0]?.authorName || 'fallback',
+          label: 'fallback',
+          reason: 'Chimera selection failed for this position',
+          needsSmoothing: true
+        });
+      }
+    }
+
+    const chimeraProse = chimeraParagraphs.join('\n\n');
+
+    this._logPipeline('chimera', `Chimera assembled: ${this._countWords(chimeraProse)} words, score: ${result.overallScore}`);
+    this._logPipeline('chimera', `Rationale: ${result.chimeraRationale}`);
+
+    return {
+      prose: chimeraProse,
+      score: result.overallScore,
+      rationale: result.chimeraRationale,
+      selections: selectionLog,
+      sourceCandidates: candidates,
+      method: 'paragraph-chimera'
+    };
+  }
 
   /**
-   * Judge agent evaluates all candidates and selects the best one.
-   *
-   * @param {Array} candidates - Array of { agentId, text, label }
-   * @param {Object} params - { genre, voice, authorPalette, qualityThreshold }
-   * @returns {{ winner, report }}
+   * Parse chimera selection JSON response.
    */
-  async judgeAndSelect(candidates, { genre, voice, authorPalette, qualityThreshold }) {
+  _parseChimeraResponse(responseText) {
+    let cleaned = responseText.trim();
+    cleaned = cleaned.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+    const jsonStart = cleaned.indexOf('{');
+    const jsonEnd = cleaned.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
+    try {
+      return JSON.parse(cleaned);
+    } catch (e) {
+      console.error('Failed to parse chimera response:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Fallback: whole-output judging using the existing judge method.
+   */
+  async _judgeWholeOutput(candidates, context) {
     this._emit('judging', `Judge agent evaluating ${candidates.length} candidates...`);
 
-    // Shuffle candidates to eliminate positional bias (first-candidate advantage)
-    // The judge at temperature 0 is deterministic, so presentation order matters.
     const shuffled = [...candidates];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
 
-    // Use anonymous labels (A, B, C...) so the judge can't be biased by agent IDs
     const anonLabels = shuffled.map((_, i) => String.fromCharCode(65 + i));
     const candidateBlock = shuffled.map((c, i) =>
-      `=== CANDIDATE ${anonLabels[i]} ===\n${c.text}\n=== END CANDIDATE ${anonLabels[i]} ===`
+      `=== CANDIDATE ${anonLabels[i]} ===\n${c.text || c.prose}\n=== END CANDIDATE ${anonLabels[i]} ===`
     ).join('\n\n');
 
-    const systemPrompt = `You are a senior literary editor and competition judge. You have ${candidates.length} versions of the same prose passage, each written by a different author. Select the BEST version.
+    const genre = context.genre || '';
+    const voice = context.voice || '';
+    const authorPalette = context.authorPalette || '';
+    const qualityThreshold = context.qualityThreshold || 90;
+
+    const systemPrompt = `You are a senior literary editor and competition judge. You have ${candidates.length} versions of the same prose passage. Select the BEST version.
 
 EVALUATION CRITERIA (order of importance):
 1. VOICE AUTHENTICITY (25%) — Distinct human voice, not generic/AI-sounding?
 2. PROSE QUALITY (25%) — Sentence variety, rhythm, word choice, sensory detail, showing vs telling
-3. GENRE ADHERENCE (20%) — Matches ${genre || 'the genre'} conventions and reader expectations?
-4. EMOTIONAL RESONANCE (15%) — Makes the reader feel? Emotions shown through action, not stated?
-5. ORIGINALITY (15%) — Fresh imagery, unexpected turns, no cliches or formulaic patterns?
+3. GENRE ADHERENCE (20%) — Matches ${genre || 'the genre'} conventions?
+4. EMOTIONAL RESONANCE (15%) — Makes the reader feel? Emotions shown through action?
+5. ORIGINALITY (15%) — Fresh imagery, unexpected turns, no cliches?
 ${voice && voice !== 'auto' ? `\nVOICE REQUIREMENT: Must be in ${voice} voice/POV.` : ''}
 ${this._formatPaletteForJudge(authorPalette)}
-QUALITY TARGET: ${qualityThreshold || 90}/100
+QUALITY TARGET: ${qualityThreshold}/100
 
-SCORING RULES:
-- Score each candidate on every criterion (0-100). Be critical.
-- Cite specific passages as evidence for scores.
-- Identify the single BEST candidate.
-- Note strengths to PRESERVE from the winner.
-- Note any elements from LOSING candidates that could improve the winner.
-
-IMPORTANT: Candidates are labeled with letters (A, B, C, etc.). Evaluate ONLY based on prose quality. Do NOT favor any particular position.
+IMPORTANT: Candidates are labeled with letters. Evaluate ONLY based on prose quality. Do NOT favor any particular position.
 
 Output valid JSON only:
 {
-  "selectedCandidate": "<letter: winning candidate label, e.g. A, B, C>",
+  "selectedCandidate": "<letter>",
   "scores": [
-    {
-      "candidateLabel": "<letter>",
-      "voiceAuthenticity": <number 0-100>,
-      "proseQuality": <number 0-100>,
-      "genreAdherence": <number 0-100>,
-      "emotionalResonance": <number 0-100>,
-      "originality": <number 0-100>,
-      "totalScore": <number 0-100>,
-      "summary": "<1-2 sentence assessment>"
-    }
+    { "candidateLabel": "<letter>", "voiceAuthenticity": 0, "proseQuality": 0, "genreAdherence": 0, "emotionalResonance": 0, "originality": 0, "totalScore": 0, "summary": "" }
   ],
-  "selectionReasoning": "<Why this candidate won — cite specific passages>",
-  "strengthsToPreserve": ["<specific qualities that must NOT be changed>"],
-  "borrowFromOthers": [
-    {
-      "fromCandidate": "<letter>",
-      "element": "<specific passage or technique to borrow>",
-      "reason": "<why it would improve the winning text>"
-    }
-  ],
-  "suggestedFixes": [
-    {
-      "issue": "<what needs fixing>",
-      "location": "<approximate location>",
-      "suggestion": "<how to fix it>",
-      "priority": "high|medium|low"
-    }
-  ]
+  "selectionReasoning": "<why this candidate won>",
+  "strengthsToPreserve": ["<qualities to keep>"],
+  "suggestedFixes": [{ "issue": "", "location": "", "suggestion": "", "priority": "high" }]
 }`;
 
     const text = await this._callApi(systemPrompt,
-      `Evaluate these ${candidates.length} prose candidates and select the best one:\n\n${candidateBlock}`,
+      `Evaluate these ${candidates.length} prose candidates:\n\n${candidateBlock}`,
       { maxTokens: 4096, temperature: 0.3 }
     );
 
     const report = this._parseJson(text);
 
-    // Map the anonymous winner label back to the original candidate
+    // Map the anonymous winner back
     const winnerLabel = String(report.selectedCandidate).trim().toUpperCase();
     const winnerIdx = winnerLabel.charCodeAt(0) - 65;
     const winner = (winnerIdx >= 0 && winnerIdx < shuffled.length)
       ? shuffled[winnerIdx]
       : shuffled[0];
 
-    // Map anonymous labels back to real agent IDs in the report for logging
     if (report.scores) {
       for (const s of report.scores) {
         const lbl = String(s.candidateLabel).trim().toUpperCase();
@@ -435,229 +786,327 @@ Output valid JSON only:
         s.agentId = (idx >= 0 && idx < shuffled.length) ? shuffled[idx].agentId : '?';
       }
     }
-    report.selectedCandidate = winner.agentId;
 
-    const winnerScore = report.scores?.find(s => s.agentId === winner.agentId)?.totalScore || '?';
+    const winnerScore = report.scores?.find(s => s.agentId === winner.agentId)?.totalScore || null;
 
     this._emit('judging-complete',
-      `Judge selected Agent ${winner.agentId} (${winner.label}). Score: ${winnerScore}/100`,
+      `Judge selected Agent ${winner.agentId} (${winner.label}). Score: ${winnerScore || '?'}/100`,
       { winnerId: winner.agentId, report }
     );
 
-    return { winner, report };
+    return {
+      prose: winner.text || winner.prose,
+      score: winnerScore,
+      rationale: report.selectionReasoning || '',
+      selections: [],
+      sourceCandidates: candidates,
+      judgeReport: report,
+      winner
+    };
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  PHASE 3: COLLABORATIVE FIX PLANNING
+  //  PHASE 3: TRANSITION SMOOTHING
   // ═══════════════════════════════════════════════════════════
 
   /**
-   * Agents collaborate on identifying fixes for the selected prose.
-   * Returns a prioritized fix list.
+   * Smooth transitions between paragraphs from different agents.
+   * Only modifies junction sentences.
    */
-  async collaborateOnFixes(selectedProse, judgeReport, { genre, voice, qualityThreshold }) {
-    this._emit('fixing', 'Agents collaborating on improvements...');
+  async _smoothTransitions(prose, selections, context) {
+    const smoothingNeeded = [];
+    for (let i = 0; i < selections.length - 1; i++) {
+      const current = selections[i];
+      const next = selections[i + 1];
 
-    const existingFixes = judgeReport.suggestedFixes || [];
-    const borrowElements = judgeReport.borrowFromOthers || [];
-    const preserveList = judgeReport.strengthsToPreserve || [];
-
-    const systemPrompt = `You are a collaborative editorial team finalizing improvements to a prose passage. A judge has already identified the best version and suggested some fixes. Your job is to:
-
-1. Validate the judge's suggested fixes
-2. Identify any additional issues the judge missed
-3. Incorporate valuable elements from other candidates (borrowFromOthers)
-4. Create a FINAL, PRIORITIZED fix list for a single editor to apply
-
-CRITICAL RULES:
-- DO NOT change the core voice or style. These are STRENGTHS to preserve: ${preserveList.join('; ')}
-- Each fix must be SURGICAL — change the minimum text necessary
-- Fixes must not introduce new problems (AI patterns, cliches, PET phrases)
-- Order from highest impact to lowest
-- Maximum 5 fixes — focus on the most impactful improvements
-${genre ? `- Maintain ${genre} genre conventions` : ''}
-${voice && voice !== 'auto' ? `- Maintain ${voice} voice/POV throughout` : ''}
-
-QUALITY TARGET: ${qualityThreshold || 90}/100
-
-Output valid JSON only:
-{
-  "fixList": [
-    {
-      "priority": <number 1-5>,
-      "type": "voice|rhythm|imagery|dialogue|pacing|clarity|genre|continuity",
-      "description": "<what to fix and why>",
-      "originalText": "<exact text to find>",
-      "replacementText": "<exact replacement>",
-      "rationale": "<why this improves the prose>"
-    }
-  ],
-  "preserveWarnings": ["<things the editor must NOT change>"],
-  "expectedScoreImpact": "<estimated score improvement>"
-}`;
-
-    // Include the judge's scoring data so fixes can target the weakest dimensions
-    const winnerScores = judgeReport.scores?.find(s => s.agentId === judgeReport.selectedCandidate);
-    const scoreContext = winnerScores
-      ? `\n\nJudge's sub-scores for the winning candidate:\n  Voice Authenticity: ${winnerScores.voiceAuthenticity}/100\n  Prose Quality: ${winnerScores.proseQuality}/100\n  Genre Adherence: ${winnerScores.genreAdherence}/100\n  Emotional Resonance: ${winnerScores.emotionalResonance}/100\n  Originality: ${winnerScores.originality}/100\n  Total: ${winnerScores.totalScore}/100\nFocus fixes on the WEAKEST scoring dimensions.`
-      : '';
-
-    const text = await this._callApi(systemPrompt,
-      `Improve this prose:\n\n"""${selectedProse}"""\n\nJudge's fixes: ${JSON.stringify(existingFixes)}\nElements to borrow: ${JSON.stringify(borrowElements)}\nStrengths to preserve: ${JSON.stringify(preserveList)}${scoreContext}`,
-      { maxTokens: 4096, temperature: 0.2 }
-    );
-
-    const fixPlan = this._parseJson(text);
-
-    this._emit('fixing-complete',
-      `Fix plan ready: ${fixPlan.fixList?.length || 0} improvements.`,
-      { fixPlan }
-    );
-
-    return fixPlan;
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  //  PHASE 4: EDITOR AGENT APPLIES FIXES
-  // ═══════════════════════════════════════════════════════════
-
-  /**
-   * A single editor agent applies the agreed fixes to produce final prose.
-   */
-  async applyFixes(prose, fixPlan) {
-    this._emit('editing', 'Editor agent applying fixes...');
-
-    const fixes = fixPlan.fixList || [];
-    const warnings = fixPlan.preserveWarnings || [];
-
-    if (fixes.length === 0) {
-      this._emit('editing-complete', 'No fixes needed. Prose accepted as-is.');
-      return prose;
-    }
-
-    const systemPrompt = `You are a meticulous prose editor. Apply ONLY the specified fixes to the original prose.
-
-CRITICAL RULES:
-1. Copy the ENTIRE original prose first, then make ONLY the specified changes
-2. For each fix: find the original text, replace it with the replacement text
-3. If the original text doesn't match exactly, locate the closest matching passage and apply the fix intent
-4. Do NOT rewrite, rephrase, or "improve" any text beyond the specified fixes
-5. Do NOT add commentary, labels, or meta-text
-6. Preserve ALL paragraph breaks, formatting, and whitespace
-7. Output ONLY the complete prose — nothing else
-
-APPROACH: Think of yourself as doing find-and-replace operations, one at a time.
-Start with the full original text. Apply fix 1. Then fix 2. And so on.
-
-PRESERVE THESE QUALITIES: ${warnings.join('; ')}
-
-WORD COUNT: The output MUST be within 25% of the original word count. If a fix adds text, keep it concise. If a fix removes text, that's fine.`;
-
-    const fixInstructions = fixes.map((f, i) =>
-      `FIX ${i + 1} [${f.type}]:\n  WHY: ${f.description}\n  FIND: "${f.originalText}"\n  REPLACE WITH: "${f.replacementText}"\n  RATIONALE: ${f.rationale || 'Improves prose quality'}`
-    ).join('\n\n');
-
-    const text = await this._callApi(systemPrompt,
-      `Apply these ${fixes.length} fixes to the prose below. Copy unchanged text VERBATIM.\n\n${fixInstructions}\n\n=== ORIGINAL PROSE (copy this, then apply fixes) ===\n${prose}\n=== END ORIGINAL PROSE ===`,
-      { maxTokens: 8192, temperature: 0.1 }
-    );
-
-    // Validate word count drift — graduated tolerance
-    const origWords = (prose.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
-    const fixedWords = (text.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
-    const drift = Math.abs(fixedWords - origWords) / Math.max(origWords, 1);
-
-    if (drift > 0.35) {
-      // Extreme drift — definitely reject
-      this._emit('editing-warning',
-        `Editor output has ${Math.round(drift * 100)}% word count drift (>35%). Using original.`);
-      return prose;
-    }
-
-    if (drift > 0.25) {
-      // Moderate drift — warn but accept if the fixes were applied
-      this._emit('editing-warning',
-        `Editor output has ${Math.round(drift * 100)}% word count drift (>25%). Accepting with caution.`);
-    }
-
-    this._emit('editing-complete',
-      `Editor applied ${fixes.length} fixes. Words: ${origWords} -> ${fixedWords}`,
-      { fixCount: fixes.length, wordsBefore: origWords, wordsAfter: fixedWords }
-    );
-
-    return text;
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  //  PHASE 2.5: SYNTHESIS — MERGE BEST ELEMENTS FROM CANDIDATES
-  // ═══════════════════════════════════════════════════════════
-
-  /**
-   * Synthesize the winning prose with the best elements from other candidates.
-   * The judge's borrowFromOthers list specifies what to take from runner-ups.
-   * Returns the synthesized prose.
-   */
-  async synthesizeProse(winnerProse, candidates, judgeReport, { genre, voice }) {
-    const borrowElements = judgeReport.borrowFromOthers || [];
-    if (borrowElements.length === 0) return winnerProse;
-
-    this._emit('synthesizing', `Synthesizing best elements from ${borrowElements.length} sources...`);
-
-    // Build a reference of the donor passages
-    const donorBlocks = [];
-    for (const borrow of borrowElements) {
-      // Map fromCandidate (letter) or fromAgent (number) to actual candidate text
-      const label = String(borrow.fromCandidate || borrow.fromAgent || '').trim();
-      const donor = candidates.find(c =>
-        String(c.agentId) === label || c.label?.includes(label)
-      );
-      if (donor) {
-        donorBlocks.push({
-          element: borrow.element,
-          reason: borrow.reason,
-          sourceText: donor.text.slice(0, 2000) // limit for token budget
+      if (current.needsSmoothing || next.needsSmoothing || current.agent !== next.agent) {
+        smoothingNeeded.push({
+          fromPosition: current.position,
+          toPosition: next.position,
+          fromAgent: current.agent,
+          toAgent: next.agent,
+          flagged: current.needsSmoothing || next.needsSmoothing
         });
       }
     }
 
-    if (donorBlocks.length === 0) return winnerProse;
-
-    const systemPrompt = `You are a master literary synthesizer. You have a winning prose passage and specific elements to borrow from other candidates. Your job is to seamlessly weave those elements into the winning prose.
-
-RULES:
-1. The winning prose is your FOUNDATION — keep its voice, structure, and 90%+ of its text
-2. For each "borrow" element, find the right place in the winning prose to integrate it
-3. Integration must be SEAMLESS — it should read as if it was always there
-4. Do NOT change the voice, tense, or POV of the winning prose
-5. Do NOT add your own material — only integrate the specified elements
-6. Keep the output within 15% of the original word count
-7. Output ONLY the synthesized prose — no labels or commentary
-${genre ? `\nGenre: ${genre}` : ''}${voice ? `\nVoice: ${voice}` : ''}`;
-
-    const borrowInstructions = donorBlocks.map((d, i) =>
-      `BORROW ${i + 1}:\n  Element: ${d.element}\n  Reason: ${d.reason}\n  Source passage (for reference): "${d.sourceText.slice(0, 500)}..."`
-    ).join('\n\n');
-
-    const text = await this._callApi(systemPrompt,
-      `Integrate these elements into the winning prose:\n\n${borrowInstructions}\n\n=== WINNING PROSE (your foundation) ===\n${winnerProse}\n=== END WINNING PROSE ===`,
-      { maxTokens: 8192, temperature: 0.3 }
-    );
-
-    // Word count validation
-    const origWords = (winnerProse.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
-    const synthWords = (text.match(/[a-zA-Z'''\u2019-]+/g) || []).length;
-    const drift = Math.abs(synthWords - origWords) / Math.max(origWords, 1);
-
-    if (drift > 0.30) {
-      this._emit('synthesizing-warning',
-        `Synthesis drift ${Math.round(drift * 100)}% exceeds 30%. Keeping original.`);
-      return winnerProse;
+    if (smoothingNeeded.length === 0) {
+      this._logPipeline('smoothing', 'No transitions need smoothing (all paragraphs from same agent).');
+      return prose;
     }
 
-    this._emit('synthesizing-complete',
-      `Synthesis complete. ${donorBlocks.length} elements merged. Words: ${origWords} -> ${synthWords}`);
+    const flaggedTransitions = smoothingNeeded.filter(t => t.fromAgent !== t.toAgent);
 
-    return text;
+    if (flaggedTransitions.length === 0) {
+      this._logPipeline('smoothing', 'All cross-agent transitions look natural. Skipping smoothing.');
+      return prose;
+    }
+
+    this._logPipeline('smoothing', `Smoothing ${flaggedTransitions.length} cross-agent transitions...`);
+
+    const systemPrompt = `You are a prose transition specialist. A passage has been assembled by selecting the best paragraphs from different authors. Some transitions between paragraphs feel slightly abrupt because they were written by different voices.
+
+YOUR TASK: Smooth the flagged transitions by modifying ONLY:
+- The LAST sentence of the preceding paragraph, AND/OR
+- The FIRST sentence of the following paragraph
+
+=== RULES ===
+1. Change NO MORE than 2 sentences total per transition
+2. Preserve the quality, voice, and content of both paragraphs
+3. Do NOT add new narrative content or remove existing content
+4. Do NOT change any sentence that is NOT at a transition junction
+5. The goal is seamlessness — a reader should not notice the author change
+6. Return the COMPLETE passage with smoothed transitions
+7. Word count must stay within 5% of the input
+8. After the passage, add a line "---SMOOTHING_LOG---" followed by a brief note on what you changed at each transition (1 line per transition)`;
+
+    const transitionDescriptions = flaggedTransitions.map(t =>
+      `Between P${t.fromPosition} (by ${t.fromAgent}) and P${t.toPosition} (by ${t.toAgent})`
+    ).join('\n');
+
+    const userPrompt = `PASSAGE (${this._countWords(prose)} words):\n\n${prose}\n\nTRANSITIONS TO SMOOTH:\n${transitionDescriptions}\n\nSmooth these transitions. Change only junction sentences. Return the complete passage.`;
+
+    const response = await this._callApi(systemPrompt, userPrompt, {
+      temperature: 0.25,
+      maxTokens: 2500
+    });
+
+    let smoothed = response.trim();
+    const logMarker = smoothed.indexOf('---SMOOTHING_LOG---');
+    if (logMarker !== -1) {
+      const log = smoothed.substring(logMarker + '---SMOOTHING_LOG---'.length).trim();
+      smoothed = smoothed.substring(0, logMarker).trim();
+      this._logPipeline('smoothing', `Smoothing applied: ${log.substring(0, 200)}`);
+    }
+
+    // Validate word count drift
+    const originalWords = this._countWords(prose);
+    const smoothedWords = this._countWords(smoothed);
+    const drift = Math.abs(smoothedWords - originalWords) / originalWords;
+
+    if (drift > 0.10) {
+      this._logPipeline('smoothing', `Smoothing caused ${Math.round(drift * 100)}% word drift. Using original.`);
+      return prose;
+    }
+
+    this._logPipeline('smoothing', `Transitions smoothed. Words: ${originalWords} -> ${smoothedWords}`);
+    return smoothed;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PHASE 4: ITERATIVE MICRO-FIX LOOP
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Iterative micro-fix loop: diagnose ONE weakness, fix it, re-score, repeat.
+   */
+  async _iterativeMicroFix(prose, context, currentScore, targetScore = 93, maxPasses = 3) {
+    let currentProse = prose;
+    let score = currentScore;
+    const fixesApplied = [];
+    const attemptedFixes = [];
+
+    // If we don't have a score yet, get one
+    if (score === null || score === undefined) {
+      score = await this._quickScore(currentProse, context);
+      this._logPipeline('microfix', `Initial score: ${score}`);
+    }
+
+    for (let pass = 0; pass < maxPasses; pass++) {
+      if (score >= targetScore) {
+        this._logPipeline('microfix', `Score ${score} >= target ${targetScore}. Stopping.`);
+        break;
+      }
+
+      // Step 1: Diagnose the single weakest element
+      const diagnosis = await this._diagnoseWeakestElement(currentProse, context, attemptedFixes);
+
+      if (!diagnosis || diagnosis.severity === 'none') {
+        this._logPipeline('microfix', `No significant weakness found. Stopping at score ${score}.`);
+        break;
+      }
+
+      this._logPipeline('microfix', `Pass ${pass + 1}: [${diagnosis.category}] "${(diagnosis.text || '').substring(0, 60)}..." — ${diagnosis.diagnosis}`);
+
+      attemptedFixes.push(diagnosis.text || diagnosis.diagnosis);
+
+      // Step 2: Fix ONLY that element
+      const fixedProse = await this._fixSingleElement(currentProse, diagnosis, context);
+
+      if (!fixedProse || fixedProse === currentProse) {
+        this._logPipeline('microfix', `Pass ${pass + 1}: Fix produced no change. Skipping.`);
+        continue;
+      }
+
+      // Step 3: Validate word count
+      const originalWords = this._countWords(currentProse);
+      const fixedWords = this._countWords(fixedProse);
+      const drift = Math.abs(fixedWords - originalWords) / originalWords;
+
+      if (drift > 0.08) {
+        this._logPipeline('microfix', `Pass ${pass + 1}: Fix caused ${Math.round(drift * 100)}% word drift. Rejecting.`);
+        continue;
+      }
+
+      // Step 4: Re-score
+      const newScore = await this._quickScore(fixedProse, context);
+
+      if (newScore >= score) {
+        const delta = newScore - score;
+        currentProse = fixedProse;
+        score = newScore;
+        fixesApplied.push({
+          pass: pass + 1,
+          category: diagnosis.category,
+          text: (diagnosis.text || '').substring(0, 80),
+          scoreBefore: score - delta,
+          scoreAfter: score
+        });
+        this._logPipeline('microfix', `Pass ${pass + 1}: Score ${score - delta} -> ${score} (+${delta}). Fix accepted.`);
+      } else {
+        this._logPipeline('microfix', `Pass ${pass + 1}: Score dropped ${score} -> ${newScore}. Fix rejected.`);
+      }
+    }
+
+    this._logPipeline('microfix', `Micro-fix complete. Final score: ${score}. Fixes applied: ${fixesApplied.length}`);
+
+    return { prose: currentProse, score, fixesApplied };
+  }
+
+  /**
+   * Diagnose the single weakest element in the prose.
+   */
+  async _diagnoseWeakestElement(prose, context, previousAttempts = []) {
+    let avoidSection = '';
+    if (previousAttempts.length > 0) {
+      avoidSection = `\n\n=== ALREADY ATTEMPTED (do NOT identify these again) ===\n${
+        previousAttempts.map(t => `- "${t}"`).join('\n')
+      }\n\nFind a DIFFERENT weakness.`;
+    }
+
+    let errorDBSection = '';
+    if (context.errorPatterns && context.errorPatterns.length > 0) {
+      const topPatterns = context.errorPatterns
+        .filter(p => p.severity === 'high' || (p.frequency || p.occurrences || 0) >= 2)
+        .slice(0, 10);
+      if (topPatterns.length > 0) {
+        errorDBSection = `\n\n=== KNOWN PROJECT PATTERNS TO WATCH FOR ===\n${
+          topPatterns.map(p => `- ${p.category}: "${(p.text || '').substring(0, 60) || p.problem}"`).join('\n')
+        }`;
+      }
+    }
+
+    const systemPrompt = `You are a prose diagnostician. Identify the SINGLE weakest element in this passage.
+
+=== PRIORITY ORDER (check in this order) ===
+1. TRICOLONS — Any list of three parallel items/phrases/sentences. This is the #1 AI pattern.
+2. PET PHRASES — throat tightened, hands shook/trembled, heart hammered/raced, jaw clenched, stomach dropped, eyes widened, breath caught
+3. DRAMATIC KICKER ENDINGS — short punchy final sentences designed for artificial profundity
+4. FORMULAIC PARAGRAPH STRUCTURE — observation -> detail -> reflection pattern repeated
+5. TELLING INSTEAD OF SHOWING — naming emotions instead of rendering them physically
+6. OVERWROUGHT SIMILES — forced comparisons that feel literary-workshop
+7. RHETORICAL PARALLELISM — consecutive sentences with identical structure used as crutch
+8. WEAK/GENERIC IMAGERY — details that could apply to any scene
+${errorDBSection}
+${avoidSection}
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON, no markdown, no backticks:
+{
+  "text": "the exact text that is weak (quote 1-3 sentences)",
+  "category": "tricolon|pet-phrase|dramatic-kicker|formulaic|telling|simile|parallelism|weak-imagery|rhythm",
+  "severity": "high|medium|none",
+  "diagnosis": "one sentence explaining why this is weak",
+  "suggestedApproach": "one sentence on how to fix without introducing new AI patterns"
+}
+
+If the prose is genuinely strong with no significant weakness remaining:
+{ "severity": "none", "diagnosis": "No significant weakness found" }
+
+Be HONEST. Most AI-generated prose has at least one tricolon or formulaic pattern.`;
+
+    const response = await this._callApi(systemPrompt, `PROSE:\n\n${prose}`, {
+      temperature: 0.15,
+      maxTokens: 500
+    });
+
+    return this._parseJSON(response);
+  }
+
+  /**
+   * Fix a single diagnosed weakness.
+   */
+  async _fixSingleElement(prose, diagnosis, context) {
+    const systemPrompt = `You are a surgical prose editor. Fix EXACTLY ONE weakness in this passage.
+
+THE WEAKNESS:
+Exact text: "${diagnosis.text || ''}"
+Category: ${diagnosis.category}
+Diagnosis: ${diagnosis.diagnosis}
+Suggested approach: ${diagnosis.suggestedApproach || 'Rewrite to avoid the identified pattern'}
+
+=== ABSOLUTE RULES ===
+1. Change ONLY the identified weak text and at most 1 adjacent sentence for flow
+2. The replacement must be genuinely better — not just different
+3. Preserve the voice, tone, and rhythm of the surrounding prose
+4. Do NOT introduce new AI patterns. Specifically:
+   - NO tricolons (lists of three)
+   - NO PET phrases (throat, hands, heart, jaw, stomach, eyes, breath)
+   - NO dramatic kicker endings
+   - NO formulaic structures
+5. Return the COMPLETE passage with the single fix applied
+6. Word count must stay within 5% of the original
+7. If you cannot fix this without introducing new problems, return the original unchanged`;
+
+    const response = await this._callApi(systemPrompt, `PROSE (${this._countWords(prose)} words):\n\n${prose}`, {
+      temperature: 0.35,
+      maxTokens: 2000
+    });
+
+    return response.trim();
+  }
+
+  /**
+   * Quick scoring pass — returns a single integer score (0-100).
+   */
+  async _quickScore(prose, context) {
+    const systemPrompt = `You are a prose quality scorer. Score this passage on a 0-100 scale.
+
+=== SCORING CRITERIA ===
+- 95-100: Exceptional prose indistinguishable from a published bestseller. Zero AI patterns. Every sentence earns its place.
+- 90-94: Excellent prose with minor imperfections. Perhaps one weak transition or slightly generic image.
+- 85-89: Good prose with noticeable patterns. Contains 1-2 tricolons, or formulaic paragraph structures.
+- 80-84: Decent prose with multiple AI patterns. Several tricolons, PET phrases, or formulaic structures.
+- Below 80: Significant quality issues.
+
+=== DEDUCTIONS ===
+- Each tricolon: -2 points
+- Each PET phrase: -2 points
+- Each dramatic kicker ending: -1 point
+- Each formulaic paragraph structure: -2 points
+- Each instance of telling vs showing: -1 point
+- Each overwrought simile: -1 point
+
+Be HONEST. Do not inflate. An AI-generated passage that sounds "good" but contains 3 tricolons and 2 PET phrases is an 83-85, not a 91.
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON:
+{
+  "score": 91,
+  "deductions": [
+    { "issue": "tricolon in paragraph 3", "points": -2 }
+  ],
+  "strengths": "One sentence on what works well",
+  "ceiling": "One sentence on what prevents a higher score"
+}`;
+
+    const response = await this._callApi(systemPrompt, `PROSE:\n\n${prose}`, {
+      temperature: 0.1,
+      maxTokens: 500
+    });
+
+    const parsed = this._parseJSON(response);
+    return parsed?.score || 85;
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -666,7 +1115,6 @@ ${genre ? `\nGenre: ${genre}` : ''}${voice ? `\nVoice: ${voice}` : ''}`;
 
   /**
    * Build a continuity digest for a single chapter's content.
-   * Extracts characters, locations, timeline events, plot points, and established facts.
    */
   async buildChapterDigest(content, chapterTitle) {
     const plainText = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -727,14 +1175,12 @@ Output valid JSON only:
       const plainText = (chapter.content || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       const contentHash = this._hash(plainText);
 
-      // Check cache
       const existing = this._chapterDigests.get(chapter.id);
       if (existing && existing.contentHash === contentHash) {
         cached++;
         continue;
       }
 
-      // Skip empty chapters
       if (plainText.length < 50) {
         this._chapterDigests.set(chapter.id, {
           chapterTitle: chapter.title, contentHash,
@@ -773,16 +1219,11 @@ Output valid JSON only:
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  PHASE 6: GO/NO-GO — LAUNCH CONTROL SEQUENCE
+  //  PHASE 5 (continued): GO/NO-GO — LAUNCH CONTROL
   // ═══════════════════════════════════════════════════════════
 
   /**
    * Check a single chapter for conflicts with new prose.
-   *
-   * @param {string} newProse - The newly generated prose text
-   * @param {Object} digest - The chapter's continuity digest
-   * @param {string} currentChapterTitle - Title of the chapter being written
-   * @returns {{ status: 'GO'|'NO-GO', conflicts: [...] }}
    */
   async checkChapterConflict(newProse, digest, currentChapterTitle) {
     if (digest.isEmpty) {
@@ -836,13 +1277,6 @@ Output valid JSON only:
 
   /**
    * Run the full GO/NO-GO launch control sequence.
-   * Polls every chapter agent (except the current chapter) for conflicts.
-   *
-   * @param {string} newProse - The newly generated prose
-   * @param {string} currentChapterId - ID of the chapter being written
-   * @param {Array} chapters - All project chapters (with content)
-   * @param {string} currentChapterTitle - Title of current chapter
-   * @returns {{ overallStatus, results, allConflicts }}
    */
   async runGoNoGo(newProse, currentChapterId, chapters, currentChapterTitle) {
     if (!this.chapterAgentsEnabled) {
@@ -850,7 +1284,6 @@ Output valid JSON only:
       return { overallStatus: 'GO', results: [], skipped: true };
     }
 
-    // Filter to other chapters that have meaningful content
     const otherChapters = chapters.filter(ch =>
       ch.id !== currentChapterId &&
       ch.content && ch.content.replace(/<[^>]+>/g, '').trim().length > 50
@@ -861,7 +1294,6 @@ Output valid JSON only:
       return { overallStatus: 'GO', results: [], skipped: true };
     }
 
-    // Ensure digests are current
     await this.refreshAllDigests(otherChapters);
 
     this._emit('go-nogo-start',
@@ -927,69 +1359,91 @@ Output valid JSON only:
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  FULL PIPELINE: Orchestrate all phases
+  //  FULL PIPELINE: Orchestrate all phases (v2: Chimera)
   // ═══════════════════════════════════════════════════════════
 
   /**
-   * Run the complete multi-agent pipeline:
+   * Run the complete multi-agent chimera pipeline:
    *   Phase 1 → N writing agents generate in parallel
-   *   Phase 2 → Judge selects best candidate
-   *   Phase 3 → Agents collaborate on fixes
-   *   Phase 4 → Editor applies fixes
-   *   Phase 5 → Chapter agents GO/NO-GO
-   *
-   * @param {Object} params
-   * @returns {{ prose, candidates, judgeReport, fixPlan, goNoGoResult, winner }}
+   *   Phase 2 → Paragraph-level chimera selection (NEW)
+   *   Phase 3 → Transition smoothing (NEW)
+   *   Phase 4 → Iterative micro-fix loop (NEW)
+   *   Phase 5 → Chapter agents GO/NO-GO (unchanged)
    */
   async runFullPipeline(params) {
     const {
       systemPrompt, userPrompt, maxTokens,
       genre, voice, authorPalette, qualityThreshold,
-      currentChapterId, currentChapterTitle, chapters
+      currentChapterId, currentChapterTitle, chapters,
+      errorPatterns
     } = params;
 
     this._abortController = new AbortController();
 
+    const context = {
+      genre, voice, authorPalette, qualityThreshold,
+      chapterTitle: currentChapterTitle,
+      currentChapterTitle,
+      errorPatterns: errorPatterns || []
+    };
+
     try {
-      // Phase 1
+      // ============ PHASE 1: Multi-Agent Generation ============
       this._emit('pipeline', '=== PHASE 1: Multi-Agent Generation ===');
-      const candidates = await this.generateWithAgents({ systemPrompt, userPrompt, maxTokens, authorPalette });
 
-      // Phase 2
-      this._emit('pipeline', '=== PHASE 2: Judge Agent Evaluation ===');
-      const { winner, report } = await this.judgeAndSelect(candidates, {
-        genre, voice, authorPalette, qualityThreshold
+      const roster = this._buildAgentRoster(this.agentCount, authorPalette, context);
+
+      this._logPipeline('generating', `Deploying ${roster.length} ${roster.length === 1 ? 'agent' : 'AI-selected author-voice agents'}...`);
+
+      const candidates = await this.generateWithAgents({
+        systemPrompt, userPrompt, maxTokens, roster, errorPatterns
       });
 
-      let finalProse = winner.text;
+      this._logPipeline('generation-complete', `${candidates.length} of ${roster.length} agents produced candidates.`);
 
-      // Phase 2.5: Synthesis — merge best elements from runner-up into the winner
-      const borrowElements = report.borrowFromOthers || [];
-      if (borrowElements.length > 0 && candidates.length >= 2) {
-        this._emit('pipeline', '=== PHASE 2.5: Prose Synthesis (merging best elements) ===');
-        finalProse = await this.synthesizeProse(finalProse, candidates, report, { genre, voice });
+      if (candidates.length === 0) {
+        throw new Error('All agents failed to produce candidates.');
       }
 
-      // Phase 3
-      this._emit('pipeline', '=== PHASE 3: Collaborative Fix Planning ===');
-      const fixPlan = await this.collaborateOnFixes(finalProse, report, {
-        genre, voice, qualityThreshold
-      });
+      // ============ PHASE 2: Paragraph-Level Chimera Selection ============
+      this._emit('pipeline', '=== PHASE 2: Paragraph-Level Chimera Selection ===');
 
-      // Phase 4
-      if (fixPlan.fixList && fixPlan.fixList.length > 0) {
-        this._emit('pipeline', '=== PHASE 4: Editor Agent Applying Fixes ===');
-        finalProse = await this.applyFixes(finalProse, fixPlan);
+      const chimeraResult = await this._chimeraSelect(candidates, context);
+
+      this._logPipeline('chimera-complete',
+        `Chimera assembled via ${chimeraResult.method}. Score: ${chimeraResult.score || 'pending'}`);
+
+      let currentProse = chimeraResult.prose;
+      let currentScore = chimeraResult.score;
+
+      // ============ PHASE 3: Transition Smoothing ============
+      if (chimeraResult.method === 'paragraph-chimera' && chimeraResult.selections.length > 1) {
+        this._emit('pipeline', '=== PHASE 3: Transition Smoothing ===');
+        currentProse = await this._smoothTransitions(currentProse, chimeraResult.selections, context);
+        this._logPipeline('smoothing-complete', 'Transitions smoothed.');
       } else {
-        this._emit('pipeline', '=== PHASE 4: Skipped (no fixes needed) ===');
+        this._emit('pipeline', '=== PHASE 3: Skipped (no cross-agent transitions) ===');
       }
 
-      // Phase 5
+      // ============ PHASE 4: Iterative Micro-Fix Loop ============
+      this._emit('pipeline', '=== PHASE 4: Iterative Micro-Fix Loop ===');
+
+      const microFixResult = await this._iterativeMicroFix(
+        currentProse, context, currentScore, 93, 3
+      );
+
+      currentProse = microFixResult.prose;
+      currentScore = microFixResult.score;
+
+      this._logPipeline('microfix-complete',
+        `Final score: ${currentScore}. Fixes applied: ${microFixResult.fixesApplied.length}`);
+
+      // ============ PHASE 5: GO/NO-GO Launch Control ============
       let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
       if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
         this._emit('pipeline', '=== PHASE 5: GO/NO-GO Launch Control ===');
         goNoGoResult = await this.runGoNoGo(
-          finalProse, currentChapterId, chapters, currentChapterTitle
+          currentProse, currentChapterId, chapters, currentChapterTitle
         );
       } else {
         this._emit('pipeline', '=== PHASE 5: Skipped (single chapter or agents disabled) ===');
@@ -997,7 +1451,20 @@ Output valid JSON only:
 
       this._abortController = null;
 
-      return { prose: finalProse, candidates, judgeReport: report, fixPlan, goNoGoResult, winner };
+      return {
+        prose: currentProse,
+        score: currentScore,
+        candidates,
+        chimeraMethod: chimeraResult.method,
+        chimeraRationale: chimeraResult.rationale,
+        fixesApplied: microFixResult.fixesApplied,
+        goNoGoResult,
+        wordCount: this._countWords(currentProse),
+        // Legacy compatibility fields
+        judgeReport: chimeraResult.judgeReport || null,
+        fixPlan: null,
+        winner: chimeraResult.winner || null
+      };
     } catch (err) {
       this._abortController = null;
       throw err;
