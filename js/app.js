@@ -1154,7 +1154,9 @@ class App {
         const card = document.getElementById(`${prefix}${data.winnerId}`);
         if (card) {
           card.className = 'ma-agent-card agent-winner';
-          card.querySelector('.ma-agent-status').textContent = 'WINNER';
+          const authorName = card.dataset.authorName || data.winnerLabel || '';
+          const winnerText = authorName ? `WINNER: ${authorName}` : 'WINNER';
+          card.querySelector('.ma-agent-status').textContent = winnerText;
         }
         if (data.report?.scores) {
           for (const s of data.report.scores) {
@@ -1234,20 +1236,30 @@ class App {
       const phaseEl = document.getElementById('ma-phase-label');
       if (phaseEl) phaseEl.textContent = 'Deploying writing agents...';
 
-      // Build agent grid
+      // Build agent grid with author names from palette
       const grid = document.getElementById('ma-agent-grid');
       if (grid) {
-        const labels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold',
+        const fallbackLabels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold',
           'Precision', 'Sensory', 'Rhythmic', 'Restraint', 'Accumulative'];
+        const paletteAuthors = this._currentProject?.authorPalette?.authors || [];
         grid.innerHTML = '';
         for (let i = 1; i <= agentCount; i++) {
           const card = document.createElement('div');
           card.className = 'ma-agent-card';
           card.id = `ma-agent-${i}`;
           const agentType = i <= 5 ? 'palette' : 'wildcard';
+          let authorName = '';
+          if (agentType === 'palette' && paletteAuthors[i - 1]) {
+            const fullName = paletteAuthors[i - 1].name || '';
+            authorName = fullName.split(' ').pop() || fullName;
+          } else if (agentType === 'wildcard') {
+            authorName = `Wildcard ${i - 5}`;
+          }
+          card.dataset.authorName = authorName;
           card.innerHTML = `
             <div class="ma-agent-label">Agent ${i}</div>
-            <div class="ma-agent-status">${labels[i - 1] || 'Agent'}${agentType === 'wildcard' ? ' *' : ''}</div>
+            <div class="ma-agent-author" style="font-size:11px;color:var(--text-secondary,#999);margin-top:2px;">${this._escapeHtml(authorName)}</div>
+            <div class="ma-agent-status">${fallbackLabels[i - 1] || 'Agent'}${agentType === 'wildcard' ? ' *' : ''}</div>
             <div class="ma-agent-score"></div>
           `;
           grid.appendChild(card);
@@ -1544,6 +1556,9 @@ class App {
   async _insertMultiAgentProse(prose, existingContent, chapterTitle) {
     const editorEl = this.editor.element;
     const startingContent = existingContent.trim() ? existingContent : '';
+    // Safety strip: remove any strategy markers and markdown headings from generated prose
+    prose = prose.replace(/---STRATEGY---[\s\S]*?(?=\n\n|$)/g, '').trim();
+    prose = prose.replace(/^#+\s+.*$/gm, '').trim();
     const paragraphs = prose.split('\n\n');
     const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
     editorEl.innerHTML = startingContent + newHtml;
@@ -2637,6 +2652,19 @@ class App {
 
     let html = '';
 
+    // Action buttons at top for quick access
+    if (stats.totalPatterns > 0 || stats.dismissedPatterns > 0) {
+      html += `<div class="analysis-section" style="display:flex;gap:8px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--border-color,#333);">`;
+      if (stats.totalPatterns > 0) {
+        html += `<button class="btn btn-sm" id="btn-download-error-db">Download Log (.md)</button>`;
+        html += `<button class="btn btn-sm" id="btn-clear-error-db" style="border-color:var(--danger,#e94560);color:var(--danger,#e94560);">Clear All Patterns</button>`;
+      }
+      if (stats.dismissedPatterns > 0) {
+        html += `<button class="btn btn-sm" id="btn-restore-dismissed">Restore ${stats.dismissedPatterns} Dismissed</button>`;
+      }
+      html += `</div>`;
+    }
+
     // Stats summary
     html += `<div class="analysis-section">`;
     html += `<h3>Database Overview</h3>`;
@@ -2710,16 +2738,7 @@ class App {
       html += `</div>`;
     }
 
-    // Actions
-    html += `<div class="analysis-section" style="display:flex;gap:8px;flex-wrap:wrap;">`;
-    if (stats.totalPatterns > 0) {
-      html += `<button class="btn btn-sm" id="btn-download-error-db">Download Log (.md)</button>`;
-      html += `<button class="btn btn-sm" id="btn-clear-error-db" style="border-color:var(--danger,#e94560);color:var(--danger,#e94560);">Clear All Patterns</button>`;
-    }
-    if (stats.dismissedPatterns > 0) {
-      html += `<button class="btn btn-sm" id="btn-restore-dismissed">Restore ${stats.dismissedPatterns} Dismissed</button>`;
-    }
-    html += `</div>`;
+    // Actions section removed from bottom — buttons are now at top of panel
 
     body.innerHTML = html;
 
@@ -5510,16 +5529,28 @@ class App {
         agentPanel.style.display = '';
         // Build agent grid
         const grid = document.getElementById('iterative-agent-grid');
-        const labels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold'];
+        const fallbackLabels = ['Focused', 'Balanced', 'Creative', 'Precise', 'Bold',
+          'Precision', 'Sensory', 'Rhythmic', 'Restraint', 'Accumulative'];
+        const paletteAuthors = this._currentProject?.authorPalette?.authors || [];
         if (grid) {
           grid.innerHTML = '';
           for (let i = 1; i <= agentCount; i++) {
             const card = document.createElement('div');
             card.className = 'ma-agent-card';
             card.id = `iter-agent-${i}`;
+            const agentType = i <= 5 ? 'palette' : 'wildcard';
+            let authorName = '';
+            if (agentType === 'palette' && paletteAuthors[i - 1]) {
+              const fullName = paletteAuthors[i - 1].name || '';
+              authorName = fullName.split(' ').pop() || fullName;
+            } else if (agentType === 'wildcard') {
+              authorName = `Wildcard ${i - 5}`;
+            }
+            card.dataset.authorName = authorName;
             card.innerHTML = `
               <div class="ma-agent-label">Agent ${i}</div>
-              <div class="ma-agent-status">${labels[i - 1] || 'Agent'}</div>
+              <div class="ma-agent-author" style="font-size:11px;color:var(--text-secondary,#999);margin-top:2px;">${this._escapeHtml(authorName)}</div>
+              <div class="ma-agent-status">${fallbackLabels[i - 1] || 'Agent'}${agentType === 'wildcard' ? ' *' : ''}</div>
               <div class="ma-agent-score"></div>
             `;
             grid.appendChild(card);
@@ -6467,7 +6498,11 @@ class App {
       agentSlider.addEventListener('input', (e) => {
         const count = parseInt(e.target.value);
         if (agentDisplay) agentDisplay.textContent = count;
-        if (agentHidden) agentHidden.value = count;
+        if (agentHidden) {
+          agentHidden.value = count;
+          // Dispatch change event so auto-save fires
+          agentHidden.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       });
     }
 
@@ -7824,10 +7859,22 @@ class App {
 
     // --- Select All ---
     document.getElementById('btn-nav-select-all')?.addEventListener('click', () => {
-      const allItems = document.querySelectorAll('.nav-item-checkbox');
-      const allChecked = [...allItems].every(cb => cb.checked);
+      const containers = ['nav-front-items', 'nav-chapter-items', 'nav-back-items'];
+      const allItems = [];
+      for (const cid of containers) {
+        const container = document.getElementById(cid);
+        if (container) {
+          allItems.push(...container.querySelectorAll('.nav-item-checkbox'));
+        }
+      }
+      if (allItems.length === 0) {
+        allItems.push(...document.querySelectorAll('.nav-item-checkbox'));
+      }
+      const allChecked = allItems.every(cb => cb.checked);
       allItems.forEach(cb => {
         cb.checked = !allChecked;
+        if (!allChecked) cb.setAttribute('checked', '');
+        else cb.removeAttribute('checked');
         const item = cb.closest('.nav-item');
         if (item) {
           const id = item.dataset.navId;
@@ -7839,6 +7886,9 @@ class App {
       this._updateNavDeleteButton();
       const btn = document.getElementById('btn-nav-select-all');
       if (btn) btn.textContent = allChecked ? '\u2610' : '\u2611';
+      // Sync toolbar checkbox
+      const toolbarCb = document.getElementById('nav-toolbar-select-all');
+      if (toolbarCb) toolbarCb.checked = !allChecked;
     });
 
     // --- Delete Selected ---
@@ -7865,9 +7915,23 @@ class App {
     // --- Toolbar: Select All ---
     document.getElementById('nav-toolbar-select-all')?.addEventListener('change', (e) => {
       const checked = e.target.checked;
-      const allItems = document.querySelectorAll('.nav-item-checkbox');
+      // Query all three containers explicitly to ensure we find all checkboxes
+      const containers = ['nav-front-items', 'nav-chapter-items', 'nav-back-items'];
+      const allItems = [];
+      for (const cid of containers) {
+        const container = document.getElementById(cid);
+        if (container) {
+          allItems.push(...container.querySelectorAll('.nav-item-checkbox'));
+        }
+      }
+      // Also try global query as fallback
+      if (allItems.length === 0) {
+        allItems.push(...document.querySelectorAll('.nav-item-checkbox'));
+      }
       allItems.forEach(cb => {
         cb.checked = checked;
+        if (checked) cb.setAttribute('checked', '');
+        else cb.removeAttribute('checked');
         const item = cb.closest('.nav-item');
         if (item) {
           const id = item.dataset.navId;

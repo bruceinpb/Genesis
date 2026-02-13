@@ -802,7 +802,7 @@ Output valid JSON only:
 
     this._emit('judging-complete',
       `Judge selected Agent ${winner.agentId} (${winner.label}). Score: ${winnerScore || '?'}/100`,
-      { winnerId: winner.agentId, report }
+      { winnerId: winner.agentId, winnerLabel: winner.label || '', winnerName: winner.name || '', report }
     );
 
     return {
@@ -942,6 +942,8 @@ YOUR TASK: Smooth the flagged transitions by modifying ONLY:
     let score = currentScore;
     const fixesApplied = [];
     const attemptedFixes = [];
+    const hasAdversarialFixes = !!(context.adversarialFixPriorities && context.adversarialFixPriorities.length > 0);
+    const qualityFloor = targetScore - 3; // Allow small quality dip when fixing adversarial issues
 
     // If we don't have a score yet, get one
     if (score === null || score === undefined) {
@@ -950,9 +952,13 @@ YOUR TASK: Smooth the flagged transitions by modifying ONLY:
     }
 
     for (let pass = 0; pass < maxPasses; pass++) {
-      if (score >= targetScore) {
+      if (score >= targetScore && !hasAdversarialFixes) {
         this._logPipeline('microfix', `Score ${score} >= target ${targetScore}. Stopping.`);
         break;
+      }
+
+      if (score >= targetScore && hasAdversarialFixes) {
+        this._logPipeline('microfix', `Score ${score} >= target ${targetScore}, but adversarial fixes pending. Continuing in adversarial-fix mode.`);
       }
 
       // Step 1: Diagnose the single weakest element
@@ -988,7 +994,24 @@ YOUR TASK: Smooth the flagged transitions by modifying ONLY:
       // Step 4: Re-score
       const newScore = await this._quickScore(fixedProse, context);
 
-      if (newScore >= score) {
+      // In adversarial-fix mode: accept fixes that maintain quality above floor
+      if (hasAdversarialFixes && score >= targetScore) {
+        if (newScore >= qualityFloor) {
+          const delta = newScore - score;
+          currentProse = fixedProse;
+          score = newScore;
+          fixesApplied.push({
+            pass: pass + 1,
+            category: diagnosis.category,
+            text: (diagnosis.text || '').substring(0, 80),
+            scoreBefore: score - delta,
+            scoreAfter: score
+          });
+          this._logPipeline('microfix', `Pass ${pass + 1} (adversarial): Score ${score - delta} -> ${score}. Fix accepted (floor: ${qualityFloor}).`);
+        } else {
+          this._logPipeline('microfix', `Pass ${pass + 1} (adversarial): Score dropped ${score} -> ${newScore} below floor ${qualityFloor}. Fix rejected.`);
+        }
+      } else if (newScore >= score) {
         const delta = newScore - score;
         currentProse = fixedProse;
         score = newScore;
@@ -1105,7 +1128,13 @@ ${repairManual}
       maxTokens: 2000
     });
 
-    return response.trim();
+    // Strip strategy markers from output before returning
+    let cleaned = response.trim();
+    const strategyIdx = cleaned.indexOf('---STRATEGY---');
+    if (strategyIdx !== -1) {
+      cleaned = cleaned.substring(0, strategyIdx).trim();
+    }
+    return cleaned;
   }
 
   /**
@@ -1943,17 +1972,36 @@ Be STRICT. Real human nonfiction scores 80-95. AI prose typically scores 40-70.`
       maxTokens: 2000
     });
 
-    const result = this._parseJSON(response);
+    let result = this._parseJSON(response);
 
     if (!result || typeof result.humanLikenessScore !== 'number') {
-      this._logPipeline('adversarial', 'Failed to parse adversarial audit result. Defaulting to score 75.');
-      return {
-        humanLikenessScore: 75,
-        dimensionScores: {},
-        topThreeFixPriorities: [],
-        parseError: true
-      };
+      // Retry once before defaulting
+      this._logPipeline('adversarial', 'Failed to parse adversarial audit result. Retrying...');
+      try {
+        const retryResponse = await this._callApi(systemPrompt, `PROSE TO AUDIT:\n\n${prose}`, {
+          temperature: 0.15,
+          maxTokens: 2000
+        });
+        result = this._parseJSON(retryResponse);
+      } catch (_) {
+        result = null;
+      }
+
+      if (!result || typeof result.humanLikenessScore !== 'number') {
+        // Use last known adversarial score if available, otherwise default to 75
+        const fallbackScore = this._lastAdversarialScore || 75;
+        this._logPipeline('adversarial', `Retry also failed. Using fallback score: ${fallbackScore}.`);
+        return {
+          humanLikenessScore: fallbackScore,
+          dimensionScores: {},
+          topThreeFixPriorities: [],
+          parseError: true
+        };
+      }
     }
+
+    // Store successful score for fallback in case of future parse failures
+    this._lastAdversarialScore = result.humanLikenessScore;
 
     // Log results
     this._logPipeline('adversarial', `Human-Likeness Score: ${result.humanLikenessScore}`);
@@ -2063,7 +2111,7 @@ REQUIRED CHANGES (apply exactly these, no more):
 CONSTRAINTS:
 - Do NOT introduce grammatical errors. Human nonfiction authors do not make grammar mistakes. The roughness is in rhythm, structure, and proportion.
 - Do NOT reduce prose quality. Every change should be indistinguishable from a normal human authorial choice.
-- Do NOT change more than 5% of the total word count.
+- Do NOT change more than 8% of the total word count.
 - Preserve all factual content exactly.
 - Return the COMPLETE modified passage.
 - After the passage, add a line "---ROUGHNESS_LOG---" followed by a brief description of each change made (one line per change).`;
@@ -2088,8 +2136,8 @@ CONSTRAINTS:
     const roughenedWords = this._countWords(roughened);
     const drift = Math.abs(roughenedWords - originalWords) / originalWords;
 
-    if (drift > 0.05) {
-      this._logPipeline('roughness', `Word count drift ${Math.round(drift * 100)}% exceeds 5%. Using original.`);
+    if (drift > 0.08) {
+      this._logPipeline('roughness', `Word count drift ${Math.round(drift * 100)}% exceeds 8%. Using original.`);
       return prose;
     }
 
