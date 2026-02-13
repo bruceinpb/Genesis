@@ -1054,6 +1054,71 @@
   </div>
 </div>
 
+<!-- ===== Genesis 3.0 Pipeline Progress ===== -->
+<div class="modal-overlay" id="genesis3-pipeline-overlay" style="display:none;">
+  <div class="modal" style="width:min(580px, 92vw);">
+    <div class="modal-body" style="padding:28px 24px;text-align:center;">
+      <div style="font-size:1rem;font-weight:700;color:var(--text-primary);margin-bottom:4px;">Genesis 3.0 Pipeline</div>
+      <div id="g3-voice-label" style="font-size:0.85rem;font-weight:600;color:var(--accent-primary);margin-bottom:16px;"></div>
+
+      <!-- Phase Progress -->
+      <div id="g3-phase-list" style="text-align:left;margin:12px 0 16px;font-size:0.8rem;line-height:2;">
+        <div class="g3-phase" data-phase="1"><span class="g3-icon">&#9675;</span> Phase 1: Generation</div>
+        <div class="g3-phase" data-phase="2"><span class="g3-icon">&#9675;</span> Phase 2: Iteration</div>
+        <div class="g3-phase" data-phase="3"><span class="g3-icon">&#9675;</span> Phase 3: Verification</div>
+        <div class="g3-phase" data-phase="4"><span class="g3-icon">&#9675;</span> Phase 4: Scoring</div>
+        <div class="g3-phase" data-phase="5"><span class="g3-icon">&#9675;</span> Phase 5: Micro-Fix</div>
+        <div class="g3-phase" data-phase="6"><span class="g3-icon">&#9675;</span> Phase 6: Audit</div>
+        <div class="g3-phase" data-phase="7"><span class="g3-icon">&#9675;</span> Phase 7: Voice Check</div>
+        <div class="g3-phase" data-phase="8"><span class="g3-icon">&#9675;</span> Phase 8: Review</div>
+        <div class="g3-phase" data-phase="9"><span class="g3-icon">&#9675;</span> Phase 9: Export</div>
+      </div>
+
+      <!-- Status Log -->
+      <div id="g3-status-log" class="ma-status-log" style="max-height:100px;">
+        Initializing Genesis 3.0 pipeline...
+      </div>
+
+      <button class="btn btn-sm" id="btn-g3-cancel" style="min-width:100px;margin-top:12px;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Genesis 3.0 Human Review Gate ===== -->
+<div class="modal-overlay" id="human-gate-overlay" style="display:none;">
+  <div class="modal" style="width:min(640px, 94vw);max-height:90vh;overflow:auto;">
+    <div class="modal-body" style="padding:24px;">
+      <div style="font-size:1rem;font-weight:700;color:var(--text-primary);margin-bottom:4px;">Human Review Gate</div>
+      <div id="hg-voice-label" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:12px;"></div>
+
+      <!-- Verification Results -->
+      <div id="hg-verification" style="margin-bottom:12px;padding:10px;border-radius:8px;background:var(--bg-secondary);font-size:0.8rem;">
+        <strong>Verification:</strong> <span id="hg-verification-status"></span>
+        <div id="hg-verification-details" style="margin-top:4px;"></div>
+      </div>
+
+      <!-- Score -->
+      <div id="hg-score" style="margin-bottom:12px;padding:10px;border-radius:8px;background:var(--bg-secondary);font-size:0.8rem;">
+        <strong>Score:</strong> <span id="hg-score-value"></span>
+      </div>
+
+      <!-- Audit Results -->
+      <div id="hg-audit" style="margin-bottom:12px;padding:10px;border-radius:8px;background:var(--bg-secondary);font-size:0.8rem;">
+        <strong>Adversarial Audit:</strong> <span id="hg-audit-status"></span>
+      </div>
+
+      <!-- Prose Preview -->
+      <div id="hg-prose-preview" style="margin-bottom:16px;padding:16px;border:1px solid var(--border-color);border-radius:8px;font-size:0.85rem;line-height:1.6;max-height:300px;overflow:auto;background:var(--bg-primary);"></div>
+
+      <!-- Buttons -->
+      <div style="display:flex;gap:12px;justify-content:center;">
+        <button class="btn btn-primary" id="btn-hg-accept" style="min-width:140px;background:#28a745;">Accept</button>
+        <button class="btn" id="btn-hg-rethink" style="min-width:140px;background:#f0ad4e;color:#000;">Rethink</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ===== Iterative Writing Accept Overlay ===== -->
 <div class="modal-overlay" id="iterative-accept-overlay">
   <div class="modal" style="width:min(480px, 90vw);">

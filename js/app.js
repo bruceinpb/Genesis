@@ -110,6 +110,10 @@ class App {
       // Bind remaining UI events (editor, sidebar, etc.)
       this._bindEvents();
 
+      // Genesis 3.0 event listeners
+      this._setupGenesis3EventListeners();
+      this._setupGenesis3StatusCallback();
+
       // Initialize Chapter Navigator
       this._initChapterNav();
 
@@ -1294,6 +1298,179 @@ class App {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 3.0 — PIPELINE PROGRESS UI + HUMAN GATE
+  // ═══════════════════════════════════════════════════════════
+
+  _showGenesis3Overlay(show, chapterVoiceName = '') {
+    const overlay = document.getElementById('genesis3-pipeline-overlay');
+    if (!overlay) return;
+
+    if (show) {
+      const logEl = document.getElementById('g3-status-log');
+      if (logEl) logEl.textContent = 'Initializing Genesis 3.0 pipeline...';
+
+      const voiceLabel = document.getElementById('g3-voice-label');
+      if (voiceLabel && chapterVoiceName) {
+        voiceLabel.textContent = `Voice: ${chapterVoiceName}`;
+      }
+
+      // Reset all phases
+      document.querySelectorAll('.g3-phase').forEach(el => {
+        el.classList.remove('active', 'completed');
+        const icon = el.querySelector('.g3-icon');
+        if (icon) icon.textContent = '\u25CB'; // empty circle
+      });
+
+      overlay.style.display = '';
+      overlay.classList.add('visible');
+    } else {
+      overlay.style.display = 'none';
+      overlay.classList.remove('visible');
+    }
+  }
+
+  _updateGenesis3Phase(phaseNumber) {
+    document.querySelectorAll('.g3-phase').forEach(el => {
+      const phase = parseInt(el.dataset.phase);
+      const icon = el.querySelector('.g3-icon');
+      if (phase < phaseNumber) {
+        el.classList.remove('active');
+        el.classList.add('completed');
+        if (icon) icon.textContent = '\u2713'; // checkmark
+      } else if (phase === phaseNumber) {
+        el.classList.add('active');
+        el.classList.remove('completed');
+        if (icon) icon.innerHTML = '<span class="g3-spinner" style="display:inline-block;animation:spin 1s linear infinite;">&#x21BB;</span>';
+      } else {
+        el.classList.remove('active', 'completed');
+        if (icon) icon.textContent = '\u25CB'; // empty circle
+      }
+    });
+  }
+
+  _showHumanGateOverlay(data) {
+    const overlay = document.getElementById('human-gate-overlay');
+    if (!overlay) return;
+
+    // Populate fields
+    const voiceEl = document.getElementById('hg-voice-label');
+    if (voiceEl) voiceEl.textContent = `Chapter voice: ${data.chapterVoice || 'Unknown'}`;
+
+    const verStatus = document.getElementById('hg-verification-status');
+    if (verStatus && data.verificationResult) {
+      verStatus.textContent = data.verificationResult.allPassed
+        ? 'ALL CHECKS PASSED'
+        : `${data.verificationResult.failCount} check(s) failed`;
+      verStatus.style.color = data.verificationResult.allPassed ? 'var(--success, #28a745)' : 'var(--danger, #dc3545)';
+    }
+
+    const verDetails = document.getElementById('hg-verification-details');
+    if (verDetails && data.verificationResult && data.verificationResult.failures.length > 0) {
+      verDetails.innerHTML = data.verificationResult.failures.map(f =>
+        `<div style="color:var(--danger);margin-top:2px;">&bull; ${this._escapeHtml(f)}</div>`
+      ).join('');
+    } else if (verDetails) {
+      verDetails.innerHTML = '';
+    }
+
+    const scoreEl = document.getElementById('hg-score-value');
+    if (scoreEl && data.scoreResult) {
+      scoreEl.textContent = `${data.scoreResult.overall}/100`;
+    }
+
+    const auditEl = document.getElementById('hg-audit-status');
+    if (auditEl && data.auditResult) {
+      if (data.auditResult.anyYes) {
+        auditEl.textContent = `Issues found: ${data.auditResult.findings.map(f => f.dimension).join(', ')}`;
+        auditEl.style.color = 'var(--danger, #dc3545)';
+      } else {
+        auditEl.textContent = 'PASS (no issues)';
+        auditEl.style.color = 'var(--success, #28a745)';
+      }
+    }
+
+    const proseEl = document.getElementById('hg-prose-preview');
+    if (proseEl && data.prose) {
+      proseEl.innerHTML = data.prose.split('\n\n')
+        .filter(p => p.trim())
+        .map(p => `<p style="margin-bottom:0.8em;">${this._escapeHtml(p)}</p>`)
+        .join('');
+    }
+
+    overlay.style.display = '';
+    overlay.classList.add('visible');
+  }
+
+  _hideHumanGateOverlay() {
+    const overlay = document.getElementById('human-gate-overlay');
+    if (overlay) {
+      overlay.style.display = 'none';
+      overlay.classList.remove('visible');
+    }
+  }
+
+  _setupGenesis3EventListeners() {
+    // Cancel button for Genesis 3.0 pipeline
+    document.getElementById('btn-g3-cancel')?.addEventListener('click', () => {
+      this._generateCancelled = true;
+      if (this.orchestrator?._abortController) {
+        this.orchestrator._abortController.abort();
+      }
+      this._showGenesis3Overlay(false);
+    });
+
+    // Human gate buttons
+    document.getElementById('btn-hg-accept')?.addEventListener('click', () => {
+      this._hideHumanGateOverlay();
+      if (this.orchestrator) {
+        this.orchestrator.resolveHumanGate('accept');
+      }
+    });
+
+    document.getElementById('btn-hg-rethink')?.addEventListener('click', () => {
+      this._hideHumanGateOverlay();
+      if (this.orchestrator) {
+        this.orchestrator.resolveHumanGate('rethink');
+      }
+    });
+  }
+
+  /**
+   * Set up the status callback for Genesis 3.0 pipeline progress.
+   */
+  _setupGenesis3StatusCallback() {
+    if (!this.orchestrator) return;
+    const originalCallback = this.orchestrator._statusCallback;
+
+    this.orchestrator.onStatus((phase, message, data) => {
+      // Update the pipeline progress overlay
+      if (phase === 'pipeline') {
+        const phaseMatch = message.match(/PHASE (\d+)/);
+        if (phaseMatch) {
+          this._updateGenesis3Phase(parseInt(phaseMatch[1]));
+        }
+      }
+
+      // Update the status log
+      const logEl = document.getElementById('g3-status-log');
+      if (logEl) {
+        logEl.textContent += '\n' + message;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      // Handle human gate events
+      if (phase === 'human-gate' && data) {
+        this._showHumanGateOverlay(data);
+      }
+
+      // Call original callback if it exists
+      if (originalCallback) {
+        originalCallback(phase, message, data);
+      }
+    });
+  }
+
   /**
    * Show the GO/NO-GO overlay with results.
    */
@@ -1468,21 +1645,28 @@ class App {
       projectGoal: project.wordCountGoal || 0
     });
 
-    const agentCount = project.agentCount || 5;
+    // Read agent count from project data, with UI fallback to prevent stale-cache bugs
+    const uiAgentCount = parseInt(document.getElementById('bs-agent-count')?.value);
+    const agentCount = Math.max(1, Math.min(10, uiAgentCount || project.agentCount || 5));
     const chapterAgentsEnabled = project.chapterAgentsEnabled !== false;
     this.orchestrator.configure({ agentCount, chapterAgentsEnabled });
 
-    // Close panels and show multi-agent overlay
+    // Close panels and show pipeline overlay
     this._showContinueBar(false);
     this._closeAcceptOutlineDialog();
     this._closeAllPanels();
     this._hideWelcome();
     this._generateCancelled = false;
-    // Show the iterative writing overlay with agent panel enabled
-    this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
-    this._updateIterativePhase('Deploying writing agents...');
-    this._showMultiAgentOverlay(true, agentCount, chapterTitle);
-    this._updateMultiAgentChapterLabel(chapterTitle);
+
+    // Show the appropriate overlay based on pipeline mode
+    if (this.orchestrator.genesis3Enabled) {
+      this._showGenesis3Overlay(true);
+    } else {
+      this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
+      this._updateIterativePhase('Deploying writing agents...');
+      this._showMultiAgentOverlay(true, agentCount, chapterTitle);
+      this._updateMultiAgentChapterLabel(chapterTitle);
+    }
 
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
@@ -1509,7 +1693,7 @@ class App {
         try { errorPatterns = await this.errorDb.getPatterns({ minFrequency: 1, limit: 50 }); } catch (_) {}
       }
 
-      const result = await this.orchestrator.runFullPipeline({
+      const result = await this.orchestrator.runPipeline({
         systemPrompt, userPrompt, maxTokens,
         genre, voice: project.voice || '',
         authorPalette: project.authorPalette || '',
@@ -1523,6 +1707,7 @@ class App {
 
       this._showMultiAgentOverlay(false);
       this._showIterativeOverlay(false);
+      this._showGenesis3Overlay(false);
 
       if (this._generateCancelled) return;
 
@@ -1562,6 +1747,7 @@ class App {
     } catch (err) {
       this._showMultiAgentOverlay(false);
       this._showIterativeOverlay(false);
+      this._showGenesis3Overlay(false);
       if (err.name === 'AbortError') return;
       console.error('Multi-agent pipeline failed:', err);
       if (errEl) {
@@ -1581,6 +1767,9 @@ class App {
     const startingContent = existingContent.trim() ? existingContent : '';
     // Safety strip: remove any strategy markers from generated prose
     prose = prose.replace(/---STRATEGY---[\s\S]*?(?=\n\n|$)/g, '').trim();
+    prose = prose.replace(/---STRATEGY---[\s\S]*/g, '').trim();
+    prose = prose.replace(/---SMOOTHING_LOG---[\s\S]*/g, '').trim();
+    prose = prose.replace(/---ROUGHNESS_LOG---[\s\S]*/g, '').trim();
     // Strip markdown headings from the prose body (they'll be replaced by proper HTML heading)
     prose = prose.replace(/^#+\s+.*$/gm, '').trim();
     // Convert markdown italic markers (*text*) to HTML <em> tags
@@ -1825,7 +2014,8 @@ class App {
 
   async _runGeneration(options = {}) {
     // Route to multi-agent pipeline if agentCount > 1
-    const agentCount = this._currentProject?.agentCount || 5;
+    const uiAgentCountRoute = parseInt(document.getElementById('bs-agent-count')?.value);
+    const agentCount = Math.max(1, Math.min(10, uiAgentCountRoute || this._currentProject?.agentCount || 5));
     if (agentCount > 1 && !options.isContinuation && !options._isMultiChapterStep) {
       return this._runMultiAgentGeneration(options);
     }
@@ -7391,25 +7581,62 @@ class App {
   }
 
   _updateDeleteSelectedBtn() {
-    const checked = document.querySelectorAll('.chapter-checkbox:checked');
+    // Check both old sidebar checkboxes and new navigator checkboxes
+    const oldChecked = document.querySelectorAll('.chapter-checkbox:checked');
+    const navChecked = document.querySelectorAll('.nav-item-checkbox:checked');
+    const checkedCount = oldChecked.length + navChecked.length;
     const btn = document.getElementById('btn-delete-selected-chapters');
     if (btn) {
-      btn.disabled = checked.length === 0;
-      btn.textContent = checked.length > 0 ? `Delete Selected (${checked.length})` : 'Delete Selected';
+      btn.disabled = checkedCount === 0;
+      btn.textContent = checkedCount > 0 ? `Delete Selected (${checkedCount})` : 'Delete Selected';
     }
-    // Sync "Select All" checkbox state
+    // Sync "Select All" checkbox state for both systems
     const selectAll = document.getElementById('chapter-select-all');
     const allBoxes = document.querySelectorAll('.chapter-checkbox');
     if (selectAll && allBoxes.length > 0) {
-      selectAll.checked = checked.length === allBoxes.length;
-      selectAll.indeterminate = checked.length > 0 && checked.length < allBoxes.length;
+      selectAll.checked = oldChecked.length === allBoxes.length;
+      selectAll.indeterminate = oldChecked.length > 0 && oldChecked.length < allBoxes.length;
+    }
+    // Also sync navigator toolbar select-all
+    const navSelectAll = document.getElementById('nav-toolbar-select-all');
+    const allNavBoxes = document.querySelectorAll('.nav-item-checkbox');
+    if (navSelectAll && allNavBoxes.length > 0) {
+      navSelectAll.checked = navChecked.length === allNavBoxes.length;
+      navSelectAll.indeterminate = navChecked.length > 0 && navChecked.length < allNavBoxes.length;
     }
   }
 
   _toggleSelectAll(checked) {
-    document.querySelectorAll('.chapter-checkbox').forEach(cb => {
+    // Target the navigator's checkboxes (the old .chapter-checkbox class is no longer rendered)
+    const containers = ['nav-front-items', 'nav-chapter-items', 'nav-back-items'];
+    const allItems = [];
+    for (const cid of containers) {
+      const container = document.getElementById(cid);
+      if (container) {
+        allItems.push(...container.querySelectorAll('.nav-item-checkbox'));
+      }
+    }
+    if (allItems.length === 0) {
+      allItems.push(...document.querySelectorAll('.nav-item-checkbox'));
+    }
+    allItems.forEach(cb => {
       cb.checked = checked;
+      if (checked) cb.setAttribute('checked', '');
+      else cb.removeAttribute('checked');
+      const item = cb.closest('.nav-item');
+      if (item) {
+        const id = item.dataset.navId;
+        if (checked) this._navSelectedIds.add(id);
+        else this._navSelectedIds.delete(id);
+        item.classList.toggle('selected', checked);
+      }
     });
+    this._updateNavDeleteButton();
+    // Sync the navigator select-all button and toolbar checkbox
+    const headerBtn = document.getElementById('btn-nav-select-all');
+    if (headerBtn) headerBtn.textContent = checked ? '\u2611' : '\u2610';
+    const toolbarCb = document.getElementById('nav-toolbar-select-all');
+    if (toolbarCb) toolbarCb.checked = checked;
     this._updateDeleteSelectedBtn();
   }
 

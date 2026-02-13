@@ -27,7 +27,55 @@
  *   7.   Index compilation (conditional on scholarlyApparatus.indexEnabled)
  */
 
+import { deterministicVerification } from './verification.js';
+
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+
+// ═══════════════════════════════════════════════════════════
+//  8-AUTHOR PALETTE (Genesis 3.0)
+// ═══════════════════════════════════════════════════════════
+const GENESIS_AUTHOR_PALETTE = {
+  'robert-caro': {
+    id: 'robert-caro', name: 'Robert Caro', label: 'Architectonic Sweep',
+    temperature: 0.72,
+    voicePrompt: 'Architectonic panoramic sweep, psychological depth, power dynamics through institutional behavior. Write with the expansive authority of someone who has spent decades tracking how power actually works. Sentences should feel like they contain compressed years of research. Use long accumulative sentences that build toward revelations about character and power, followed by short declarative sentences that land like verdicts.'
+  },
+  'joan-didion': {
+    id: 'joan-didion', name: 'Joan Didion', label: 'Cool Forensic Irony',
+    temperature: 0.65,
+    voicePrompt: 'Cool forensic irony, controlled understatement, character revealed through what is NOT said. Write with the detached precision of a reporter who notices everything and editorializes nothing. Sentences should feel polished to the point of apparent simplicity. Use short, declarative sentences that accumulate into devastating observations. Let irony emerge from juxtaposition of facts, never from commentary.'
+  },
+  'john-hersey': {
+    id: 'john-hersey', name: 'John Hersey', label: 'Witness Accumulation',
+    temperature: 0.60,
+    voicePrompt: 'Witness accumulation, radical restraint, physical observations without editorializing. Write as if you were present, recording exactly what happened without judgment. Every detail is physical, concrete, observed. Never tell the reader what to feel. Let the accumulation of specific, witnessed detail do all emotional work. Sentences should be clean, direct, and unadorned.'
+  },
+  'ryszard-kapuscinski': {
+    id: 'ryszard-kapuscinski', name: 'Ryszard Kapuściński', label: 'Visceral Panoramic',
+    temperature: 0.82,
+    voicePrompt: 'Visceral panoramic, sensory immersion, ground abstractions in physical sensation. Write with the immediacy of someone standing in the dust and heat. Every abstract concept must be grounded in a physical sensation — power smells like something, history has a temperature. Sentences should move between panoramic sweep and microscopic physical detail. Use present tense for immediacy when appropriate.'
+  },
+  'david-halberstam': {
+    id: 'david-halberstam', name: 'David Halberstam', label: 'Propulsive Narrative Engine',
+    temperature: 0.75,
+    voicePrompt: 'Propulsive narrative engine, institutional momentum, each sentence drives forward. Write with relentless forward momentum. Every sentence should contain the seeds of the next conflict. Use the machinery of institutions — meetings, phone calls, memos, decisions — as the engine of narrative. Paragraphs should feel like they are moving inexorably toward a consequence that the characters cannot yet see.'
+  },
+  'erik-larson': {
+    id: 'erik-larson', name: 'Erik Larson', label: 'Invisible Research',
+    temperature: 0.70,
+    voicePrompt: 'Invisible research embedding, novelistic flow, facts feel observed not cited. Write so that extensive research disappears into seamless narrative. The reader should feel they are watching events unfold, never reading a history book. Weave factual detail into scenes with novelistic fluidity. Use weather, light, and time of day to anchor the reader in specific moments.'
+  },
+  'janet-malcolm': {
+    id: 'janet-malcolm', name: 'Janet Malcolm', label: 'Structural Unpredictability',
+    temperature: 0.68,
+    voicePrompt: 'Structural unpredictability, interrupted thought, resist smooth transitions. Write with the intellectual restlessness of someone who distrusts narrative smoothness. Interrupt your own train of thought. Let paragraphs end mid-idea and pick up from a different angle. Use digressions that turn out to be the real subject. Resist giving the reader the satisfaction of expected structure.'
+  },
+  'john-mcphee': {
+    id: 'john-mcphee', name: 'John McPhee', label: 'Informational Digression',
+    temperature: 0.70,
+    voicePrompt: 'Informational digression, observational embedding, follow thoughts sideways. Write with the patient curiosity of someone who finds everything interesting. Follow tangents because they reveal something unexpected about the main subject. Embed technical information so naturally that the reader absorbs it without noticing they are learning. Use precise, specific language — the right word for every geological formation, every botanical species, every mechanical process.'
+  }
+};
 
 class MultiAgentOrchestrator {
   constructor(generator, storage) {
@@ -37,6 +85,10 @@ class MultiAgentOrchestrator {
     // Configuration
     this.agentCount = 5;
     this.chapterAgentsEnabled = true;
+    // Genesis 3.0: Pipeline mode flag (true = new single-voice pipeline, false = legacy chimera)
+    this.genesis3Enabled = true;
+    // Genesis 3.0: Human review gate (default ON)
+    this.humanReviewEnabled = true;
 
     // Chapter digests cache: chapterId → { contentHash, digest }
     this._chapterDigests = new Map();
@@ -49,14 +101,19 @@ class MultiAgentOrchestrator {
 
     // Pipeline log accumulator for download
     this._pipelineLog = [];
+
+    // Human gate callback: set by the app when the user makes a decision
+    this._humanGateResolve = null;
   }
 
   /**
    * Configure orchestrator settings.
    */
-  configure({ agentCount, chapterAgentsEnabled }) {
+  configure({ agentCount, chapterAgentsEnabled, genesis3Enabled, humanReviewEnabled }) {
     if (agentCount !== undefined) this.agentCount = Math.max(1, Math.min(10, agentCount));
     if (chapterAgentsEnabled !== undefined) this.chapterAgentsEnabled = chapterAgentsEnabled;
+    if (genesis3Enabled !== undefined) this.genesis3Enabled = genesis3Enabled;
+    if (humanReviewEnabled !== undefined) this.humanReviewEnabled = humanReviewEnabled;
   }
 
   /**
@@ -2309,6 +2366,857 @@ Return ONLY valid JSON:
     this._logPipeline('index', `Compiled ${result.entries.length} index entries.`);
     return result;
   }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 3.0 — SINGLE-VOICE GENERATION (Session 3)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Select an author voice for a chapter. Locks it in chapterVoice field.
+   * @param {Object} authorPalette - Project's author palette
+   * @param {string} [preferredAuthorId] - Optional preferred author ID
+   * @returns {Object} Selected author from GENESIS_AUTHOR_PALETTE
+   */
+  _selectChapterVoice(authorPalette, preferredAuthorId) {
+    // If a preferred author is specified, use it
+    if (preferredAuthorId && GENESIS_AUTHOR_PALETTE[preferredAuthorId]) {
+      return GENESIS_AUTHOR_PALETTE[preferredAuthorId];
+    }
+
+    // Build available authors from palette + Genesis 3.0 palette
+    const available = [];
+    if (authorPalette && typeof authorPalette === 'object' && authorPalette.authors) {
+      for (const a of authorPalette.authors) {
+        const paletteAuthor = Object.values(GENESIS_AUTHOR_PALETTE).find(
+          ga => ga.name.toLowerCase() === (a.name || '').toLowerCase()
+        );
+        if (paletteAuthor) {
+          available.push(paletteAuthor);
+        } else {
+          // Use the palette author's own voice prompt
+          available.push({
+            id: a.id || a.name?.toLowerCase().replace(/\s+/g, '-'),
+            name: a.name, label: a.label || a.name,
+            temperature: a.temperature || 0.7,
+            voicePrompt: a.voicePrompt || ''
+          });
+        }
+      }
+    }
+
+    // If no palette authors, use the full Genesis 3.0 palette
+    if (available.length === 0) {
+      const all = Object.values(GENESIS_AUTHOR_PALETTE);
+      return all[Math.floor(Math.random() * all.length)];
+    }
+
+    // Random selection from available
+    return available[Math.floor(Math.random() * available.length)];
+  }
+
+  /**
+   * Generate a single 750-word chunk in ONE author voice.
+   * Replaces multi-agent parallel generation for Genesis 3.0.
+   */
+  async generateSingleVoice(params) {
+    const { systemPrompt, userPrompt, maxTokens = 4096, chapterVoice, errorPatterns, beats, continuityDigest } = params;
+
+    const authorName = chapterVoice.name || chapterVoice.label;
+    const voiceChars = chapterVoice.voicePrompt || '';
+
+    this._logPipeline('gen-single', `Generating in the voice of ${authorName}...`);
+
+    const singleVoiceSystem = `You are writing narrative nonfiction in the voice of ${authorName}.
+You are producing a rough first draft of approximately 750 words.
+
+VOICE CHARACTERISTICS:
+${voiceChars}
+
+${beats ? `MATERIAL TO COVER:\n${beats}\n` : ''}
+${continuityDigest ? `CONTINUITY:\n${continuityDigest}\n` : ''}
+
+RULES:
+- Write naturally. This is a FIRST DRAFT. Some roughness is expected and welcome.
+- Do NOT try to make every sentence brilliant. Let 2-3 sentences per chunk be merely functional — competent but not brilliant.
+- Do NOT end every paragraph with a dramatic or ironic kicker. 70%+ of paragraphs must end mid-thought, on a plain factual statement, or with a clause that propels into the next paragraph.
+- Maximum ONE tricolon (list of three) per 750 words.
+- Do NOT fabricate citations, statistics, or archival references.
+- Vary paragraph lengths. Some short (2-3 sentences). Some long (8-10 sentences). Do NOT make them all medium.
+- Let sections bleed into each other — do NOT create self-contained modular vignettes.
+
+BANNED PATTERNS (zero occurrences):
+- "found herself/himself"
+- "the way" (as connector)
+- "voice was"
+- "seemed to"
+- "began to" / "started to"
+- "something" / "somehow"
+- "for a long moment"
+- em-dash character
+
+${systemPrompt}`;
+
+    const text = await this._callApi(singleVoiceSystem, userPrompt, {
+      maxTokens, temperature: 0.7
+    });
+
+    this._logPipeline('gen-single', `Single-voice generation complete. ${this._countWords(text)} words.`);
+    return text;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 3.0 — SENTENCE-LEVEL ITERATION (Session 4)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Parse a prose chunk into individual sentences.
+   * Handles dialogue quotes, abbreviations, ellipsis.
+   */
+  parseSentences(chunk) {
+    if (!chunk || chunk.trim().length === 0) return [];
+
+    // Protect abbreviations from splitting
+    let text = chunk
+      .replace(/\bMr\./g, 'Mr\u200B')
+      .replace(/\bMrs\./g, 'Mrs\u200B')
+      .replace(/\bDr\./g, 'Dr\u200B')
+      .replace(/\bU\.S\./g, 'U\u200BS\u200B')
+      .replace(/\bSt\./g, 'St\u200B')
+      .replace(/\bGen\./g, 'Gen\u200B')
+      .replace(/\bSen\./g, 'Sen\u200B')
+      .replace(/\bRep\./g, 'Rep\u200B')
+      .replace(/\bvs\./g, 'vs\u200B')
+      .replace(/\betc\./g, 'etc\u200B')
+      .replace(/\be\.g\./g, 'e\u200Bg\u200B')
+      .replace(/\bi\.e\./g, 'i\u200Be\u200B')
+      .replace(/\.\.\./g, '\u2026'); // Ellipsis
+
+    // Split on sentence-ending punctuation
+    const raw = text.split(/(?<=[.!?])\s+/);
+
+    // Restore abbreviations
+    return raw
+      .map(s => s
+        .replace(/\u200B/g, '.')
+        .replace(/\u2026/g, '...')
+        .trim()
+      )
+      .filter(s => s.length > 0);
+  }
+
+  /**
+   * Classify each sentence by type for iteration targeting.
+   */
+  classifySentences(sentences) {
+    const emotionWords = /\b(felt|realized|knew|feared|hoped|remembered|heart|breath|tears|trembled|grief|joy|rage|despair|longing|dread|wonder|shame|pride|guilt)\b/i;
+    const transitionStarters = /^(Later|Meanwhile|The next|That evening|By then|After|Before|Outside|Across|The following|In the|On the|Within|During|Throughout|At last|Eventually|Soon|Then|Afterward)/i;
+
+    return sentences.map((sentence, index) => {
+      const wordCount = sentence.split(/\s+/).length;
+
+      if (index === 0) return { sentence, type: 'opener', index };
+      if (index === sentences.length - 1) return { sentence, type: 'closer', index };
+      if (emotionWords.test(sentence)) return { sentence, type: 'emotional_beat', index };
+      if (wordCount < 15 && transitionStarters.test(sentence)) return { sentence, type: 'transition', index };
+      return { sentence, type: 'factual', index };
+    });
+  }
+
+  /**
+   * Select authors best suited for a sentence purpose.
+   */
+  selectAuthorsForPurpose(sentenceType, maxAuthors = 3) {
+    const authorMap = {
+      opener: ['john-hersey', 'ryszard-kapuscinski', 'erik-larson', 'robert-caro'],
+      closer: ['joan-didion', 'janet-malcolm', 'robert-caro', 'john-mcphee'],
+      emotional_beat: ['robert-caro', 'joan-didion', 'janet-malcolm', 'ryszard-kapuscinski'],
+      scene_setting: ['john-hersey', 'ryszard-kapuscinski', 'erik-larson'],
+      analysis: ['robert-caro', 'david-halberstam', 'john-mcphee'],
+      transition: ['john-mcphee', 'janet-malcolm', 'john-hersey'],
+      revelation: ['joan-didion', 'janet-malcolm', 'robert-caro'],
+      factual: ['erik-larson', 'john-mcphee', 'david-halberstam']
+    };
+
+    const candidates = (authorMap[sentenceType] || authorMap.factual)
+      .map(id => GENESIS_AUTHOR_PALETTE[id])
+      .filter(Boolean);
+
+    // Shuffle before slicing
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+
+    return candidates.slice(0, maxAuthors);
+  }
+
+  /**
+   * Generate one alternative version of a sentence in a specific author's voice.
+   */
+  async generateSentenceAlternative(sentence, context, iteratorAuthor, chapterVoice) {
+    const systemPrompt = `You are rewriting a single sentence in the voice of ${iteratorAuthor.name}.
+The chapter is written in the voice of ${chapterVoice.name}. Your sentence
+must fit naturally within that voice while bringing ${iteratorAuthor.name}'s
+characteristic ${iteratorAuthor.label || 'style'}.
+
+THE SENTENCE IN CONTEXT:
+${context.prevSentences ? context.prevSentences.join(' ') + ' → ' : ''}**${sentence}**${context.nextSentences ? ' → ' + context.nextSentences.join(' ') : ''}
+
+ORIGINAL SENTENCE:
+"${sentence}"
+
+WRITE ONE alternative version. Rules:
+- Must fit the surrounding context naturally
+- Be specific (concrete detail > abstract statement)
+- Do NOT use a tricolon, parallel structure, or dramatic kicker
+- Do NOT fabricate statistics or archival references
+- Keep roughly the same length (±30%)
+
+RESPOND WITH ONLY THE SENTENCE. No explanation, no quotes.`;
+
+    const alt = await this._callApi(systemPrompt, `Rewrite: "${sentence}"`, {
+      maxTokens: 300, temperature: 0.7
+    });
+
+    return alt.trim().replace(/^["']|["']$/g, '');
+  }
+
+  /**
+   * Judge sentence alternatives and select the best.
+   */
+  async judgeSentence(original, alternatives, context, chapterVoice) {
+    const labels = alternatives.map((_, i) => String.fromCharCode(65 + i));
+    const altBlock = alternatives.map((alt, i) =>
+      `${labels[i]} (${alt.author}): "${alt.text}"`
+    ).join('\n');
+
+    const systemPrompt = `Select the best version of a single sentence from these alternatives.
+
+CONTEXT:
+${context.prevSentences ? context.prevSentences.join(' ') + ' → ' : ''}[THIS SENTENCE]${context.nextSentences ? ' → ' + context.nextSentences.join(' ') : ''}
+
+ORIGINAL: "${original}"
+${altBlock}
+
+SELECT the version that:
+1. Fits the surrounding context most naturally
+2. Is most specific (concrete detail > abstract statement)
+3. Has the most interesting rhythm when read aloud
+4. Does NOT use a tricolon or dramatic kicker
+5. Maintains the voice of ${chapterVoice.name}
+
+You may construct a HYBRID from multiple versions.
+
+RESPOND WITH ONLY:
+Winner: [ORIGINAL/${labels.join('/')}${alternatives.length > 0 ? '/HYBRID' : ''}]
+Selected: "[the sentence]"
+Reason: [one line]`;
+
+    const response = await this._callApi(systemPrompt, `Judge these sentence alternatives.`, {
+      maxTokens: 400, temperature: 0.2
+    });
+
+    // Parse the response
+    const winnerMatch = response.match(/Winner:\s*(ORIGINAL|HYBRID|[A-Z])/i);
+    const selectedMatch = response.match(/Selected:\s*"([^"]+)"/);
+    const reasonMatch = response.match(/Reason:\s*(.+)/i);
+
+    const winner = winnerMatch ? winnerMatch[1].toUpperCase() : 'ORIGINAL';
+    const selected = selectedMatch ? selectedMatch[1] : original;
+
+    return {
+      winner,
+      selected,
+      reason: reasonMatch ? reasonMatch[1].trim() : 'No reason provided'
+    };
+  }
+
+  /**
+   * Main sentence iteration method.
+   * Iterates important sentences in a chunk for quality improvement.
+   */
+  async iterateSentences(chunk, chapterVoice, agentCount) {
+    // Map agentCount to iteration count
+    let iterationCount;
+    if (agentCount <= 1) return chunk; // No iteration
+    if (agentCount <= 5) iterationCount = agentCount;
+    else iterationCount = 5; // Cap at 5
+
+    this._logPipeline('sentence-iter', `Sentence iteration: ${iterationCount} alternatives per important sentence`);
+
+    const sentences = this.parseSentences(chunk);
+    const classified = this.classifySentences(sentences);
+
+    const important = classified.filter(c =>
+      c.type === 'opener' || c.type === 'closer' || c.type === 'emotional_beat'
+    );
+    const skipped = classified.filter(c =>
+      c.type === 'transition' || c.type === 'factual'
+    );
+
+    this._logPipeline('sentence-iter', `${important.length} important sentences, ${skipped.length} functional (skipped)`);
+
+    const finalSentences = sentences.slice(); // Copy
+
+    for (const item of important) {
+      const { sentence, type, index } = item;
+      this._logPipeline('sentence-iter', `  [${type}] "${sentence.substring(0, 60)}..."`);
+
+      // Get context (surrounding sentences)
+      const context = {
+        prevSentences: sentences.slice(Math.max(0, index - 2), index),
+        nextSentences: sentences.slice(index + 1, Math.min(sentences.length, index + 3))
+      };
+
+      // Select authors for this sentence type
+      const authors = this.selectAuthorsForPurpose(type, iterationCount);
+
+      // Generate alternatives in parallel
+      const altPromises = authors.map(author =>
+        this.generateSentenceAlternative(sentence, context, author, chapterVoice)
+          .then(text => ({ text, author: author.name }))
+          .catch(() => null)
+      );
+
+      const results = (await Promise.all(altPromises)).filter(Boolean);
+
+      if (results.length === 0) {
+        this._logPipeline('sentence-iter', `    No alternatives generated. Keeping original.`);
+        continue;
+      }
+
+      // Judge alternatives
+      const judgment = await this.judgeSentence(sentence, results, context, chapterVoice);
+
+      if (judgment.winner !== 'ORIGINAL' && judgment.selected && judgment.selected !== sentence) {
+        finalSentences[index] = judgment.selected;
+        this._logPipeline('sentence-iter', `    Winner: ${judgment.winner} — ${judgment.reason}`);
+      } else {
+        this._logPipeline('sentence-iter', `    Keeping original.`);
+      }
+    }
+
+    return finalSentences.join(' ');
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 3.0 — PROSECUTION SCORING (Session 5)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Prosecution-first scoring: weaknesses before strengths.
+   * Returns detailed score with mechanical caps applied.
+   */
+  async _prosecutionScore(prose, context, verificationResult) {
+    this._logPipeline('prosecution', 'Running prosecution-first scoring...');
+
+    const systemPrompt = `You are a hostile editorial reviewer. Your job is to find weaknesses.
+List every flaw BEFORE acknowledging any strength.
+
+READ THIS PROSE AND RESPOND IN THIS EXACT ORDER:
+
+WEAKNESSES (list ALL, most serious first):
+1. [specific weakness with quoted text]
+2. [specific weakness with quoted text]
+...
+
+STRENGTHS (ONLY after all weaknesses):
+1. ...
+
+SCORES (1-10 each):
+- Prose Quality: [N]/10
+- Emotional Resonance: [N]/10
+- Pacing: [N]/10
+- Character Voice: [N]/10
+- Show vs. Tell: [N]/10
+- Sentence Variety: [N]/10
+- Word Choice: [N]/10
+- Originality: [N]/10
+- Technical: [N]/10
+
+OVERALL: [N]/100
+
+NOTE: Scores will be mechanically adjusted by code-based verification.
+If code found 3 tricolons and you scored Originality 9/10, your score
+will be overridden to 7/10. Score honestly.`;
+
+    const response = await this._callApi(systemPrompt, `PROSE:\n\n${prose}`, {
+      temperature: 0.15, maxTokens: 1500
+    });
+
+    // Parse scores from the response
+    const overallMatch = response.match(/OVERALL:\s*(\d+)/i);
+    let overall = overallMatch ? parseInt(overallMatch[1]) : 85;
+
+    const origMatch = response.match(/Originality:\s*(\d+)/i);
+    let originality = origMatch ? parseInt(origMatch[1]) : 7;
+
+    const techMatch = response.match(/Technical:\s*(\d+)/i);
+    let technical = techMatch ? parseInt(techMatch[1]) : 7;
+
+    const emotMatch = response.match(/Emotional Resonance:\s*(\d+)/i);
+    let emotionalResonance = emotMatch ? parseInt(emotMatch[1]) : 7;
+
+    // Apply mechanical caps from deterministic verification
+    if (verificationResult) {
+      // Banned patterns → overall score = 0
+      const bannedCount = verificationResult.bannedPatterns
+        ? verificationResult.bannedPatterns.reduce((sum, bp) => sum + bp.count, 0)
+        : 0;
+      if (bannedCount > 0) {
+        this._logPipeline('prosecution', `MECHANICAL CAP: Banned patterns found (${bannedCount}). Overall → 0.`);
+        overall = 0;
+      }
+
+      // Tricolon > 2 → cap Originality at 7
+      if (verificationResult.tricolonCount > 2) {
+        const cappedOrig = Math.min(originality, 7);
+        if (cappedOrig < originality) {
+          this._logPipeline('prosecution', `MECHANICAL CAP: ${verificationResult.tricolonCount} tricolons. Originality ${originality} → ${cappedOrig}.`);
+          originality = cappedOrig;
+        }
+      }
+
+      // Kicker density > 0.40 → cap Technical at 7
+      if (verificationResult.kickerDensity > 0.40) {
+        const cappedTech = Math.min(technical, 7);
+        if (cappedTech < technical) {
+          this._logPipeline('prosecution', `MECHANICAL CAP: Kicker density ${(verificationResult.kickerDensity * 100).toFixed(0)}%. Technical ${technical} → ${cappedTech}.`);
+          technical = cappedTech;
+        }
+      }
+
+      // Four requirements === 0 → cap Emotional Resonance at 6
+      if (verificationResult.fourRequirements === 0) {
+        const cappedEmot = Math.min(emotionalResonance, 6);
+        if (cappedEmot < emotionalResonance) {
+          this._logPipeline('prosecution', `MECHANICAL CAP: Zero requirements met. Emotional Resonance ${emotionalResonance} → ${cappedEmot}.`);
+          emotionalResonance = cappedEmot;
+        }
+      }
+    }
+
+    this._logPipeline('prosecution', `Final score: ${overall}/100 (Orig: ${originality}, Tech: ${technical}, Emot: ${emotionalResonance})`);
+
+    return {
+      overall,
+      originality,
+      technical,
+      emotionalResonance,
+      rawResponse: response,
+      mechanicallyCapped: !!verificationResult
+    };
+  }
+
+  /**
+   * Simplified adversarial audit: 3 binary questions (replaces 7-dimension JSON).
+   */
+  async _simplifiedAdversarialAudit(prose) {
+    this._logPipeline('adversarial-v3', 'Running simplified adversarial audit (3 binary questions)...');
+
+    const systemPrompt = `Answer YES or NO for each, with one example if YES.
+
+1. KICKER_DENSITY: Do >40% of paragraphs end on a dramatic/ironic kicker?
+2. PATTERN_DENSITY: Are there >2 tricolons or parallel structures?
+3. VOICE_SHIFT: Does the voice change noticeably between paragraphs?
+
+FORMAT:
+KICKER_DENSITY: [YES/NO] — [example if yes]
+PATTERN_DENSITY: [YES/NO] — [example if yes]
+VOICE_SHIFT: [YES/NO] — [example if yes]`;
+
+    const response = await this._callApi(systemPrompt, `PROSE:\n\n${prose}`, {
+      temperature: 0.1, maxTokens: 500
+    });
+
+    // Parse with regex — this ALWAYS parses
+    const kickerMatch = response.match(/KICKER_DENSITY:\s*(YES|NO)/i);
+    const patternMatch = response.match(/PATTERN_DENSITY:\s*(YES|NO)/i);
+    const voiceMatch = response.match(/VOICE_SHIFT:\s*(YES|NO)/i);
+
+    const results = {
+      kickerDensity: kickerMatch ? kickerMatch[1].toUpperCase() === 'YES' : false,
+      patternDensity: patternMatch ? patternMatch[1].toUpperCase() === 'YES' : false,
+      voiceShift: voiceMatch ? voiceMatch[1].toUpperCase() === 'YES' : false,
+      rawResponse: response,
+      anyYes: false,
+      findings: []
+    };
+
+    if (results.kickerDensity) {
+      results.findings.push({ dimension: 'KICKER_DENSITY', detail: response.match(/KICKER_DENSITY:\s*YES\s*—\s*(.*)/i)?.[1] || '' });
+    }
+    if (results.patternDensity) {
+      results.findings.push({ dimension: 'PATTERN_DENSITY', detail: response.match(/PATTERN_DENSITY:\s*YES\s*—\s*(.*)/i)?.[1] || '' });
+    }
+    if (results.voiceShift) {
+      results.findings.push({ dimension: 'VOICE_SHIFT', detail: response.match(/VOICE_SHIFT:\s*YES\s*—\s*(.*)/i)?.[1] || '' });
+    }
+
+    results.anyYes = results.findings.length > 0;
+
+    this._logPipeline('adversarial-v3', `Results: Kicker=${results.kickerDensity ? 'YES' : 'NO'}, Pattern=${results.patternDensity ? 'YES' : 'NO'}, Voice=${results.voiceShift ? 'YES' : 'NO'}`);
+
+    return results;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 3.0 — VOICE CONSISTENCY CHECK (Session 6)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Check voice consistency across the prose.
+   * Returns flagged paragraphs for re-iteration if shifts detected.
+   */
+  async _voiceConsistencyCheck(prose, chapterVoice) {
+    this._logPipeline('voice-check', `Checking voice consistency for ${chapterVoice.name}...`);
+
+    const systemPrompt = `Check voice consistency in this prose written in the style of ${chapterVoice.name}.
+Your ONLY job: identify paragraphs where the voice shifts noticeably.
+
+CONSISTENT: [YES/NO]
+If NO, list paragraph numbers with one-line explanations:
+- Paragraph [N]: [explanation]`;
+
+    const response = await this._callApi(systemPrompt, `PROSE:\n\n${prose}`, {
+      temperature: 0.1, maxTokens: 500
+    });
+
+    const consistentMatch = response.match(/CONSISTENT:\s*(YES|NO)/i);
+    const isConsistent = consistentMatch ? consistentMatch[1].toUpperCase() === 'YES' : true;
+
+    const flaggedParagraphs = [];
+    if (!isConsistent) {
+      const paraMatches = response.matchAll(/Paragraph\s+(\d+):\s*(.+)/gi);
+      for (const m of paraMatches) {
+        flaggedParagraphs.push({
+          paragraphNumber: parseInt(m[1]),
+          explanation: m[2].trim()
+        });
+      }
+    }
+
+    this._logPipeline('voice-check', isConsistent
+      ? 'Voice consistent throughout.'
+      : `Voice shifts detected in ${flaggedParagraphs.length} paragraph(s).`);
+
+    return { isConsistent, flaggedParagraphs, rawResponse: response };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 3.0 — FULL PIPELINE (replaces legacy chimera)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Run the Genesis 3.0 pipeline:
+   *   Phase 1 → Single-voice generation
+   *   Phase 2 → Sentence-level iteration
+   *   Phase 3 → Deterministic verification
+   *   Phase 4 → Prosecution scoring
+   *   Phase 5 → Micro-fix loop (uses verification + score)
+   *   Phase 6 → Simplified adversarial audit
+   *   Phase 7 → Voice consistency check
+   *   Phase 8 → Human review gate
+   *   Phase 9 → GO/NO-GO + export-ready
+   */
+  async runGenesis3Pipeline(params) {
+    const {
+      systemPrompt, userPrompt, maxTokens,
+      genre, voice, authorPalette, qualityThreshold,
+      currentChapterId, currentChapterTitle, chapters,
+      errorPatterns, scholarlyApparatus, chapterVoice: preferredVoice
+    } = params;
+
+    this._abortController = new AbortController();
+
+    const context = {
+      genre, voice, authorPalette, qualityThreshold,
+      chapterTitle: currentChapterTitle,
+      currentChapterTitle,
+      errorPatterns: errorPatterns || [],
+      scholarlyApparatus: scholarlyApparatus || {}
+    };
+
+    try {
+      // ============ SELECT CHAPTER VOICE ============
+      const chapterVoice = this._selectChapterVoice(authorPalette, preferredVoice);
+      this._logPipeline('pipeline-v3', `Chapter voice locked: ${chapterVoice.name} (${chapterVoice.label})`);
+
+      // ============ PHASE 1: Single-Voice Generation ============
+      this._emit('pipeline', '=== PHASE 1: Single-Voice Generation ===');
+
+      let augmentedSystemPrompt = systemPrompt;
+      augmentedSystemPrompt += this._buildKickerBudgetPrompt();
+      const errorPatternSection = this._buildBannedPatternsFromErrorDB(errorPatterns);
+      if (errorPatternSection) augmentedSystemPrompt += errorPatternSection;
+
+      let currentProse = await this.generateSingleVoice({
+        systemPrompt: augmentedSystemPrompt,
+        userPrompt, maxTokens, chapterVoice, errorPatterns
+      });
+
+      // ============ PHASE 2: Sentence-Level Iteration ============
+      this._emit('pipeline', '=== PHASE 2: Sentence-Level Iteration ===');
+
+      if (this.agentCount > 1) {
+        currentProse = await this.iterateSentences(currentProse, chapterVoice, this.agentCount);
+        this._logPipeline('sentence-iter-complete', 'Sentence iteration complete.');
+      } else {
+        this._logPipeline('sentence-iter', 'Skipped (agentCount = 1).');
+      }
+
+      // ============ PHASE 3: Deterministic Verification ============
+      this._emit('pipeline', '=== PHASE 3: Deterministic Verification ===');
+
+      let verificationResult = deterministicVerification(currentProse);
+      this._logPipeline('verification', `Checks: ${verificationResult.allPassed ? 'ALL PASSED' : `${verificationResult.failCount} FAILURES`}`);
+      for (const f of verificationResult.failures) {
+        this._logPipeline('verification', `  FAIL: ${f}`);
+      }
+      if (verificationResult.fabricatedPrecision.length > 0) {
+        this._logPipeline('verification', `  WARNING: ${verificationResult.fabricatedPrecision.length} fabricated precision flags`);
+      }
+
+      // ============ PHASE 4: Prosecution Scoring ============
+      this._emit('pipeline', '=== PHASE 4: Prosecution Scoring ===');
+
+      let scoreResult = await this._prosecutionScore(currentProse, context, verificationResult);
+      let currentScore = scoreResult.overall;
+
+      // ============ PHASE 5: Micro-Fix Loop ============
+      this._emit('pipeline', '=== PHASE 5: Micro-Fix Loop ===');
+
+      // CRITICAL: Stop condition requires BOTH quality >= threshold AND verification.allPassed
+      const targetScore = qualityThreshold || 90;
+      let microFixPasses = 0;
+      const maxMicroFixPasses = 5;
+      const fixesApplied = [];
+
+      while (microFixPasses < maxMicroFixPasses) {
+        const qualityOk = currentScore >= targetScore;
+        const verificationOk = verificationResult.allPassed;
+
+        if (qualityOk && verificationOk) {
+          this._logPipeline('microfix-v3', `STOP: Quality ${currentScore} >= ${targetScore} AND verification passed.`);
+          break;
+        }
+
+        microFixPasses++;
+        this._logPipeline('microfix-v3', `Pass ${microFixPasses}/${maxMicroFixPasses}: Quality=${currentScore}, Verification=${verificationOk ? 'PASS' : 'FAIL'}`);
+
+        // Use the existing micro-fix engine
+        const diagnosis = await this._diagnoseWeakestElement(currentProse, context, fixesApplied.map(f => f.text));
+        if (!diagnosis || diagnosis.severity === 'none') {
+          this._logPipeline('microfix-v3', 'No weakness found. Stopping.');
+          break;
+        }
+
+        const fixedProse = await this._fixSingleElement(currentProse, diagnosis, context);
+        if (!fixedProse || fixedProse === currentProse) {
+          this._logPipeline('microfix-v3', 'Fix produced no change. Skipping.');
+          continue;
+        }
+
+        // Validate word count
+        const drift = Math.abs(this._countWords(fixedProse) - this._countWords(currentProse)) / this._countWords(currentProse);
+        if (drift > 0.08) {
+          this._logPipeline('microfix-v3', `Word drift ${(drift * 100).toFixed(0)}% too high. Rejecting.`);
+          continue;
+        }
+
+        // Re-verify and re-score
+        const newVerification = deterministicVerification(fixedProse);
+        const newScoreResult = await this._prosecutionScore(fixedProse, context, newVerification);
+
+        if (newScoreResult.overall >= currentScore || newVerification.failCount < verificationResult.failCount) {
+          currentProse = fixedProse;
+          verificationResult = newVerification;
+          scoreResult = newScoreResult;
+          currentScore = newScoreResult.overall;
+          fixesApplied.push({
+            pass: microFixPasses,
+            category: diagnosis.category,
+            text: (diagnosis.text || '').substring(0, 80),
+            scoreBefore: currentScore,
+            scoreAfter: newScoreResult.overall
+          });
+          this._logPipeline('microfix-v3', `Fix accepted. Score: ${currentScore}, Verification failures: ${newVerification.failCount}`);
+        } else {
+          this._logPipeline('microfix-v3', `Fix rejected. Score would drop to ${newScoreResult.overall}.`);
+        }
+      }
+
+      // ============ PHASE 6: Simplified Adversarial Audit ============
+      this._emit('pipeline', '=== PHASE 6: Adversarial Audit ===');
+
+      const auditResult = await this._simplifiedAdversarialAudit(currentProse);
+
+      if (auditResult.anyYes && microFixPasses < maxMicroFixPasses) {
+        this._logPipeline('adversarial-v3', 'Routing adversarial findings to micro-fix...');
+        // One more micro-fix pass targeting adversarial findings
+        for (const finding of auditResult.findings) {
+          if (microFixPasses >= maxMicroFixPasses) break;
+          microFixPasses++;
+
+          const adversarialDiagnosis = {
+            text: finding.detail || finding.dimension,
+            category: finding.dimension.toLowerCase(),
+            severity: 'high',
+            diagnosis: `Adversarial audit: ${finding.dimension} — ${finding.detail}`,
+            suggestedApproach: `Address the ${finding.dimension} issue identified by the adversarial audit`
+          };
+
+          const fixedProse = await this._fixSingleElement(currentProse, adversarialDiagnosis, context);
+          if (fixedProse && fixedProse !== currentProse) {
+            const drift = Math.abs(this._countWords(fixedProse) - this._countWords(currentProse)) / this._countWords(currentProse);
+            if (drift <= 0.08) {
+              currentProse = fixedProse;
+              verificationResult = deterministicVerification(currentProse);
+              this._logPipeline('adversarial-v3', `Adversarial fix applied for ${finding.dimension}.`);
+            }
+          }
+        }
+      }
+
+      // ============ PHASE 7: Voice Consistency Check ============
+      this._emit('pipeline', '=== PHASE 7: Voice Consistency Check ===');
+
+      const voiceCheck = await this._voiceConsistencyCheck(currentProse, chapterVoice);
+
+      // If voice shifts detected, re-iterate flagged paragraphs (max 1 reroute)
+      if (!voiceCheck.isConsistent && voiceCheck.flaggedParagraphs.length > 0) {
+        this._logPipeline('voice-check', 'Re-iterating flagged paragraphs...');
+        // Split into paragraphs, re-iterate the flagged ones
+        const paragraphs = this._segmentParagraphs(currentProse);
+        for (const flagged of voiceCheck.flaggedParagraphs) {
+          const idx = flagged.paragraphNumber - 1;
+          if (idx >= 0 && idx < paragraphs.length) {
+            const para = paragraphs[idx];
+            const sentences = this.parseSentences(para);
+            if (sentences.length > 0) {
+              // Re-iterate the paragraph's sentences
+              const rewritten = await this.iterateSentences(para, chapterVoice, Math.min(this.agentCount, 3));
+              if (rewritten && rewritten.length > 20) {
+                paragraphs[idx] = rewritten;
+              }
+            }
+          }
+        }
+        currentProse = paragraphs.join('\n\n');
+        verificationResult = deterministicVerification(currentProse);
+      }
+
+      // ============ PHASE 8: Human Review Gate ============
+      this._emit('pipeline', '=== PHASE 8: Human Review Gate ===');
+
+      let humanDecision = 'accept';
+      if (this.humanReviewEnabled) {
+        this._emit('human-gate', 'Awaiting human review...', {
+          prose: currentProse,
+          verificationResult,
+          scoreResult,
+          auditResult,
+          voiceCheck,
+          chapterVoice: chapterVoice.name
+        });
+
+        // The app layer will resolve this when the user clicks Accept or Rethink
+        humanDecision = await new Promise((resolve) => {
+          this._humanGateResolve = resolve;
+          // Auto-accept after 60s if no response (for batch mode)
+          setTimeout(() => {
+            if (this._humanGateResolve === resolve) {
+              this._humanGateResolve = null;
+              resolve('accept');
+            }
+          }, 60000);
+        });
+        this._humanGateResolve = null;
+
+        if (humanDecision === 'rethink') {
+          this._logPipeline('human-gate', 'User requested rethink. Regenerating...');
+          // Recursively regenerate
+          return this.runGenesis3Pipeline(params);
+        }
+      }
+
+      this._logPipeline('human-gate', humanDecision === 'accept' ? 'Chunk accepted.' : 'Auto-accepted.');
+
+      // ============ PHASE 9: GO/NO-GO + Finalize ============
+      let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
+      if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
+        this._emit('pipeline', '=== PHASE 9: GO/NO-GO Launch Control ===');
+        goNoGoResult = await this.runGoNoGo(
+          currentProse, currentChapterId, chapters, currentChapterTitle
+        );
+      }
+
+      // Footnotes (conditional)
+      let footnoteResult = { prose: currentProse, footnotes: [], endnotes: [] };
+      if (scholarlyApparatus && scholarlyApparatus.footnotesEnabled) {
+        footnoteResult = await this._generateFootnotes(currentProse, context);
+        currentProse = footnoteResult.prose;
+      }
+
+      // Index (conditional)
+      let indexResult = { entries: [], type: null };
+      if (scholarlyApparatus && scholarlyApparatus.indexEnabled) {
+        indexResult = await this._compileIndex(currentProse, context);
+      }
+
+      this._abortController = null;
+
+      return {
+        prose: currentProse,
+        score: currentScore,
+        humanLikenessScore: auditResult.anyYes ? 70 : 90,
+        candidates: [],
+        chimeraMethod: 'single-voice-v3',
+        chimeraRationale: `Single-voice generation in ${chapterVoice.name} style with sentence-level iteration`,
+        fixesApplied,
+        goNoGoResult,
+        auditResult,
+        verificationResult,
+        scoreResult,
+        voiceCheck,
+        chapterVoice: chapterVoice.name,
+        footnoteResult,
+        indexResult,
+        wordCount: this._countWords(currentProse),
+        dualGateIterations: 0,
+        humanDecision,
+        judgeReport: null,
+        fixPlan: null,
+        winner: null
+      };
+    } catch (err) {
+      this._abortController = null;
+      throw err;
+    }
+  }
+
+  /**
+   * Resolve the human gate (called by the app when user clicks Accept/Rethink).
+   */
+  resolveHumanGate(decision) {
+    if (this._humanGateResolve) {
+      this._humanGateResolve(decision);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PIPELINE ROUTER: Chooses between Genesis 3.0 and legacy
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Main entry point — routes to Genesis 3.0 or legacy pipeline.
+   */
+  async runPipeline(params) {
+    if (this.genesis3Enabled) {
+      return this.runGenesis3Pipeline(params);
+    }
+    return this.runFullPipeline(params);
+  }
 }
 
-export { MultiAgentOrchestrator };
+export { MultiAgentOrchestrator, GENESIS_AUTHOR_PALETTE };
