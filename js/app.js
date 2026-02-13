@@ -1221,7 +1221,7 @@ class App {
   /**
    * Show/hide the multi-agent progress overlay.
    */
-  _showMultiAgentOverlay(show, agentCount = 3) {
+  _showMultiAgentOverlay(show, agentCount = 3, chapterTitle = '') {
     const overlay = document.getElementById('multi-agent-overlay');
     if (!overlay) return;
 
@@ -1235,6 +1235,9 @@ class App {
 
       const phaseEl = document.getElementById('ma-phase-label');
       if (phaseEl) phaseEl.textContent = 'Deploying writing agents...';
+
+      // Show current chapter label
+      this._updateMultiAgentChapterLabel(chapterTitle);
 
       // Build agent grid with author names from palette
       const grid = document.getElementById('ma-agent-grid');
@@ -1269,6 +1272,25 @@ class App {
       overlay.classList.add('visible');
     } else {
       overlay.classList.remove('visible');
+    }
+  }
+
+  /**
+   * Update the chapter label shown in the multi-agent pipeline dialog.
+   * Displays the chapter currently being produced/evaluated.
+   */
+  _updateMultiAgentChapterLabel(chapterTitle) {
+    const labelEls = [document.getElementById('ma-chapter-label'), document.getElementById('iterative-chapter-label')];
+    for (const el of labelEls) {
+      if (el) {
+        if (chapterTitle) {
+          el.textContent = chapterTitle;
+          el.style.display = '';
+        } else {
+          el.textContent = '';
+          el.style.display = 'none';
+        }
+      }
     }
   }
 
@@ -1459,7 +1481,8 @@ class App {
     // Show the iterative writing overlay with agent panel enabled
     this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
     this._updateIterativePhase('Deploying writing agents...');
-    this._showMultiAgentOverlay(true, agentCount);
+    this._showMultiAgentOverlay(true, agentCount, chapterTitle);
+    this._updateMultiAgentChapterLabel(chapterTitle);
 
     const errEl = document.getElementById('generate-error');
     if (errEl) { errEl.style.display = 'none'; }
@@ -1556,12 +1579,19 @@ class App {
   async _insertMultiAgentProse(prose, existingContent, chapterTitle) {
     const editorEl = this.editor.element;
     const startingContent = existingContent.trim() ? existingContent : '';
-    // Safety strip: remove any strategy markers and markdown headings from generated prose
+    // Safety strip: remove any strategy markers from generated prose
     prose = prose.replace(/---STRATEGY---[\s\S]*?(?=\n\n|$)/g, '').trim();
+    // Strip markdown headings from the prose body (they'll be replaced by proper HTML heading)
     prose = prose.replace(/^#+\s+.*$/gm, '').trim();
-    const paragraphs = prose.split('\n\n');
+    // Convert markdown italic markers (*text*) to HTML <em> tags
+    prose = prose.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+    const paragraphs = prose.split('\n\n').filter(p => p.trim());
     const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
-    editorEl.innerHTML = startingContent + newHtml;
+    // If this is new content (no existing text) and we have a chapter title, prepend it as H1
+    const titleHtml = (!startingContent && chapterTitle)
+      ? `<h1 style="text-align:center;margin:1em 0 0.5em;font-size:1.8em;">${this._escapeHtml(chapterTitle)}</h1>`
+      : '';
+    editorEl.innerHTML = startingContent + titleHtml + newHtml;
     editorEl.innerHTML = this._formatGeneratedHtml(editorEl.innerHTML, chapterTitle);
 
     // Save — must await to ensure prose is persisted before moving to next chapter
@@ -1667,6 +1697,7 @@ class App {
       // Update overlay with chapter progress
       this._updateIterativePhase(`Chapter ${chapterNum}/${totalChapters}: ${chInfo.title}`);
       this._updateIterativeLog(`\n--- Chapter ${chapterNum}/${totalChapters}: "${chInfo.title}" ---`);
+      this._updateMultiAgentChapterLabel(`Chapter ${chapterNum} of ${totalChapters}: ${chInfo.title}`);
 
       // Load this chapter
       await this._loadChapter(chInfo.chapterId);
@@ -1707,7 +1738,7 @@ class App {
         this.orchestrator.configure({ agentCount, chapterAgentsEnabled: project.chapterAgentsEnabled !== false });
 
         // Reset agent grid for this chapter
-        this._showMultiAgentOverlay(true, agentCount);
+        this._showMultiAgentOverlay(true, agentCount, chInfo.title);
 
         const maxTokens = Math.min(Math.ceil(wordsToGenerate * 4), 8192);
 
@@ -7156,6 +7187,17 @@ class App {
 
     const wasActiveDeleted = chapterIds.includes(this.state.currentChapterId);
 
+    // Gather chapter titles before deletion for logging
+    const deletedTitles = [];
+    for (const id of chapterIds) {
+      try {
+        const ch = await this.fs.getChapter(id);
+        if (ch) deletedTitles.push(ch.title || 'Untitled');
+      } catch (_) {
+        deletedTitles.push('Untitled');
+      }
+    }
+
     // 1. Delete from Firestore (including any associated translations)
     for (const id of chapterIds) {
       try {
@@ -7235,7 +7277,18 @@ class App {
     await this.renderChapterNav();
     this._updateStatusBarLocal();
 
-    // 4. If ALL chapters have been deleted, clear the story plot/prompt
+    // Log chapter deletion to the agents pipeline log
+    if (this.orchestrator && deletedTitles.length > 0) {
+      if (originalChapters.length > 0) {
+        // Partial deletion — add notation to the log
+        for (const title of deletedTitles) {
+          this.orchestrator.addLogEntry('chapter-deleted', `Chapter deleted: "${title}"`);
+        }
+      }
+      // If all chapters deleted, the log will be cleared below
+    }
+
+    // 4. If ALL chapters have been deleted, clear the story plot/prompt and agents log
     if (originalChapters.length === 0) {
       // Clear the plot textarea in the UI
       const plotTextarea = document.getElementById('generate-plot');
@@ -7250,6 +7303,11 @@ class App {
       if (this._lastGenSettings) {
         this._lastGenSettings.plot = '';
         this._lastGenSettings.chapterOutline = '';
+      }
+
+      // Clear the agents pipeline log
+      if (this.orchestrator) {
+        this.orchestrator.clearPipelineLog();
       }
 
       // Reset chapter tracking
