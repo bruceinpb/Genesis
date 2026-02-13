@@ -285,7 +285,10 @@ class MultiAgentOrchestrator {
     }
 
     const result = await response.json();
-    return result.content?.[0]?.text?.trim() || '';
+    let text = result.content?.[0]?.text?.trim() || '';
+    // Strip echoed prompt labels the AI may parrot back (e.g. "PROSE (517 words):")
+    text = text.replace(/^\s*(?:PROSE|PASSAGE|TEXT|CONTENT)\s*[\(\[]\s*[\d,]+\s*words?\s*[\)\]]\s*:?\s*\n*/i, '');
+    return text;
   }
 
   /** @private Parse JSON from API response, handling code blocks. */
