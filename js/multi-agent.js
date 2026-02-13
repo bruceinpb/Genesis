@@ -182,9 +182,10 @@ const GENESIS_4_CONFIG = {
 };
 
 class MultiAgentOrchestrator {
-  constructor(generator, storage) {
+  constructor(generator, storage, openaiClient) {
     this.generator = generator;
     this.storage = storage;
+    this.openaiClient = openaiClient || null;
 
     // Configuration
     this.agentCount = 5;
@@ -1922,6 +1923,45 @@ Output valid JSON only:
       currentProse = this._stripEmDashes(currentProse);
       this._logPipeline('roughness-complete', 'Roughness injection complete.');
 
+      // ============ PHASE 4.7: Cross-Model Scoring (GPT-5.2) ============
+      let crossModelScore = null;
+      if (this.openaiClient && this.openaiClient.isConfigured() && this.openaiClient.crossModelScoring) {
+        this._emit('pipeline', '=== PHASE 4.7: Cross-Model Scoring (GPT-5.2) ===');
+        this._emit('cross-model-scoring', 'Running cross-model scoring via GPT-5.2...');
+        try {
+          crossModelScore = await this.openaiClient.scorePassage(
+            currentProse,
+            context.genre || '',
+            context.subgenre || '',
+            context.pov || context.voice || ''
+          );
+          if (crossModelScore) {
+            const verdict = this.openaiClient.getCombinedVerdict(currentScore, crossModelScore);
+            this._logPipeline('cross-model', `GPT-5.2 score: ${crossModelScore.total}/90. AI patterns found: ${(crossModelScore.ai_patterns_found || []).length}. Verdict: ${verdict.verdict}`);
+            this._emit('cross-model-complete', `Cross-model score: ${crossModelScore.total}/90. Verdict: ${verdict.verdict}`, {
+              gptScore: crossModelScore,
+              claudeScore: currentScore,
+              combinedVerdict: verdict
+            });
+
+            // If cross-model flags REVISE, log the revision notes but don't block
+            if (verdict.verdict === 'REVISE' && crossModelScore.revision_notes) {
+              this._logPipeline('cross-model', `Revision notes: ${crossModelScore.revision_notes}`);
+            }
+            if (verdict.verdict === 'REVIEW') {
+              this._logPipeline('cross-model', `REVIEW: Large score divergence between Claude (${currentScore}) and GPT (${crossModelScore.total}). Flagged for user review.`);
+            }
+          } else {
+            this._logPipeline('cross-model', 'GPT-5.2 scoring returned null. Continuing with Claude-only score.');
+          }
+        } catch (err) {
+          this._logPipeline('cross-model', `GPT-5.2 scoring failed: ${err.message}. Graceful degradation — continuing with Claude-only score.`);
+          this._emit('cross-model-error', `Cross-model scoring unavailable: ${err.message}`);
+        }
+      } else {
+        this._logPipeline('cross-model', 'Cross-model scoring skipped (OpenAI not configured or disabled).');
+      }
+
       // ============ PHASE 5: GO/NO-GO Launch Control ============
       let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
       if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
@@ -1960,6 +2000,7 @@ Output valid JSON only:
         prose: currentProse,
         score: currentScore,
         humanLikenessScore,
+        crossModelScore,
         candidates,
         chimeraMethod: chimeraResult.method,
         chimeraRationale: chimeraResult.rationale,
@@ -3426,6 +3467,32 @@ If NO, list paragraph numbers with one-line explanations:
 
       this._logPipeline('human-gate', humanDecision === 'accept' ? 'Chunk accepted.' : 'Auto-accepted.');
 
+      // ============ PHASE 8.5: Cross-Model Scoring (GPT-5.2) ============
+      let crossModelScore = null;
+      if (this.openaiClient && this.openaiClient.isConfigured() && this.openaiClient.crossModelScoring) {
+        this._emit('pipeline', '=== PHASE 8.5: Cross-Model Scoring (GPT-5.2) ===');
+        this._emit('cross-model-scoring', 'Running cross-model scoring via GPT-5.2...');
+        try {
+          crossModelScore = await this.openaiClient.scorePassage(
+            currentProse,
+            context.genre || '',
+            context.subgenre || '',
+            context.pov || context.voice || ''
+          );
+          if (crossModelScore) {
+            const verdict = this.openaiClient.getCombinedVerdict(currentScore, crossModelScore);
+            this._logPipeline('cross-model', `GPT-5.2 score: ${crossModelScore.total}/90. AI patterns: ${(crossModelScore.ai_patterns_found || []).length}. Verdict: ${verdict.verdict}`);
+            this._emit('cross-model-complete', `Cross-model: ${crossModelScore.total}/90, Verdict: ${verdict.verdict}`, {
+              gptScore: crossModelScore,
+              claudeScore: currentScore,
+              combinedVerdict: verdict
+            });
+          }
+        } catch (err) {
+          this._logPipeline('cross-model', `GPT-5.2 scoring failed: ${err.message}. Continuing with Claude-only.`);
+        }
+      }
+
       // ============ PHASE 9: GO/NO-GO + Finalize ============
       let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
       if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
@@ -3454,6 +3521,7 @@ If NO, list paragraph numbers with one-line explanations:
         prose: currentProse,
         score: currentScore,
         humanLikenessScore: auditResult.anyYes ? 70 : 90,
+        crossModelScore,
         candidates: [],
         chimeraMethod: 'single-voice-v3',
         chimeraRationale: `Single-voice generation in ${chapterVoice.name} style with sentence-level iteration`,
@@ -3830,6 +3898,23 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
 
       this._logPipeline('human-gate', humanDecision === 'accept' ? 'Chunk accepted.' : 'Auto-accepted.');
 
+      // ============ Cross-Model Scoring (GPT-5.2) — optional ============
+      let crossModelScore = null;
+      if (this.openaiClient && this.openaiClient.isConfigured() && this.openaiClient.crossModelScoring) {
+        this._emit('cross-model-scoring', 'Running cross-model scoring via GPT-5.2...');
+        try {
+          crossModelScore = await this.openaiClient.scorePassage(
+            currentProse, context.genre || '', context.subgenre || '', context.pov || context.voice || ''
+          );
+          if (crossModelScore) {
+            this._logPipeline('cross-model', `GPT-5.2 score: ${crossModelScore.total}/90. AI patterns: ${(crossModelScore.ai_patterns_found || []).length}.`);
+            this._emit('cross-model-complete', `Cross-model: ${crossModelScore.total}/90`, { gptScore: crossModelScore });
+          }
+        } catch (err) {
+          this._logPipeline('cross-model', `GPT-5.2 scoring failed: ${err.message}. Continuing.`);
+        }
+      }
+
       // ============ GO/NO-GO (cross-chapter check) ============
       let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
       if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
@@ -3858,6 +3943,7 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
         prose: currentProse,
         score: null, // Genesis 4: scoring is on-demand only
         humanLikenessScore: null,
+        crossModelScore,
         candidates: [],
         chimeraMethod: this.genesis4DeepMode ? 'ghost-author-deep-v4' : 'ghost-author-v4',
         chimeraRationale: `Genesis 4: Ghost Author generation in ${chapterVoice.name} style with reference-passage prompting`,

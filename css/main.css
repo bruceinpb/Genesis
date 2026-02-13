@@ -5064,3 +5064,63 @@ select.form-input {
 .ill-ref-thumb.selected .ill-ref-check {
   display: flex;
 }
+
+/* ═══════════════════════════════════════════════
+   Illustration Dashboard (Redesigned)
+   ═══════════════════════════════════════════════ */
+
+.ill-dashboard-chapter {
+  transition: border-color 0.2s;
+}
+.ill-dashboard-chapter:hover {
+  border-color: var(--accent-primary) !important;
+}
+
+.ill-scene-row {
+  transition: background-color 0.2s;
+}
+.ill-scene-row:hover {
+  background-color: var(--bg-tertiary) !important;
+}
+
+.ill-thumb {
+  transition: border-color 0.2s, transform 0.15s;
+}
+.ill-thumb:hover {
+  transform: scale(1.05);
+}
+.ill-thumb.selected {
+  border-color: var(--accent-primary) !important;
+}
+
+.ill-thumb-add {
+  transition: background-color 0.2s, border-color 0.2s;
+}
+.ill-thumb-add:hover {
+  border-color: var(--accent-primary) !important;
+  background-color: var(--bg-tertiary);
+}
+
+.quality-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* Workflow step indicator */
+.ill-step {
+  transition: opacity 0.3s;
+}
+.ill-step.active {
+  color: var(--accent-primary);
+}
+
+/* Cost tracker */
+#ill-cost-total {
+  color: var(--accent-primary);
+}
