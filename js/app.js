@@ -834,6 +834,9 @@ class App {
         this._showWelcome();
       }
 
+      // Load saved illustrations from Firestore
+      await this._loadProjectIllustrations(projectId);
+
       // Render sidebar character list (default tab)
       await this._renderCharactersList();
 
@@ -902,6 +905,9 @@ class App {
       if (compareBtn) {
         compareBtn.style.display = chapter.isTranslation ? 'inline-block' : 'none';
       }
+
+      // Render chapter illustrations below editor
+      this._renderChapterIllustrations(chapterId);
     } catch (err) {
       console.error('Failed to load chapter:', err);
     }
@@ -4506,6 +4512,99 @@ class App {
   }
 
   /**
+   * Load saved illustrations from Firestore into memory so they can be displayed.
+   */
+  async _loadProjectIllustrations(projectId) {
+    try {
+      const saved = await this.fs.getProjectIllustrations(projectId);
+      if (!saved || saved.length === 0) {
+        this._illustrationData = [];
+        this._illustrationVariants = {};
+        return;
+      }
+
+      this._illustrationData = [];
+      this._illustrationVariants = {};
+
+      for (const ill of saved) {
+        // Rebuild _illustrationData entries (metadata)
+        this._illustrationData.push({
+          id: ill.id,
+          chapterId: ill.chapterId || '',
+          chapterNumber: ill.chapterNumber || 0,
+          chapterTitle: ill.chapterTitle || '',
+          illustrationIndex: ill.illustrationIndex || 0,
+          prompt: ill.prompt || '',
+          altText: ill.altText || '',
+          caption: ill.caption || '',
+          scene: ill.scene || null,
+          overrideSize: ill.overrideSize || '',
+          state: ill.state || 'review',
+        });
+
+        // Rebuild _illustrationVariants entries (image data)
+        if (ill.variants && ill.variants.length > 0) {
+          // Only include variants that have actual image data (not truncated)
+          const validVariants = ill.variants.filter(v =>
+            v.imageData && v.imageData.length > 200 && !v.imageData.endsWith('...')
+          );
+          if (validVariants.length > 0) {
+            this._illustrationVariants[ill.id] = validVariants;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load illustrations:', err);
+      this._illustrationData = [];
+      this._illustrationVariants = {};
+    }
+  }
+
+  /**
+   * Render chapter illustrations in the gallery below the editor.
+   */
+  _renderChapterIllustrations(chapterId) {
+    const gallery = document.getElementById('chapter-illustrations-gallery');
+    const container = document.getElementById('chapter-ill-images');
+    if (!gallery || !container) return;
+
+    // Find illustrations for this chapter
+    const chapterIlls = (this._illustrationData || []).filter(i => i.chapterId === chapterId);
+    const hasImages = chapterIlls.some(ill => {
+      const variants = this._illustrationVariants?.[ill.id];
+      return variants && variants.length > 0;
+    });
+
+    if (!hasImages) {
+      gallery.style.display = 'none';
+      return;
+    }
+
+    let html = '';
+    for (const ill of chapterIlls) {
+      const variants = this._illustrationVariants?.[ill.id] || [];
+      if (variants.length === 0) continue;
+
+      // Show the first (or selected) variant
+      const variant = variants[0];
+      const caption = ill.caption || ill.altText || `Illustration ${ill.illustrationIndex + 1}`;
+
+      html += `<div class="chapter-ill-item" data-ill-id="${ill.id}" title="Click to view full size">
+        <img src="${variant.imageData}" alt="${this._escapeHtml(caption)}" loading="lazy">
+        <div class="chapter-ill-caption">${this._escapeHtml(caption)}</div>
+      </div>`;
+    }
+
+    container.innerHTML = html;
+    gallery.style.display = '';
+
+    // Click to open lightbox
+    container.querySelectorAll('.chapter-ill-item img').forEach(img => {
+      img.addEventListener('click', () => this._openLightbox(img.src));
+    });
+  }
+
+  /**
    * Populate the Illustrations tab in the Book Setup modal.
    */
   async _populateIllustrationsTab(project) {
@@ -4573,13 +4672,20 @@ class App {
     // Setting descriptions
     this._renderIllustrationDescriptions('ill-setting-list', config.settingDescriptions || {}, 'setting');
 
-    // Reset review containers
+    // Reset progress/prompt containers
     const promptReview = document.getElementById('ill-prompt-review-container');
     if (promptReview) promptReview.style.display = 'none';
-    const imageReview = document.getElementById('ill-image-review-container');
-    if (imageReview) imageReview.style.display = 'none';
     const progressPanel = document.getElementById('ill-progress-panel');
     if (progressPanel) progressPanel.style.display = 'none';
+
+    // Show image review if we have saved illustrations with valid image data
+    const hasImages = Object.keys(this._illustrationVariants || {}).length > 0;
+    const imageReview = document.getElementById('ill-image-review-container');
+    if (hasImages) {
+      this._showImageReview();
+    } else if (imageReview) {
+      imageReview.style.display = 'none';
+    }
   }
 
   /**
@@ -5172,15 +5278,25 @@ class App {
     try {
       await this._illustrationQueue.processQueue(queueItems, config.variantMode);
 
-      // Save variants to Firestore
+      // Save variants to Firestore (one doc per illustration to stay within size limits)
       for (const [illId, variants] of Object.entries(this._illustrationVariants)) {
+        // Find the matching illustration metadata
+        const illMeta = (this._illustrationData || []).find(i => i.id === illId);
         await this.fs.saveIllustration(this.state.currentProjectId, {
           id: illId,
+          chapterId: illMeta?.chapterId || '',
+          chapterNumber: illMeta?.chapterNumber || 0,
+          illustrationIndex: illMeta?.illustrationIndex || 0,
+          prompt: illMeta?.prompt || '',
+          altText: illMeta?.altText || '',
+          caption: illMeta?.caption || '',
+          scene: illMeta?.scene || null,
           variants: variants.map(v => ({
             index: v.index,
-            imageData: v.imageData.slice(0, 100) + '...', // Don't store full data in Firestore
+            imageData: v.imageData,
             model: v.model,
             provider: v.provider,
+            providerName: v.providerName || v.provider,
           })),
           state: 'review',
         });
@@ -8264,6 +8380,17 @@ class App {
     // Download ZIP button
     document.getElementById('btn-ill-download-zip')?.addEventListener('click', () => {
       this._downloadAllAsZip();
+    });
+
+    // Toggle chapter illustrations gallery
+    document.getElementById('btn-toggle-chapter-ill')?.addEventListener('click', () => {
+      const images = document.getElementById('chapter-ill-images');
+      const btn = document.getElementById('btn-toggle-chapter-ill');
+      if (images && btn) {
+        const hidden = images.style.display === 'none';
+        images.style.display = hidden ? '' : 'none';
+        btn.textContent = hidden ? 'Hide' : 'Show';
+      }
     });
 
     // Continue to Export button — passes illustration data to export system
