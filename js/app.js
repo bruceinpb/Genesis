@@ -49,6 +49,7 @@ class App {
     this._navSelectedIds = new Set();
     this._navDragItem = null;
     this._navResizing = false;
+    this._multiChapterMode = false;
 
     // Cached project data to avoid extra Firestore reads
     this._currentProject = null;
@@ -861,8 +862,20 @@ class App {
       const chapter = await this.fs.getChapter(chapterId);
       if (!chapter) return;
 
-      // Save current chapter first
-      await this._saveCurrentChapter();
+      // Save current chapter first (skip if in multi-chapter read-only mode)
+      if (!this._multiChapterMode) {
+        await this._saveCurrentChapter();
+      }
+
+      // Exit multi-chapter mode if active
+      if (this._multiChapterMode) {
+        this._multiChapterMode = false;
+        const editorEl = this.editor.element;
+        if (editorEl) {
+          editorEl.contentEditable = 'true';
+          editorEl.classList.remove('multi-chapter-view');
+        }
+      }
 
       // Show editor, hide welcome
       this._hideWelcome();
@@ -877,9 +890,12 @@ class App {
         el.classList.toggle('active', el.dataset.id === chapterId);
       });
 
-      // Update toolbar chapter title
+      // Update toolbar chapter title with chapter number
       const titleEl = document.getElementById('scene-title');
-      if (titleEl) titleEl.textContent = chapter.title;
+      if (titleEl) {
+        const chNum = chapter.chapterNumber;
+        titleEl.textContent = chNum ? `Chapter ${chNum}: ${chapter.title}` : chapter.title;
+      }
 
       // Show/hide Compare button for translated chapters
       const compareBtn = document.getElementById('btn-compare-current');
@@ -888,6 +904,68 @@ class App {
       }
     } catch (err) {
       console.error('Failed to load chapter:', err);
+    }
+  }
+
+  /**
+   * Load multiple checked chapters into the editor as a combined scrollable view.
+   * Chapters are shown in order with visual separators. Editing is disabled.
+   */
+  async _loadCheckedChapters(chapterIds) {
+    try {
+      // Save current chapter before switching
+      if (!this._multiChapterMode) {
+        await this._saveCurrentChapter();
+      }
+
+      this._multiChapterMode = true;
+      this.state.currentChapterId = null;
+      this.state.currentMatterId = null;
+      this._hideWelcome();
+
+      // Fetch all chapters for this project to maintain correct order
+      const allChapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const idSet = new Set(chapterIds);
+      const selectedChapters = allChapters.filter(ch => idSet.has(ch.id));
+
+      // Build combined HTML with chapter separators
+      let combinedHtml = '';
+      for (let i = 0; i < selectedChapters.length; i++) {
+        const ch = selectedChapters[i];
+        const chNum = ch.chapterNumber || (i + 1);
+        // Chapter header separator
+        combinedHtml += `<div class="multi-chapter-separator" data-chapter-id="${ch.id}">`;
+        combinedHtml += `<div class="multi-chapter-divider"></div>`;
+        combinedHtml += `<div class="multi-chapter-label">Chapter ${chNum}: ${this._escapeHtml(ch.title)}</div>`;
+        combinedHtml += `<div class="multi-chapter-wordcount">${(ch.wordCount || 0).toLocaleString()} words</div>`;
+        combinedHtml += `</div>`;
+        // Chapter content
+        combinedHtml += `<div class="multi-chapter-content" data-chapter-id="${ch.id}">`;
+        combinedHtml += ch.content || '<p><em>(No content)</em></p>';
+        combinedHtml += `</div>`;
+      }
+
+      // Set editor content (read-only in multi-chapter mode)
+      const editorEl = this.editor.element;
+      if (editorEl) {
+        editorEl.innerHTML = combinedHtml;
+        editorEl.contentEditable = 'false';
+        editorEl.classList.add('multi-chapter-view');
+      }
+
+      // Update toolbar title
+      const titleEl = document.getElementById('scene-title');
+      if (titleEl) {
+        titleEl.textContent = `${selectedChapters.length} Chapters (Read-Only View)`;
+      }
+
+      // Update total word count display
+      const totalWords = selectedChapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0);
+      const wcEl = document.getElementById('status-words');
+      if (wcEl) wcEl.textContent = totalWords.toLocaleString();
+
+    } catch (err) {
+      console.error('Failed to load checked chapters:', err);
     }
   }
 
@@ -911,6 +989,9 @@ class App {
   // ========================================
 
   async _onEditorChange(content) {
+    // Do not save in multi-chapter read-only mode
+    if (this._multiChapterMode) return;
+
     // Save matter page if one is active
     if (this.state.currentMatterId) {
       await this._saveMatterPage();
@@ -1161,6 +1242,13 @@ class App {
           const authorName = card.dataset.authorName || data.winnerLabel || '';
           const winnerText = authorName ? `WINNER: ${authorName}` : 'WINNER';
           card.querySelector('.ma-agent-status').textContent = winnerText;
+          // Add persistent winner badge that survives phase updates
+          if (!card.querySelector('.ma-winner-badge')) {
+            const badge = document.createElement('div');
+            badge.className = 'ma-winner-badge';
+            badge.textContent = '\u2605 WINNER';
+            card.appendChild(badge);
+          }
         }
         if (data.report?.scores) {
           for (const s of data.report.scores) {
@@ -1215,8 +1303,17 @@ class App {
       for (const prefix of cardPrefixes) {
         const winnerCard = document.querySelector(`[id^="${prefix}"].agent-winner`);
         if (winnerCard) {
-          winnerCard.querySelector('.ma-agent-status').textContent =
-            phase === 'go-nogo-complete' ? (data.overallStatus === 'GO' ? 'ALL GO' : 'NO-GO') : 'Complete';
+          const statusText = phase === 'go-nogo-complete'
+            ? (data.overallStatus === 'GO' ? 'ALL GO' : 'NO-GO')
+            : 'Complete';
+          winnerCard.querySelector('.ma-agent-status').textContent = statusText;
+          // Update badge to show final status while keeping winner visible
+          const badge = winnerCard.querySelector('.ma-winner-badge');
+          if (badge) {
+            badge.textContent = phase === 'go-nogo-complete'
+              ? `\u2605 WINNER \u2022 ${data.overallStatus === 'GO' ? 'GO' : 'NO-GO'}`
+              : '\u2605 WINNER';
+          }
         }
       }
     }
@@ -1606,10 +1703,15 @@ class App {
     this._lastGenSettings = { plot, wordTarget, tone, style, useCharacters, useNotes };
 
     let chapterTitle = '';
+    let chapterDisplayTitle = '';
     if (this.state.currentChapterId) {
       try {
         const chapter = await this.fs.getChapter(this.state.currentChapterId);
-        if (chapter) chapterTitle = chapter.title;
+        if (chapter) {
+          chapterTitle = chapter.title;
+          const chNum = chapter.chapterNumber;
+          chapterDisplayTitle = chNum ? `Chapter ${chNum}: ${chapter.title}` : chapter.title;
+        }
       } catch (_) {}
     }
 
@@ -1664,8 +1766,8 @@ class App {
     } else {
       this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
       this._updateIterativePhase('Deploying writing agents...');
-      this._showMultiAgentOverlay(true, agentCount, chapterTitle);
-      this._updateMultiAgentChapterLabel(chapterTitle);
+      this._showMultiAgentOverlay(true, agentCount, chapterDisplayTitle);
+      this._updateMultiAgentChapterLabel(chapterDisplayTitle);
     }
 
     const errEl = document.getElementById('generate-error');
@@ -4290,6 +4392,28 @@ class App {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  /**
+   * Simple Levenshtein distance for near-match heading deduplication.
+   */
+  _levenshteinDistance(a, b) {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        const cost = b.charAt(i - 1) === a.charAt(j - 1) ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[b.length][a.length];
   }
 
   async _populateStructureInModal(project) {
@@ -8284,8 +8408,24 @@ class App {
             item?.classList.toggle('selected', checkbox.checked);
           }
           this._updateNavDeleteButton();
-          // Also activate (load + highlight) the chapter so checkbox and focus stay in sync
-          if (id && type === 'chapter') {
+
+          // Count checked chapter IDs (exclude front/back matter)
+          const checkedChapterIds = [...this._navSelectedIds].filter(
+            sid => !sid.startsWith('fm-') && !sid.startsWith('bm-')
+          );
+
+          if (checkedChapterIds.length > 1) {
+            // Multiple chapters checked — load all into combined scroll view
+            await this._loadCheckedChapters(checkedChapterIds);
+            // Highlight all checked chapters
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            for (const cid of checkedChapterIds) {
+              const navItem = document.querySelector(`.nav-item[data-nav-id="${cid}"]`);
+              if (navItem) navItem.classList.add('active');
+            }
+          } else if (id && type === 'chapter') {
+            // Single chapter — exit multi-chapter mode and load normally
+            this._multiChapterMode = false;
             await this._loadChapter(id);
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             item.classList.add('active');
@@ -8293,6 +8433,7 @@ class App {
             const oldItem = document.querySelector(`.tree-item.chapter[data-id="${id}"]`);
             if (oldItem) oldItem.classList.add('active');
           } else if (id && (type === 'front-matter' || type === 'back-matter')) {
+            this._multiChapterMode = false;
             await this._loadMatterPage(id, type);
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             item.classList.add('active');
@@ -8530,11 +8671,13 @@ class App {
         const statusClass = ch.status === 'complete' ? 'done' : '';
         const statusLabel = ch.status === 'complete' ? 'Done' : ch.status === 'revision' ? 'Rev' : '';
         const hasOutline = ch.outline ? '\u270E ' : '';
+        const chNum = ch.chapterNumber || (i + 1);
         html += `
           <div class="nav-item ${isActive ? 'active' : ''}"
-               data-nav-id="${ch.id}" data-nav-type="chapter" draggable="true">
+               data-nav-id="${ch.id}" data-nav-type="chapter" data-chapter-number="${chNum}" draggable="true">
             <input type="checkbox" class="nav-item-checkbox" ${this._navSelectedIds.has(ch.id) ? 'checked' : ''}>
             <span class="drag-handle">\u2807</span>
+            <span class="nav-item-num">${chNum}.</span>
             <span class="nav-item-name">${hasOutline}${this._esc(ch.title)}</span>
             <span class="nav-item-meta">${(ch.wordCount || 0).toLocaleString()}</span>
             ${statusLabel ? `<span class="nav-item-status ${statusClass}">${statusLabel}</span>` : ''}
@@ -10285,7 +10428,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           children.push(new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 240, after: 240 },
-            children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
+            children: [new TextRun({ text: '* * *', font: 'Times New Roman', size: 24 })]
           }));
           continue;
         }
@@ -10298,7 +10441,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
             children.push(new Paragraph({
               alignment: AlignmentType.CENTER,
               spacing: { before: 240, after: 240 },
-              children: [new TextRun({ text: '***', font: 'Times New Roman', size: 24 })]
+              children: [new TextRun({ text: '* * *', font: 'Times New Roman', size: 24 })]
             }));
           } else if (t) {
             children.push(new Paragraph({
@@ -10448,18 +10591,39 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         }));
 
         // Parse the chapter content HTML into paragraphs (strip leading heading to avoid duplication)
-        const htmlContent = (chapter.content || '').replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
+        let htmlContent = (chapter.content || '').replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
+
+        // Em-dash scrub: replace all em-dash variants in the content before export
+        htmlContent = htmlContent
+          .replace(/\u2014/g, ', ')    // Unicode em-dash → comma
+          .replace(/\u2013/g, ', ')    // Unicode en-dash → comma
+          .replace(/ -- /g, ', ')      // Double-hyphen with spaces → comma
+          .replace(/--/g, ', ');       // Double-hyphen → comma
+
         const paragraphs = this._parseHTMLToParagraphs(htmlContent);
 
-        for (const para of paragraphs) {
+        // Deduplicate: skip first body paragraph if it matches the chapter title
+        let skipFirstPara = false;
+        if (paragraphs.length > 0 && paragraphs[0].type === 'paragraph' && paragraphs[0].runs?.length > 0) {
+          const firstParaText = paragraphs[0].runs.map(r => r.text).join('').trim();
+          const titleNorm = chapterTitle.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '');
+          const paraNorm = firstParaText.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+          if (paraNorm === titleNorm || this._levenshteinDistance(paraNorm, titleNorm) < 3) {
+            skipFirstPara = true;
+          }
+        }
+
+        for (let pi = 0; pi < paragraphs.length; pi++) {
+          const para = paragraphs[pi];
           if (para.type === 'empty') continue;
+          if (skipFirstPara && pi === 0 && para.type === 'paragraph') continue;
 
           if (para.type === 'scene-break') {
             children.push(new Paragraph({
               alignment: AlignmentType.CENTER,
               spacing: { before: 240, after: 240 },
               children: [new TextRun({
-                text: '***',
+                text: '* * *',
                 font: 'Times New Roman',
                 size: 24
               })]
@@ -10468,13 +10632,18 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           }
 
           // Regular paragraph — create TextRuns preserving bold/italic
-          const textRuns = para.runs.map(run => new TextRun({
-            text: run.text,
-            font: 'Times New Roman',
-            size: 24,
-            bold: run.bold || undefined,
-            italics: run.italic || undefined
-          }));
+          // Apply em-dash scrub on individual text runs as well
+          const textRuns = para.runs.map(run => {
+            let text = run.text;
+            text = text.replace(/\u2014/g, ', ').replace(/\u2013/g, ', ').replace(/ -- /g, ', ').replace(/--/g, ', ');
+            return new TextRun({
+              text,
+              font: 'Times New Roman',
+              size: 24,
+              bold: run.bold || undefined,
+              italics: run.italic || undefined
+            });
+          });
 
           children.push(new Paragraph({
             spacing: { before: 0, after: 200, line: 276 },

@@ -77,6 +77,62 @@ const GENESIS_AUTHOR_PALETTE = {
   }
 };
 
+// ═══════════════════════════════════════════════════════════
+//  GENESIS 3.0 CONFIGURATION
+// ═══════════════════════════════════════════════════════════
+const GENESIS_3_CONFIG = {
+  pipeline: {
+    phases: [
+      'outline_analysis', 'single_voice_generation', 'sentence_iteration',
+      'deterministic_verification', 'quality_score', 'micro_fix', 'go_no_go', 'docx_export'
+    ],
+    disabled: [
+      'multi_agent_generation', 'paragraph_chimera', 'voice_unification',
+      'transition_smoothing', 'adversarial_audit_loop', 'roughness_injection'
+    ]
+  },
+  generation: {
+    agentCount: 1,
+    chunkMaxWords: 750,
+    temperature: 0.7,
+    voiceLockPerChapter: true,
+    antiKickerInstruction: true,
+    antiModularInstruction: true,
+    functionalSentenceInstruction: true
+  },
+  sentenceIteration: {
+    enabled: true,
+    chapterOpening: { drafts: 13, useAuthorComparisons: true },
+    chapterClosing: { drafts: 13, useAuthorComparisons: true },
+    sceneOpenClose: { drafts: 5 },
+    emotionalBeats: { drafts: 5 },
+    keyRevelations: { drafts: 5 },
+    functionalTransitions: { drafts: 0 },
+    expositoryConnective: { drafts: 0 }
+  },
+  scoring: {
+    method: 'prosecution_first',
+    target: 92,
+    rewriteThreshold: 89,
+    maxMicroFixPasses: 3,
+    maxMicroFixCycles: 1,
+    adversarialLoopIterations: 0
+  },
+  structuralLimits: {
+    kickerDensityMax: 0.30,
+    tricolonMaxPerChunk: 1,
+    fabricatedPrecisionFlag: true,
+    fourRequirementsMinPerChunk: 1
+  },
+  docxExport: {
+    deduplicateHeadings: true,
+    emDashScrub: true,
+    smartQuotes: true,
+    vellumCompatible: true,
+    sceneBreakMarker: '* * *'
+  }
+};
+
 class MultiAgentOrchestrator {
   constructor(generator, storage) {
     this.generator = generator;
@@ -1482,6 +1538,34 @@ Output valid JSON only:
       }
     }
 
+    // Genesis 3.0: Cross-chapter structural variance check
+    // Flag if the new chapter's structural approach matches the previous chapter
+    const structuralFlags = [];
+    if (otherChapters.length > 0) {
+      const prevChapter = otherChapters[otherChapters.length - 1];
+      const prevContent = (prevChapter.content || '').replace(/<[^>]+>/g, '');
+      const newContent = newProse.replace(/<[^>]+>/g, '');
+
+      // Check opening similarity: both start with scene, or both start with exposition
+      const sceneOpeners = /^(?:The |He |She |It was |On |In |At |When |As )/;
+      const contextOpeners = /^(?:By |For |Since |After |Before |Throughout |During |Between )/;
+      const prevOpening = prevContent.trim().substring(0, 100);
+      const newOpening = newContent.trim().substring(0, 100);
+
+      if (sceneOpeners.test(prevOpening) && sceneOpeners.test(newOpening)) {
+        structuralFlags.push('Both this chapter and the previous chapter open with a scene. Consider varying the structural approach.');
+      }
+      if (contextOpeners.test(prevOpening) && contextOpeners.test(newOpening)) {
+        structuralFlags.push('Both this chapter and the previous chapter open with context/exposition. Consider varying the structural approach.');
+      }
+    }
+
+    if (structuralFlags.length > 0) {
+      for (const flag of structuralFlags) {
+        this._emit('go-nogo-chapter', `  STRUCTURAL FLAG: ${flag}`, { type: 'structural-variance' });
+      }
+    }
+
     const noGoCount = results.filter(r => r.status === 'NO-GO').length;
     const overallStatus = noGoCount === 0 ? 'GO' : 'NO-GO';
     const allConflicts = results.flatMap(r => r.conflicts || []);
@@ -1490,11 +1574,12 @@ Output valid JSON only:
       `MISSION CONTROL: ${overallStatus} ` +
       (noGoCount === 0
         ? '- All chapters clear. Proceed.'
-        : `- ${noGoCount} chapter(s) report conflicts.`),
-      { overallStatus, noGoCount, totalConflicts: allConflicts.length, results }
+        : `- ${noGoCount} chapter(s) report conflicts.`) +
+      (structuralFlags.length > 0 ? ` (${structuralFlags.length} structural flag(s))` : ''),
+      { overallStatus, noGoCount, totalConflicts: allConflicts.length, results, structuralFlags }
     );
 
-    return { overallStatus, results, allConflicts };
+    return { overallStatus, results, allConflicts, structuralFlags };
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -2438,11 +2523,21 @@ ${continuityDigest ? `CONTINUITY:\n${continuityDigest}\n` : ''}
 RULES:
 - Write naturally. This is a FIRST DRAFT. Some roughness is expected and welcome.
 - Do NOT try to make every sentence brilliant. Let 2-3 sentences per chunk be merely functional — competent but not brilliant.
-- Do NOT end every paragraph with a dramatic or ironic kicker. 70%+ of paragraphs must end mid-thought, on a plain factual statement, or with a clause that propels into the next paragraph.
+- End 70%+ of paragraphs mid-thought, mid-action, or on a functional transition. Do NOT end paragraphs on resonant, ironic, or dramatic closing beats unless the content genuinely demands it.
 - Maximum ONE tricolon (list of three) per 750 words.
-- Do NOT fabricate citations, statistics, or archival references.
+- Do NOT fabricate citations, statistics, or archival references. If a number is not in the source material, do not fabricate one.
 - Vary paragraph lengths. Some short (2-3 sentences). Some long (8-10 sentences). Do NOT make them all medium.
-- Let sections bleed into each other — do NOT create self-contained modular vignettes.
+- Vary section structure per chapter. If Chapter 1 opens with a scene, Chapter 2 should open with context or data.
+- Let sections bleed into each other. Start a political observation inside an industrial scene. Embed economic context mid-character-moment. Do NOT follow a modular template of scene > context > data > character > kicker.
+
+ABSOLUTE BAN — EM-DASHES:
+Never use em-dashes (—), en-dashes (–), or double-hyphens (--) in any context. This includes:
+- Parenthetical asides (use commas or parentheses instead)
+- Dramatic pauses (use periods instead)
+- Definitions or explanations (use commas, colons, or parentheses)
+- Interruptions (use ellipsis)
+- Appositional phrases (use commas)
+If you find yourself reaching for an em-dash, stop and restructure the sentence.
 
 BANNED PATTERNS (zero occurrences):
 - "found herself/himself"
@@ -2452,7 +2547,10 @@ BANNED PATTERNS (zero occurrences):
 - "began to" / "started to"
 - "something" / "somehow"
 - "for a long moment"
-- em-dash character
+- "meanwhile"
+- em-dash character (—)
+- en-dash character (–)
+- double-hyphen (--)
 
 ${systemPrompt}`;
 
@@ -2777,8 +2875,8 @@ will be overridden to 7/10. Score honestly.`;
         }
       }
 
-      // Kicker density > 0.40 → cap Technical at 7
-      if (verificationResult.kickerDensity > 0.40) {
+      // Kicker density > 0.30 → cap Technical at 7 (Genesis 3.0: 30% cap)
+      if (verificationResult.kickerDensity > 0.30) {
         const cappedTech = Math.min(technical, 7);
         if (cappedTech < technical) {
           this._logPipeline('prosecution', `MECHANICAL CAP: Kicker density ${(verificationResult.kickerDensity * 100).toFixed(0)}%. Technical ${technical} → ${cappedTech}.`);
@@ -2816,7 +2914,7 @@ will be overridden to 7/10. Score honestly.`;
 
     const systemPrompt = `Answer YES or NO for each, with one example if YES.
 
-1. KICKER_DENSITY: Do >40% of paragraphs end on a dramatic/ironic kicker?
+1. KICKER_DENSITY: Do >30% of paragraphs end on a dramatic/ironic kicker?
 2. PATTERN_DENSITY: Are there >2 tricolons or parallel structures?
 3. VOICE_SHIFT: Does the voice change noticeably between paragraphs?
 
@@ -2909,15 +3007,15 @@ If NO, list paragraph numbers with one-line explanations:
 
   /**
    * Run the Genesis 3.0 pipeline:
-   *   Phase 1 → Single-voice generation
-   *   Phase 2 → Sentence-level iteration
-   *   Phase 3 → Deterministic verification
-   *   Phase 4 → Prosecution scoring
-   *   Phase 5 → Micro-fix loop (uses verification + score)
-   *   Phase 6 → Simplified adversarial audit
+   *   Phase 1 → Single-voice generation (1 agent, 750-word chunks, voice locked per chapter)
+   *   Phase 2 → Sentence-level iteration (3-13 alternatives for important sentences)
+   *   Phase 3 → Deterministic verification (regex/code checks, no LLM)
+   *   Phase 4 → Prosecution-first scoring (score < 89 = rewrite, 89-91 = micro-fix, 92+ = accept)
+   *   Phase 5 → Micro-fix loop (max 3 passes, 1 cycle, no re-audit)
+   *   Phase 6 → Simplified adversarial audit (3 binary questions)
    *   Phase 7 → Voice consistency check
    *   Phase 8 → Human review gate
-   *   Phase 9 → GO/NO-GO + export-ready
+   *   Phase 9 → GO/NO-GO (cross-chapter structural variance check) + export-ready
    */
   async runGenesis3Pipeline(params) {
     const {
@@ -2983,13 +3081,28 @@ If NO, list paragraph numbers with one-line explanations:
       let scoreResult = await this._prosecutionScore(currentProse, context, verificationResult);
       let currentScore = scoreResult.overall;
 
+      // Genesis 3.0: If score < 89, rewrite the chunk entirely (do not micro-fix)
+      if (currentScore < 89) {
+        this._logPipeline('prosecution', `Score ${currentScore} < 89. REWRITING chunk from scratch...`);
+        this._emit('pipeline', '=== Score below 89 — Regenerating chunk ===');
+        currentProse = await this.generateSingleVoice({
+          systemPrompt: augmentedSystemPrompt,
+          userPrompt, maxTokens, chapterVoice, errorPatterns
+        });
+        verificationResult = deterministicVerification(currentProse);
+        scoreResult = await this._prosecutionScore(currentProse, context, verificationResult);
+        currentScore = scoreResult.overall;
+        this._logPipeline('prosecution', `Rewrite score: ${currentScore}/100`);
+      }
+
       // ============ PHASE 5: Micro-Fix Loop ============
       this._emit('pipeline', '=== PHASE 5: Micro-Fix Loop ===');
 
       // CRITICAL: Stop condition requires BOTH quality >= threshold AND verification.allPassed
-      const targetScore = qualityThreshold || 90;
+      // Genesis 3.0: Capped at 3 passes max, 1 cycle, no re-audit
+      const targetScore = qualityThreshold || 92;
       let microFixPasses = 0;
-      const maxMicroFixPasses = 5;
+      const maxMicroFixPasses = 3;
       const fixesApplied = [];
 
       while (microFixPasses < maxMicroFixPasses) {

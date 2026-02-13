@@ -105,6 +105,18 @@ function deterministicVerification(prose) {
       label: "em-dash (\u2014)",
       regex: /\u2014/g,
     },
+    {
+      label: "en-dash (\u2013)",
+      regex: /\u2013/g,
+    },
+    {
+      label: "double-hyphen (--)",
+      regex: / -- |--/g,
+    },
+    {
+      label: "meanwhile",
+      regex: /\bmeanwhile\b/gi,
+    },
   ];
 
   const bannedPatterns = bannedPatternDefs.map((def) => {
@@ -126,7 +138,6 @@ function deterministicVerification(prose) {
     { label: "her eyes", regex: /\bher eyes\b/gi, limit: 3 },
     { label: "gaze", regex: /\bgaze\b/gi, limit: 3 },
     { label: "throat tight", regex: /\bthroat tight\b/gi, limit: 1 },
-    { label: "meanwhile", regex: /\bmeanwhile\b/gi, limit: 1 },
   ];
 
   const budgetViolations = [];
