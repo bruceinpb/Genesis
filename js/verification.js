@@ -427,4 +427,75 @@ function deterministicVerification(prose) {
   };
 }
 
-export { deterministicVerification };
+/**
+ * Auto-fix banned patterns that can be resolved deterministically
+ * without an API call. Runs BEFORE any LLM polish pass to reduce
+ * the amount of work the polish pass needs to do.
+ *
+ * Returns the cleaned prose and a list of fixes applied.
+ *
+ * @param {string} prose - The prose to clean
+ * @returns {{ prose: string, fixes: string[], flaggedForPolish: string[] }}
+ */
+function autoFixBannedPatterns(prose) {
+  if (!prose) return { prose: '', fixes: [], flaggedForPolish: [] };
+
+  let text = prose;
+  const fixes = [];
+  const flaggedForPolish = [];
+
+  // ── Em-dash / en-dash removal (deterministic) ──────────────
+  // Replace spaced em/en dashes with comma
+  const emDashCount = (text.match(/[\u2014\u2013]/g) || []).length +
+                      (text.match(/\s---\s|\s--\s/g) || []).length;
+  if (emDashCount > 0) {
+    text = text.replace(/\s*[\u2014\u2013]\s*/g, ', ');
+    text = text.replace(/[\u2014\u2013]/g, ', ');
+    text = text.replace(/\s*---\s*/g, ', ');
+    text = text.replace(/\s*--\s*/g, ', ');
+    // Clean up artifacts
+    text = text.replace(/,\s*,/g, ',');
+    text = text.replace(/ ,  /g, ', ');
+    text = text.replace(/,\s*\./g, '.');
+    text = text.replace(/,\s*!/g, '!');
+    text = text.replace(/,\s*\?/g, '?');
+    text = text.replace(/  +/g, ' ');
+    fixes.push(`Removed ${emDashCount} em/en-dash(es)`);
+  }
+
+  // ── "for a long moment" → "for a moment" ──────────────────
+  const longMomentCount = (text.match(/\bfor a long moment\b/gi) || []).length;
+  if (longMomentCount > 0) {
+    text = text.replace(/\bfor a long moment\b/gi, 'for a moment');
+    fixes.push(`Replaced ${longMomentCount} "for a long moment" → "for a moment"`);
+  }
+
+  // ── "meanwhile" → removed (sentence restructured) ─────────
+  // Simple removal: "Meanwhile, X" → "X"
+  const meanwhileCount = (text.match(/\bMeanwhile,?\s*/gi) || []).length;
+  if (meanwhileCount > 0) {
+    text = text.replace(/\bMeanwhile,\s*/gi, '');
+    text = text.replace(/\bMeanwhile\s+/gi, '');
+    fixes.push(`Removed ${meanwhileCount} "meanwhile"`);
+  }
+
+  // ── Flag patterns that need LLM polish (can't fix with regex) ──
+  const flagPatterns = [
+    { regex: /\bfound (herself|himself|themselves)\b/gi, label: 'found herself/himself/themselves' },
+    { regex: /\bseemed to\b/gi, label: 'seemed to' },
+    { regex: /\bbegan to\b/gi, label: 'began to' },
+    { regex: /\bstarted to\b/gi, label: 'started to' },
+    { regex: /\bvoice was\b/gi, label: 'voice was' },
+  ];
+
+  for (const pat of flagPatterns) {
+    const matches = text.match(pat.regex);
+    if (matches && matches.length > 0) {
+      flaggedForPolish.push(`"${pat.label}" (${matches.length}x)`);
+    }
+  }
+
+  return { prose: text, fixes, flaggedForPolish };
+}
+
+export { deterministicVerification, autoFixBannedPatterns };
