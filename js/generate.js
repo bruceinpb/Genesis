@@ -2922,6 +2922,719 @@ Output valid JSON only:
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // ILLUSTRATION GENERATION — extends existing cover pipeline
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Get style prefix string for illustration prompts based on style and color mode.
+   */
+  getStylePrefix(style, colorMode) {
+    const stylePrefixes = {
+      'photorealistic': 'Photorealistic photograph,',
+      'documentary': 'Documentary-style photograph,',
+      'portrait': 'Portrait photograph,',
+      'cinematic': 'Cinematic film still,',
+      'watercolor': 'Watercolor painting,',
+      'oil_painting': 'Oil painting,',
+      'pencil_sketch': 'Pencil sketch drawing,',
+      'charcoal': 'Charcoal drawing,',
+      'ink_wash': 'Ink wash painting, sumi-e style,',
+      'pastel': 'Pastel drawing,',
+      'gouache': 'Gouache painting,',
+      'woodcut': 'Woodcut print,',
+      'engraving': 'Engraving etching,',
+      'digital_painting': 'Digital painting,',
+      'concept_art': 'Concept art,',
+      'comic_book': 'Comic book illustration, graphic novel style,',
+      'manga': 'Manga style illustration,',
+      'pixel_art': 'Pixel art,',
+      'vector': 'Vector flat illustration,',
+      'storybook': 'Classic storybook illustration, warm and inviting,',
+      'whimsical': 'Whimsical fantasy illustration,',
+      'cartoon': 'Cartoon illustration,',
+      'cutout': 'Paper cutout collage,',
+      'crayon': 'Crayon drawing, child-like style,',
+      'vintage_photo': 'Vintage photograph,',
+      'daguerreotype': 'Daguerreotype photograph,',
+      'sepia_style': 'Sepia toned photograph,',
+      'art_deco': 'Art Deco style illustration,',
+      'art_nouveau': 'Art Nouveau style illustration,',
+      'impressionist': 'Impressionist painting,',
+      'architectural': 'Architectural rendering,',
+      'technical': 'Technical illustration,',
+      'botanical': 'Botanical illustration,',
+      'map': 'Cartographic map illustration,',
+    };
+
+    const colorPrefixes = {
+      'full_color': '',
+      'black_white': ' black and white,',
+      'grayscale': ' grayscale,',
+      'sepia': ' sepia toned,',
+      'duotone': ' duotone,',
+      'limited_palette': ' limited color palette,',
+    };
+
+    return (stylePrefixes[style] || '') + (colorPrefixes[colorMode] || '');
+  }
+
+  /**
+   * Get negative prompt for illustration based on style and color mode.
+   */
+  getIllustrationNegativePrompt(style, colorMode) {
+    const base = 'text, words, letters, typography, watermark, blurry, low quality';
+
+    const styleAdditions = {
+      'photorealistic': ', cartoon, anime, illustration, painting, drawing',
+      'documentary': ', color, modern elements, digital artifacts, clean surfaces',
+      'watercolor': ', photographic, 3D render, digital, sharp edges',
+      'cartoon': ', photorealistic, photograph, dark, gritty',
+      'pencil_sketch': ', color, photographic, digital painting',
+      'vintage_photo': ', color, modern elements, digital, clean, sharp',
+      'oil_painting': ', photograph, digital, 3D render, flat',
+      'storybook': ', dark, scary, violent, realistic, photograph',
+    };
+
+    const colorAdditions = {
+      'black_white': ', color, colored, vibrant, saturated',
+      'sepia': ', vibrant color, blue, green, modern',
+      'grayscale': ', color, colored, vibrant',
+    };
+
+    return base
+      + (styleAdditions[style] || '')
+      + (colorAdditions[colorMode] || '');
+  }
+
+  /**
+   * Extract illustration scenes from chapter prose using Claude.
+   * Mirrors generateCoverPrompt() pattern.
+   */
+  async extractScenesFromProse(chapterProse, illustrationCount, config) {
+    if (!this.apiKey) throw new Error('No API key set.');
+
+    const systemPrompt = `You are a visual scene analyst for book illustration. Given a chapter of prose and a target illustration count, identify the most visually compelling scenes.
+
+SELECTION CRITERIA:
+- Strong visual imagery already present in the prose
+- Emotional peaks or turning points
+- Scenes with clear physical action or vivid setting
+- Moments that translate well to a still image
+- Variety across the chapter (spread them out, don't cluster)
+
+AVOID:
+- Internal monologue with no visual anchor
+- Dialogue-heavy scenes unless setting is vivid
+- Abstract or philosophical passages
+
+For each scene, extract:
+- paragraphIndex: Which paragraph (0-indexed)
+- insertAfter: Where the image goes (paragraph index)
+- characters: Which characters are visible
+- setting: Physical location and time of day
+- action: What is physically happening
+- mood: Emotional tone (for lighting/color guidance)
+- lighting: Time of day and light quality
+- keyObjects: Significant visible objects
+- compositionHint: Suggested framing (close-up, wide shot, etc.)
+- sourceText: The exact prose passage that inspired this (max 200 words)
+
+OUTPUT: Valid JSON array of scene objects, one per requested illustration.
+No commentary, no explanation — just the JSON.`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 2000,
+        temperature: 0.3,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: `Extract ${illustrationCount} illustration scenes from this chapter:\n\n${chapterProse.slice(0, 12000)}`
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const text = result.content?.[0]?.text?.trim() || '[]';
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    try {
+      return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+    } catch (e) {
+      console.warn('Scene extraction parse error:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Generate an illustration prompt from scene data using Claude.
+   * Mirrors generateCoverPrompt() at line 2318.
+   */
+  async generateIllustrationPrompt(scene, config) {
+    if (!this.apiKey) throw new Error('No API key set.');
+
+    const characterContext = Object.entries(config.characterDescriptions || {})
+      .filter(([name]) => (scene.characters || []).some(c =>
+        c.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(c.toLowerCase())
+      ))
+      .map(([name, desc]) => `Character "${name}": ${desc}`)
+      .join('\n');
+
+    const settingContext = config.settingDescriptions
+      ? Object.entries(config.settingDescriptions)
+          .filter(([name]) => (scene.setting || '').toLowerCase().includes(name.toLowerCase()))
+          .map(([name, desc]) => `Setting "${name}": ${desc}`)
+          .join('\n')
+      : '';
+
+    const stylePrefix = this.getStylePrefix(config.illustrationStyle || config.globalStyle, config.colorMode || config.globalColorMode);
+    const globalStyle = config.globalStylePrompt || '';
+    const referenceGuidance = scene.referenceAnalysis || '';
+    const styleLock = config.styleLock?.styleDescription || '';
+
+    const systemPrompt = `You are an expert art director translating written prose into AI image generation prompts.
+
+TRANSLATION RULES:
+- Convert metaphors to literal visual elements ("his iron will" = stern expression, rigid posture)
+- Convert emotions to visual cues ("she felt lost" = looking down, surrounded by empty space)
+- Convert sound to visual atmosphere ("the factory roared" = steam, sparks, scale, motion)
+- Add concrete period-appropriate details the prose implies
+- Include the STYLE, GLOBAL STYLE, REFERENCE GUIDANCE, and STYLE LOCK directives in the prompt verbatim
+- Include CHARACTER descriptions verbatim for any characters present
+- Include SETTING descriptions verbatim for the scene's location
+
+KEY CONSTRAINT: Produce NO text, NO typography, NO lettering in the prompt. Only visual imagery.
+
+AVOID:
+- Names of real living people (use physical descriptions)
+- Copyrighted character likenesses
+- Requests for specific named artist styles (describe the technique)
+
+OUTPUT FORMAT (JSON only, no commentary):
+{
+  "prompt": "Full image generation prompt, 150-300 words",
+  "altText": "Accessibility description, 1-2 sentences",
+  "caption": "Optional caption, or null",
+  "compositionNotes": "Brief framing note for user reference"
+}`;
+
+    const userContent = `STYLE: ${stylePrefix}
+GLOBAL STYLE: ${globalStyle}
+REFERENCE GUIDANCE: ${referenceGuidance}
+STYLE LOCK: ${styleLock}
+${characterContext}
+${settingContext}
+
+SOURCE PROSE:
+${(scene.sourceText || '').slice(0, 3000)}
+
+SCENE DATA:
+${JSON.stringify({
+  characters: scene.characters,
+  setting: scene.setting,
+  action: scene.action,
+  mood: scene.mood,
+  lighting: scene.lighting,
+  keyObjects: scene.keyObjects,
+  compositionHint: scene.compositionHint
+}, null, 2)}
+
+Generate an image prompt for this scene.`;
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 1000,
+        temperature: 0.4,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }]
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      let msg = `API error (${response.status})`;
+      try { msg = JSON.parse(errorBody).error?.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const result = await response.json();
+    const text = result.content?.[0]?.text?.trim() || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    try {
+      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+      return {
+        prompt: parsed.prompt || '',
+        negativePrompt: this.getIllustrationNegativePrompt(
+          config.illustrationStyle || config.globalStyle,
+          config.colorMode || config.globalColorMode
+        ),
+        altText: parsed.altText || '',
+        caption: parsed.caption || null,
+        compositionNotes: parsed.compositionNotes || '',
+      };
+    } catch (e) {
+      console.warn('Illustration prompt parse error:', e);
+      return {
+        prompt: text,
+        negativePrompt: this.getIllustrationNegativePrompt(
+          config.illustrationStyle || config.globalStyle,
+          config.colorMode || config.globalColorMode
+        ),
+        altText: '',
+        caption: null,
+        compositionNotes: '',
+      };
+    }
+  }
+
+  /**
+   * Generate all illustration prompts in parallel batches.
+   */
+  async generateAllIllustrationPrompts(illustrations, config, onProgress) {
+    const PROMPT_WORKERS = 5;
+    const results = [];
+
+    for (let i = 0; i < illustrations.length; i += PROMPT_WORKERS) {
+      const batch = illustrations.slice(i, i + PROMPT_WORKERS);
+
+      const batchResults = await Promise.all(
+        batch.map(ill => this.generateIllustrationPrompt(ill.scene, config))
+      );
+
+      results.push(...batchResults.map((result, idx) => ({
+        ...batch[idx],
+        ...result,
+        state: 'prompt_ready',
+      })));
+
+      if (onProgress) onProgress(results.length, illustrations.length);
+
+      if (i + PROMPT_WORKERS < illustrations.length) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Analyze a reference image for style guidance using Claude vision.
+   */
+  async analyzeReferenceImage(imageUrl, config) {
+    if (!this.apiKey) throw new Error('No API key set.');
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'url', url: imageUrl } },
+            { type: 'text', text: 'Analyze this image\'s visual style for use as a reference in AI image generation. Extract ONLY: composition approach, color palette, lighting style, mood/atmosphere, texture quality. Output as comma-separated descriptive phrases. Do NOT describe the subject matter — only the artistic/technical style.' }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) throw new Error('Reference analysis failed');
+    const data = await response.json();
+    return data.content?.[0]?.text?.trim() || '';
+  }
+
+  /**
+   * Lock style from an approved illustration image.
+   */
+  async lockStyleFromImage(imageDataUrl) {
+    if (!this.apiKey) throw new Error('No API key set.');
+
+    // Convert data URL to base64 for Claude vision
+    const base64Match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!base64Match) throw new Error('Invalid image data URL');
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: base64Match[1],
+                data: base64Match[2]
+              }
+            },
+            { type: 'text', text: 'Analyze this illustration\'s visual style comprehensively. Output a style description that can be injected into future image generation prompts to maintain consistency. Include: art medium, color palette, lighting approach, texture, line quality, composition style, mood, level of detail. Output as a single paragraph of descriptive phrases.' }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) throw new Error('Style lock analysis failed');
+    const data = await response.json();
+    return {
+      enabled: true,
+      styleDescription: data.content?.[0]?.text?.trim() || '',
+      lockedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Generate an illustration image via HuggingFace (reuses existing cover HF code).
+   */
+  async generateIllustrationHF(prompt, negativePrompt, model, dimensions) {
+    const hfToken = await this.storage?.getSetting?.('hfToken');
+    if (!hfToken) throw new Error('No HuggingFace token set.');
+    await loadPuterSDK();
+    if (typeof puter === 'undefined' || !puter.net?.fetch) {
+      throw new Error('Puter.js net.fetch not available');
+    }
+
+    const url = `https://api-inference.huggingface.co/models/${model}`;
+    let response = await puter.net.fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${hfToken}`,
+        'Content-Type': 'application/json',
+        'x-wait-for-model': 'true'
+      },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          negative_prompt: negativePrompt,
+          width: dimensions.w,
+          height: dimensions.h,
+          num_inference_steps: 30,
+          guidance_scale: 7.5,
+        }
+      })
+    });
+
+    // Handle cold start
+    let retries = 0;
+    while (response.status === 503 && retries < 2) {
+      let wait = 30000;
+      try {
+        const body = await response.json();
+        wait = Math.min((body.estimated_time || 30) * 1000, 45000);
+      } catch (_) {}
+      await new Promise(r => setTimeout(r, wait));
+      response = await puter.net.fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'application/json',
+          'x-wait-for-model': 'true'
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            negative_prompt: negativePrompt,
+            width: dimensions.w,
+            height: dimensions.h,
+          }
+        })
+      });
+      retries++;
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      let msg = `HF error (${response.status})`;
+      try { msg = JSON.parse(text).error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const ct = response.headers.get('content-type') || '';
+    if (!ct.startsWith('image/')) {
+      const text = await response.text();
+      throw new Error(`Expected image, got ${ct}: ${text.slice(0, 100)}`);
+    }
+
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve({
+        imageData: reader.result,
+        model: model,
+        provider: 'huggingface',
+        dimensions: dimensions,
+      });
+      reader.onerror = () => reject(new Error('Failed to read image data'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * Generate an illustration image via Puter.js (reuses existing cover Puter code).
+   */
+  async generateIllustrationPuter(prompt, model, dimensions) {
+    await loadPuterSDK();
+    if (typeof puter === 'undefined' || !puter.ai) {
+      throw new Error('Puter.js not loaded');
+    }
+
+    const opts = {
+      model: model,
+      width: dimensions.w,
+      height: dimensions.h,
+    };
+
+    if (model !== 'dall-e-3') {
+      opts.steps = 25;
+      opts.negative_prompt = 'text, words, letters, typography, watermark, blurry, low quality';
+    }
+
+    const img = await puter.ai.txt2img(prompt, opts);
+    const imageData = await this._imgElementToDataUrl(img);
+
+    return {
+      imageData: imageData,
+      model: model,
+      provider: 'puter',
+      dimensions: dimensions,
+    };
+  }
+
+  /**
+   * Calculate pixel dimensions from size option for illustration generation.
+   */
+  getIllustrationDimensions(sizeOption) {
+    const aspectRatios = {
+      'inline_small': { w: 1024, h: 1024 },
+      'inline_medium': { w: 1024, h: 1024 },
+      'inline_full': { w: 1024, h: 768 },
+      'full_page': { w: 768, h: 1152 },
+      'full_bleed': { w: 768, h: 1152 },
+      'half_page': { w: 1024, h: 512 },
+      'quarter_page': { w: 512, h: 512 },
+      'chapter_header': { w: 1024, h: 384 },
+      'vignette': { w: 512, h: 512 },
+    };
+    return aspectRatios[sizeOption] || { w: 1024, h: 1024 };
+  }
+
+  /**
+   * Calculate final print dimensions from size, DPI, and trim size.
+   */
+  calculateFinalDimensions(sizeOption, dpi, trimSize) {
+    trimSize = trimSize || { width: 6, height: 9 };
+    const dims = {
+      'inline_small':   { w: 3 * dpi, h: Math.round(2 * dpi) },
+      'inline_medium':  { w: Math.round(4.5 * dpi), h: Math.round(3 * dpi) },
+      'inline_full':    { w: Math.round((trimSize.width - 1.5) * dpi), h: Math.round(3 * dpi) },
+      'full_page':      { w: Math.round(trimSize.width * dpi), h: Math.round(trimSize.height * dpi) },
+      'full_bleed':     { w: Math.round((trimSize.width + 0.25) * dpi), h: Math.round((trimSize.height + 0.25) * dpi) },
+      'half_page':      { w: Math.round((trimSize.width - 1.5) * dpi), h: Math.round(3.75 * dpi) },
+      'quarter_page':   { w: Math.round(2.25 * dpi), h: Math.round(2.25 * dpi) },
+      'chapter_header': { w: Math.round((trimSize.width - 1.5) * dpi), h: Math.round(1.5 * dpi) },
+      'vignette':       { w: Math.round(1.5 * dpi), h: Math.round(1.5 * dpi) },
+    };
+    return dims[sizeOption] || { w: Math.round(trimSize.width * dpi), h: Math.round(trimSize.height * dpi) };
+  }
+
+  /**
+   * Upscale an image using canvas with high-quality interpolation.
+   */
+  async upscaleImage(imageDataUrl, targetWidth, targetHeight) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+        // Apply mild sharpening
+        this._applyUnsharpMask(ctx, targetWidth, targetHeight, 0.3);
+
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Image load failed for upscaling'));
+      img.src = imageDataUrl;
+    });
+  }
+
+  /**
+   * Apply unsharp mask for post-upscale sharpening.
+   */
+  _applyUnsharpMask(ctx, width, height, amount) {
+    try {
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      const copy = new Uint8ClampedArray(data);
+
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          for (let c = 0; c < 3; c++) {
+            const idx = (y * width + x) * 4 + c;
+            const blur =
+              (copy[((y - 1) * width + x) * 4 + c] +
+               copy[((y + 1) * width + x) * 4 + c] +
+               copy[(y * width + x - 1) * 4 + c] +
+               copy[(y * width + x + 1) * 4 + c]) / 4;
+            const sharp = copy[idx] + (copy[idx] - blur) * amount;
+            data[idx] = Math.max(0, Math.min(255, Math.round(sharp)));
+          }
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+    } catch (e) {
+      // Canvas may be tainted — skip sharpening
+      console.warn('Unsharp mask skipped:', e.message);
+    }
+  }
+
+  /**
+   * Apply historical period filter to a canvas.
+   */
+  applyHistoricalFilter(canvas, period) {
+    const filters = {
+      'pre-1860':  { sepia: 0.9, grain: 0.3, vignette: 0.4, contrast: 1.2 },
+      '1860-1900': { sepia: 0.6, grain: 0.2, vignette: 0.3, contrast: 1.1 },
+      '1900-1940': { grayscale: 1.0, grain: 0.15, vignette: 0.2, contrast: 1.15 },
+      '1940-1970': { grayscale: 1.0, grain: 0.08, vignette: 0.1, contrast: 1.05 },
+      '1970-2000': { grain: 0.05, warmth: 0.1 },
+      'post-2000': {},
+    };
+
+    const filter = filters[period];
+    if (!filter) return;
+
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+
+    try {
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i + 1], b = data[i + 2];
+
+        // Grayscale
+        if (filter.grayscale) {
+          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+          r = r + (gray - r) * filter.grayscale;
+          g = g + (gray - g) * filter.grayscale;
+          b = b + (gray - b) * filter.grayscale;
+        }
+
+        // Sepia
+        if (filter.sepia) {
+          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+          const sr = gray * 1.2, sg = gray * 1.0, sb = gray * 0.8;
+          r = r + (sr - r) * filter.sepia;
+          g = g + (sg - g) * filter.sepia;
+          b = b + (sb - b) * filter.sepia;
+        }
+
+        // Contrast
+        if (filter.contrast && filter.contrast !== 1) {
+          r = ((r / 255 - 0.5) * filter.contrast + 0.5) * 255;
+          g = ((g / 255 - 0.5) * filter.contrast + 0.5) * 255;
+          b = ((b / 255 - 0.5) * filter.contrast + 0.5) * 255;
+        }
+
+        // Warmth
+        if (filter.warmth) {
+          r += filter.warmth * 20;
+          b -= filter.warmth * 10;
+        }
+
+        // Film grain
+        if (filter.grain) {
+          const noise = (Math.random() - 0.5) * filter.grain * 128;
+          r += noise;
+          g += noise;
+          b += noise;
+        }
+
+        data[i] = Math.max(0, Math.min(255, r));
+        data[i + 1] = Math.max(0, Math.min(255, g));
+        data[i + 2] = Math.max(0, Math.min(255, b));
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      // Vignette
+      if (filter.vignette) {
+        const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.7);
+        gradient.addColorStop(0, 'rgba(0,0,0,0)');
+        gradient.addColorStop(1, `rgba(0,0,0,${filter.vignette})`);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, w, h);
+      }
+    } catch (e) {
+      console.warn('Historical filter failed:', e.message);
+    }
+  }
+
+  /**
+   * Generate a character reference sheet for children's book mode.
+   */
+  async generateCharacterSheet(characterDesc, config) {
+    const prompt = `Character reference sheet, multiple poses and expressions, ${characterDesc}, front view, side view, three-quarter view, happy expression, sad expression, surprised expression, white background, clean separation between poses, ${this.getStylePrefix(config.illustrationStyle || config.globalStyle, config.globalColorMode || 'full_color')}, consistent proportions throughout`;
+
+    const negativePrompt = this.getIllustrationNegativePrompt(config.illustrationStyle || config.globalStyle, 'full_color');
+    const dimensions = { w: 1024, h: 1024 };
+
+    // Try to generate via available providers
+    try {
+      return await this.generateIllustrationPuter(prompt, 'stabilityai/stable-diffusion-3-medium', dimensions);
+    } catch (e) {
+      try {
+        return await this.generateIllustrationHF(prompt, negativePrompt, 'black-forest-labs/FLUX.1-schnell', dimensions);
+      } catch (e2) {
+        throw new Error('Character sheet generation failed: ' + e2.message);
+      }
+    }
+  }
+
   // ========================================
   //  Prose CI/CD — Intent Ledger & Patching
   // ========================================
@@ -3273,4 +3986,192 @@ Output valid JSON only:
   }
 }
 
-export { ProseGenerator };
+// ═══════════════════════════════════════════════════════════
+// PARALLEL ILLUSTRATION QUEUE
+// Manages concurrent image generation across multiple providers
+// ═══════════════════════════════════════════════════════════
+
+class IllustrationQueue {
+  constructor(generator, providerConfig) {
+    this.generator = generator;
+    this.paused = false;
+    this.cancelled = false;
+
+    this.pools = (providerConfig || [])
+      .filter(p => p.enabled)
+      .map(p => ({
+        ...p,
+        active: 0,
+        totalGenerated: 0,
+        totalFailed: 0,
+      }));
+
+    this.onProgress = null;
+    this.onImageReady = null;
+    this.onError = null;
+    this.onWorkerUpdate = null;
+  }
+
+  getAvailablePool() {
+    return this.pools
+      .filter(p => p.active < p.concurrent)
+      .sort((a, b) => a.priority - b.priority)[0] || null;
+  }
+
+  hasActiveJobs() {
+    return this.pools.some(p => p.active > 0);
+  }
+
+  pause() { this.paused = true; }
+  resume() { this.paused = false; }
+  cancel() { this.cancelled = true; }
+
+  async processQueue(illustrations, variantMode) {
+    this.cancelled = false;
+    this.paused = false;
+    const jobs = [];
+
+    for (const ill of illustrations) {
+      if (variantMode === 'multi_model') {
+        const enabledPools = this.pools.filter(p => p.enabled !== false);
+        const variantCount = Math.min(ill.variantsRequested || 3, enabledPools.length);
+        for (let v = 0; v < variantCount; v++) {
+          jobs.push({
+            illustrationId: ill.id,
+            variantIndex: v,
+            prompt: ill.prompt,
+            negativePrompt: ill.negativePrompt,
+            config: ill.config,
+            preferredProvider: enabledPools[v % enabledPools.length].name,
+            retryCount: 0,
+            maxRetries: 2,
+          });
+        }
+      } else {
+        for (let v = 0; v < (ill.variantsRequested || 3); v++) {
+          jobs.push({
+            illustrationId: ill.id,
+            variantIndex: v,
+            prompt: ill.prompt,
+            negativePrompt: ill.negativePrompt,
+            config: ill.config,
+            preferredProvider: null,
+            retryCount: 0,
+            maxRetries: 2,
+          });
+        }
+      }
+    }
+
+    const pending = [...jobs];
+    const results = [];
+    const totalJobs = jobs.length;
+
+    while ((pending.length > 0 || this.hasActiveJobs()) && !this.cancelled) {
+      while (this.paused && !this.cancelled) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (this.cancelled) break;
+
+      let dispatched = false;
+
+      for (let i = 0; i < pending.length; i++) {
+        if (this.cancelled) break;
+        const job = pending[i];
+        let pool;
+
+        if (job.preferredProvider) {
+          pool = this.pools.find(
+            p => p.name === job.preferredProvider && p.active < p.concurrent
+          );
+        }
+        if (!pool) {
+          pool = this.getAvailablePool();
+        }
+
+        if (pool) {
+          pending.splice(i, 1);
+          i--;
+          pool.active++;
+          dispatched = true;
+
+          if (this.onWorkerUpdate) {
+            this.onWorkerUpdate(this.pools, job, pool.name, 'started');
+          }
+
+          this._executeJob(job, pool)
+            .then(result => {
+              pool.active--;
+              pool.totalGenerated++;
+              results.push({ ...result, illustrationId: job.illustrationId, variantIndex: job.variantIndex });
+
+              if (this.onImageReady) {
+                this.onImageReady(job.illustrationId, result, pool.name, job.variantIndex);
+              }
+              if (this.onProgress) {
+                this.onProgress(results.length, totalJobs);
+              }
+              if (this.onWorkerUpdate) {
+                this.onWorkerUpdate(this.pools, job, pool.name, 'completed');
+              }
+            })
+            .catch(err => {
+              pool.active--;
+              pool.totalFailed++;
+
+              if (job.retryCount < job.maxRetries) {
+                job.retryCount++;
+                job.preferredProvider = null;
+                pending.push(job);
+              } else {
+                if (this.onError) {
+                  this.onError(job.illustrationId, err, pool.name);
+                }
+              }
+              if (this.onWorkerUpdate) {
+                this.onWorkerUpdate(this.pools, job, pool.name, 'failed');
+              }
+            });
+        }
+      }
+
+      if (!dispatched && pending.length > 0) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      if (this.hasActiveJobs()) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+
+    // Wait for remaining active jobs
+    while (this.hasActiveJobs()) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    return results;
+  }
+
+  async _executeJob(job, pool) {
+    const dimensions = this.generator.getIllustrationDimensions(job.config.size || 'inline_full');
+
+    switch (pool.generateFn) {
+      case 'generateHF':
+        return await this.generator.generateIllustrationHF(
+          job.prompt, job.negativePrompt, pool.model, dimensions
+        );
+      case 'generatePuterSD':
+        return await this.generator.generateIllustrationPuter(
+          job.prompt, 'stabilityai/stable-diffusion-3-medium', dimensions
+        );
+      case 'generatePuterDalle':
+        return await this.generator.generateIllustrationPuter(
+          job.prompt, 'dall-e-3', dimensions
+        );
+      default:
+        throw new Error(`Unknown generation function: ${pool.generateFn}`);
+    }
+  }
+}
+
+export { ProseGenerator, IllustrationQueue, loadPuterSDK };
