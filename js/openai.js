@@ -94,17 +94,11 @@ class OpenAIClient {
 
   async validateKey(key) {
     try {
-      const response = await fetch(`${OPENAI_API_URL}/chat/completions`, {
-        method: 'POST',
+      const response = await fetch(`${OPENAI_API_URL}/models`, {
+        method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${key}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-5.2',
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1
-        })
+        }
       });
 
       if (response.ok) {
