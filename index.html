@@ -811,8 +811,45 @@
 
         <div id="ill-settings-container" style="display:none;">
 
+          <!-- ═══ 4-Step Workflow Progress ═══ -->
           <div class="analysis-section">
-            <h3>Global Settings</h3>
+            <div id="ill-workflow-steps" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
+              <div class="ill-step active" data-step="1" style="text-align:center;flex:1;">
+                <div style="font-size:1.2rem;">&#9312;</div>
+                <div style="font-size:0.7rem;font-weight:600;">Extract Scenes</div>
+              </div>
+              <div style="flex:0;border-top:2px solid var(--border);width:20px;margin:0 4px;"></div>
+              <div class="ill-step" data-step="2" style="text-align:center;flex:1;opacity:0.4;">
+                <div style="font-size:1.2rem;">&#9313;</div>
+                <div style="font-size:0.7rem;font-weight:600;">Generate Previews</div>
+              </div>
+              <div style="flex:0;border-top:2px solid var(--border);width:20px;margin:0 4px;"></div>
+              <div class="ill-step" data-step="3" style="text-align:center;flex:1;opacity:0.4;">
+                <div style="font-size:1.2rem;">&#9314;</div>
+                <div style="font-size:0.7rem;font-weight:600;">Review &amp; Upgrade</div>
+              </div>
+              <div style="flex:0;border-top:2px solid var(--border);width:20px;margin:0 4px;"></div>
+              <div class="ill-step" data-step="4" style="text-align:center;flex:1;opacity:0.4;">
+                <div style="font-size:1.2rem;">&#9315;</div>
+                <div style="font-size:0.7rem;font-weight:600;">Export</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ Quick Actions ═══ -->
+          <div class="analysis-section">
+            <h3>Quick Actions</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-sm" id="btn-ill-auto-extract">&#128270; Auto-Extract Scenes</button>
+              <button class="btn btn-sm" id="btn-ill-upload-reference">&#11014; Upload Reference</button>
+              <button class="btn btn-sm" id="btn-ill-generate-all-previews">&#127912; Generate All Previews</button>
+              <button class="btn btn-sm" id="btn-ill-style-settings">&#9881; Style Settings</button>
+            </div>
+          </div>
+
+          <!-- ═══ Style Settings (collapsible) ═══ -->
+          <div class="analysis-section" id="ill-style-settings-panel" style="display:none;">
+            <h3>Style Settings</h3>
             <div class="setup-form-row">
               <div class="form-group">
                 <label>Illustration Style</label>
@@ -887,32 +924,6 @@
                 </select>
               </div>
               <div class="form-group">
-                <label>Default Resolution</label>
-                <select class="form-input" id="bs-ill-resolution">
-                  <option value="300">300 DPI — Print Quality (KDP min.)</option>
-                  <option value="600">600 DPI — High Print Quality</option>
-                  <option value="72">72 DPI — Screen / eBook Only</option>
-                  <option value="96">96 DPI — Screen / eBook Enhanced</option>
-                  <option value="150">150 DPI — Draft / Preview</option>
-                </select>
-              </div>
-            </div>
-            <div class="setup-form-row">
-              <div class="form-group">
-                <label>Default Size</label>
-                <select class="form-input" id="bs-ill-size">
-                  <option value="inline_small">Inline Small (3" wide)</option>
-                  <option value="inline_medium">Inline Medium (4.5" wide)</option>
-                  <option value="inline_full">Inline Full Width</option>
-                  <option value="full_page">Full Page</option>
-                  <option value="full_bleed">Full Bleed (edge to edge)</option>
-                  <option value="half_page">Half Page</option>
-                  <option value="quarter_page">Quarter Page / Spot</option>
-                  <option value="chapter_header">Chapter Header Banner</option>
-                  <option value="vignette">Vignette (small decorative)</option>
-                </select>
-              </div>
-              <div class="form-group">
                 <label>Variants per Image</label>
                 <select class="form-input" id="bs-ill-variants">
                   <option value="1">1</option>
@@ -923,132 +934,102 @@
                 </select>
               </div>
             </div>
-            <div class="setup-form-row">
-              <div class="form-group">
-                <label>Parallel Workers</label>
-                <select class="form-input" id="bs-ill-workers">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="5" selected>5 (default)</option>
-                </select>
+            <div class="form-group">
+              <label>Global Style Prompt <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted);">(optional)</span></label>
+              <textarea class="form-input" id="bs-ill-style-prompt" rows="2" placeholder='e.g., "warm palette, soft edges, visible brushstrokes, classic storybook feel"'></textarea>
+            </div>
+
+            <!-- Provider Priority -->
+            <details style="margin-top:8px;">
+              <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--accent-primary);">Image Providers</summary>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-ill-prov-hf-flux" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">HuggingFace FLUX.1-schnell</span>
+                    <span class="matter-desc">Free, fast, good quality (previews)</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-ill-prov-hf-sdxl" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">HuggingFace SDXL</span>
+                    <span class="matter-desc">Free, slightly painterly style</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-ill-prov-gpt-image-1" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">GPT Image 1 via Puter.js</span>
+                    <span class="matter-desc">Free, no API key needed</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-ill-prov-puter-sd3" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">Puter.js SD3</span>
+                    <span class="matter-desc">Free, no API key needed</span>
+                  </div>
+                </label>
+                <label class="matter-option">
+                  <input type="checkbox" id="bs-ill-prov-puter-dalle" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">Puter.js DALL-E 3</span>
+                    <span class="matter-desc">Free, strong prompt adherence</span>
+                  </div>
+                </label>
+                <label class="matter-option" id="ill-prov-openai-option" style="display:none;">
+                  <input type="checkbox" id="bs-ill-prov-openai-direct" checked>
+                  <div class="matter-info">
+                    <span class="matter-name">OpenAI GPT Image 1.5 (Direct)</span>
+                    <span class="matter-desc">Paid, highest quality, for print/hero images</span>
+                  </div>
+                </label>
               </div>
-              <div class="form-group">
-                <label>Output Workflow</label>
-                <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
-                  <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
-                    <input type="checkbox" id="bs-ill-wf-vellum" checked> Vellum (placeholders + folder)
-                  </label>
-                  <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
-                    <input type="checkbox" id="bs-ill-wf-docx" checked> Embedded DOCX
-                  </label>
-                </div>
+              <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
+                <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="same_model"> Same model, different seeds</label>
+                <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="multi_model" checked> Different models per variant</label>
               </div>
+            </details>
+
+            <!-- Character & Setting Descriptions -->
+            <details style="margin-top:8px;">
+              <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--accent-primary);">Character &amp; Setting Descriptions</summary>
+              <div style="margin-top:8px;">
+                <h4 style="font-size:0.85rem;margin-bottom:6px;">Characters</h4>
+                <div id="ill-character-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                <button class="btn btn-secondary btn-sm" id="btn-ill-add-character" style="margin-top:6px;">+ Add Character</button>
+                <h4 style="font-size:0.85rem;margin:12px 0 6px;">Settings / Locations</h4>
+                <div id="ill-setting-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+                <button class="btn btn-secondary btn-sm" id="btn-ill-add-setting" style="margin-top:6px;">+ Add Setting</button>
+              </div>
+            </details>
+
+            <div class="analysis-section" id="ill-style-lock-section" style="display:none;margin-top:8px;">
+              <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:8px;">
+                Style locked for visual consistency.
+              </p>
+              <div id="ill-style-lock-desc" style="font-size:0.85rem;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:8px;"></div>
+              <button class="btn btn-secondary btn-sm" id="btn-ill-unlock-style">Unlock Style</button>
             </div>
           </div>
 
+          <!-- ═══ Chapter-by-Scene Illustration Dashboard ═══ -->
           <div class="analysis-section">
-            <h3>Image Provider Priority</h3>
-            <div style="display:flex;flex-direction:column;gap:6px;">
-              <label class="matter-option">
-                <input type="checkbox" id="bs-ill-prov-hf-flux" checked>
-                <div class="matter-info">
-                  <span class="matter-name">HuggingFace FLUX.1-schnell (2 parallel slots)</span>
-                  <span class="matter-desc">Free, fast, good quality</span>
-                </div>
-              </label>
-              <label class="matter-option">
-                <input type="checkbox" id="bs-ill-prov-hf-sdxl" checked>
-                <div class="matter-info">
-                  <span class="matter-name">HuggingFace SDXL (1 parallel slot)</span>
-                  <span class="matter-desc">Free, slightly painterly style</span>
-                </div>
-              </label>
-              <label class="matter-option">
-                <input type="checkbox" id="bs-ill-prov-gpt-image-1" checked>
-                <div class="matter-info">
-                  <span class="matter-name">GPT Image 1 via Puter.js (1 parallel slot)</span>
-                  <span class="matter-desc">Free, no API key needed, high quality</span>
-                </div>
-              </label>
-              <label class="matter-option">
-                <input type="checkbox" id="bs-ill-prov-puter-sd3" checked>
-                <div class="matter-info">
-                  <span class="matter-name">Puter.js SD3 (1 parallel slot)</span>
-                  <span class="matter-desc">Free, no API key needed</span>
-                </div>
-              </label>
-              <label class="matter-option">
-                <input type="checkbox" id="bs-ill-prov-puter-dalle" checked>
-                <div class="matter-info">
-                  <span class="matter-name">Puter.js DALL-E 3 (1 parallel slot)</span>
-                  <span class="matter-desc">Free, strong prompt adherence</span>
-                </div>
-              </label>
+            <h3>Illustration Dashboard</h3>
+            <div id="ill-dashboard-summary" style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+              No chapters loaded.
+            </div>
+            <div id="ill-chapter-scene-list" style="display:flex;flex-direction:column;gap:12px;">
+              <!-- Populated dynamically: each chapter with its scenes and thumbnails -->
             </div>
           </div>
 
-          <div class="analysis-section">
-            <h3>Multi-Model Variants</h3>
-            <div style="display:flex;gap:16px;flex-wrap:wrap;">
-              <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="same_model"> Same model, different seeds (faster)</label>
-              <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="multi_model" checked> Different models per variant (more diverse)</label>
-            </div>
-          </div>
-
-          <div class="analysis-section">
-            <h3>Global Style Prompt <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted);">(optional)</span></h3>
-            <textarea class="form-input" id="bs-ill-style-prompt" rows="3" placeholder='e.g., "warm palette, soft edges, visible brushstrokes, classic storybook feel"'></textarea>
-          </div>
-
-          <div class="analysis-section">
-            <h3>Chapter Selection</h3>
-            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">
-              Check the chapters to illustrate and set the number of images to generate per chapter.
-            </p>
-            <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-weight:600;font-size:0.9rem;">
-              <input type="checkbox" id="bs-ill-select-all"> Select All Chapters
-            </label>
-            <div id="ill-chapter-list" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;">
-              <!-- Populated dynamically -->
-            </div>
-          </div>
-
-          <div class="analysis-section">
-            <h3>Character Descriptions</h3>
-            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">
-              Describe key characters for consistent illustration. These descriptions are injected into every image prompt.
-            </p>
-            <div id="ill-character-list" style="display:flex;flex-direction:column;gap:8px;">
-              <!-- Populated dynamically -->
-            </div>
-            <button class="btn btn-secondary" id="btn-ill-add-character" style="margin-top:8px;">+ Add Character</button>
-          </div>
-
-          <div class="analysis-section">
-            <h3>Setting Descriptions</h3>
-            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">
-              Describe key settings/locations for consistent illustration.
-            </p>
-            <div id="ill-setting-list" style="display:flex;flex-direction:column;gap:8px;">
-              <!-- Populated dynamically -->
-            </div>
-            <button class="btn btn-secondary" id="btn-ill-add-setting" style="margin-top:8px;">+ Add Setting</button>
-          </div>
-
-          <div class="analysis-section" id="ill-style-lock-section" style="display:none;">
-            <h3>Style Lock</h3>
-            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:8px;">
-              Style is locked to maintain visual consistency across all illustrations.
-            </p>
-            <div id="ill-style-lock-desc" style="font-size:0.85rem;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:8px;"></div>
-            <button class="btn btn-secondary" id="btn-ill-unlock-style">Unlock Style</button>
-          </div>
-
+          <!-- ═══ Generation Progress ═══ -->
           <div id="ill-generate-status" style="display:none;margin-bottom:12px;">
             <div style="display:flex;align-items:center;gap:10px;">
               <div class="generate-spinner"></div>
-              <span id="ill-generate-status-text" style="font-size:0.85rem;color:#007AFF;">Generating illustrations...</span>
+              <span id="ill-generate-status-text" style="font-size:0.85rem;color:#007AFF;">Processing...</span>
             </div>
           </div>
 
@@ -1075,15 +1056,18 @@
             <div id="illustration-errors-content"></div>
           </div>
 
-          <button class="btn btn-primary" id="btn-generate-illustrations" style="width:100%;margin-top:12px;">Generate Illustrations</button>
+          <!-- ═══ Tiered Generation Actions ═══ -->
+          <div class="analysis-section" style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary" id="btn-generate-illustrations" style="flex:1;">Generate Illustrations</button>
+          </div>
           <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
-            Illustrations are generated after prose is approved. Cost: $0.00 for images (free providers). ~$2-3 for Claude prompts.
+            Previews are free (HuggingFace). Print-quality upgrades via OpenAI: ~$0.20/image.
           </p>
 
           <!-- ═══ Illustration Prompt Review ═══ -->
           <div id="ill-prompt-review-container" style="display:none;">
             <div class="analysis-section">
-              <h3 id="ill-prompt-review-title">Illustration Prompts — Review &amp; Edit</h3>
+              <h3 id="ill-prompt-review-title">Illustration Prompts &mdash; Review &amp; Edit</h3>
               <div id="ill-prompt-review-list"></div>
               <div style="display:flex;gap:8px;margin-top:12px;">
                 <button class="btn btn-primary" id="btn-ill-approve-all-prompts">Approve All &amp; Generate</button>
@@ -1106,6 +1090,63 @@
               </div>
             </div>
           </div>
+
+          <!-- ═══ Upgrade to Print Modal (inline) ═══ -->
+          <div id="ill-upgrade-panel" style="display:none;" class="analysis-section">
+            <h3>&#11014; Upgrade to Print Quality</h3>
+            <div id="ill-upgrade-content">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <!-- ═══ Cost Tracker ═══ -->
+          <div class="analysis-section" style="background:var(--bg-secondary);border-radius:var(--radius-sm);padding:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:0.8rem;font-weight:600;">Cost Tracker</span>
+              <span id="ill-cost-total" style="font-size:0.8rem;font-weight:600;">$0.00</span>
+            </div>
+            <div style="display:flex;gap:12px;font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+              <span>Previews: <span id="ill-cost-previews">0</span></span>
+              <span>Standard: <span id="ill-cost-standard">0</span></span>
+              <span>Print: <span id="ill-cost-print">0</span></span>
+            </div>
+            <div style="display:flex;gap:12px;font-size:0.75rem;color:var(--text-muted);margin-top:2px;">
+              <span>HuggingFace: <span id="ill-cost-hf">0</span> calls</span>
+              <span>OpenAI: <span id="ill-cost-openai">0</span> calls</span>
+            </div>
+          </div>
+
+          <!-- ═══ Export Panel ═══ -->
+          <div id="ill-export-panel" style="display:none;" class="analysis-section">
+            <h3>&#128228; Export Illustrations</h3>
+            <div id="ill-export-summary" style="font-size:0.85rem;color:var(--text-muted);margin-bottom:8px;">
+              0 approved illustrations.
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+                <input type="checkbox" id="ill-export-zip" checked> Download as ZIP
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+                <input type="checkbox" id="ill-export-vellum" checked> Include Vellum Placement Guide
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+                <input type="checkbox" id="ill-export-docx" checked> Include in DOCX export
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+                <input type="checkbox" id="ill-export-loi"> Generate List of Illustrations page
+              </label>
+            </div>
+            <button class="btn btn-primary" id="btn-ill-export" style="width:100%;margin-top:8px;">Export Selected</button>
+          </div>
+
+          <!-- Hidden fields for backward compat -->
+          <input type="hidden" id="bs-ill-resolution" value="300">
+          <input type="hidden" id="bs-ill-size" value="inline_full">
+          <input type="hidden" id="bs-ill-workers" value="5">
+          <input type="hidden" id="bs-ill-wf-vellum" value="true">
+          <input type="hidden" id="bs-ill-wf-docx" value="true">
+          <input type="hidden" id="bs-ill-select-all" value="">
+          <div id="ill-chapter-list" style="display:none;"></div>
 
         </div>
       </div>
@@ -1290,6 +1331,7 @@
           </div>
         </div>
         <div id="iterative-agent-log" class="ma-status-log" style="max-height:60px;font-size:0.7rem;"></div>
+        <div id="iterative-cross-model-panel" style="display:none;"></div>
       </div>
 
       <div id="iterative-status-log" style="font-size:0.75rem;color:var(--text-muted);max-height:80px;overflow-y:auto;text-align:left;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:16px;">
@@ -1327,6 +1369,9 @@
           <div id="ma-pipeline-fill" class="ma-pipeline-fill" style="width:0%;"></div>
         </div>
       </div>
+
+      <!-- Cross-Model Score Panel -->
+      <div id="ma-cross-model-panel" style="display:none;"></div>
 
       <!-- Status Log -->
       <div id="ma-status-log" class="ma-status-log">

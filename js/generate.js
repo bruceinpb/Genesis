@@ -4191,8 +4191,9 @@ Output valid JSON only:
 // ═══════════════════════════════════════════════════════════
 
 class IllustrationQueue {
-  constructor(generator, providerConfig) {
+  constructor(generator, providerConfig, openaiClient) {
     this.generator = generator;
+    this.openaiClient = openaiClient || null;
     this.paused = false;
     this.cancelled = false;
 
@@ -4394,6 +4395,29 @@ class IllustrationQueue {
     return results;
   }
 
+  async _generateOpenAIDirect(prompt, dimensions) {
+    if (!this.openaiClient || !this.openaiClient.isConfigured()) {
+      throw new Error('OpenAI not configured');
+    }
+    const size = dimensions.width >= 1024 ? '1024x1024' : '1024x1024';
+    const blob = await this.openaiClient.generateImage(prompt, size, 'low');
+    const reader = new FileReader();
+    const dataUrl = await new Promise((resolve) => {
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+    return {
+      imageData: dataUrl,
+      blob,
+      provider: 'openai-direct',
+      providerName: 'OpenAI GPT Image 1.5',
+      width: 1024,
+      height: 1024,
+      cost: 0.009,
+      tier: 'standard'
+    };
+  }
+
   async _executeJob(job, pool) {
     const dimensions = this.generator.getIllustrationDimensions(job.config.size || 'inline_full');
 
@@ -4414,6 +4438,8 @@ class IllustrationQueue {
         return await this.generator.generateIllustrationPuter(
           job.prompt, 'dall-e-3', dimensions
         );
+      case 'generateOpenAIDirect':
+        return await this._generateOpenAIDirect(job.prompt, dimensions);
       default:
         throw new Error(`Unknown generation function: ${pool.generateFn}`);
     }

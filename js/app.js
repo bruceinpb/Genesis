@@ -18,6 +18,7 @@ import { ErrorDatabase } from './error-database.js';
 import { CoverEditor } from './cover-editor.js';
 import { MultiAgentOrchestrator } from './multi-agent.js';
 import { AuthorPaletteManager } from './author-palette.js';
+import { OpenAIClient } from './openai.js';
 
 class App {
   constructor() {
@@ -29,6 +30,7 @@ class App {
     this.exporter = null;
     this.editor = null;
     this.generator = null;
+    this.openaiClient = null;
     this.errorDb = null;
     this.coverEditor = null;
     this.orchestrator = null;
@@ -78,10 +80,12 @@ class App {
       this.exporter = new ExportManager(this.fs);
       this.generator = new ProseGenerator(this.localStorage);
       await this.generator.init();
+      this.openaiClient = new OpenAIClient(this.localStorage);
+      await this.openaiClient.init();
       // Wire up scholarly apparatus generator for HTML export
       this.exporter._scholarlyGenerator = (type, allProse, chapters, indexType) =>
         this._generateScholarlyContent(type, allProse, chapters, indexType);
-      this.orchestrator = new MultiAgentOrchestrator(this.generator, this.localStorage);
+      this.orchestrator = new MultiAgentOrchestrator(this.generator, this.localStorage, this.openaiClient);
       this.orchestrator.onStatus((phase, message, data) => this._onMultiAgentStatus(phase, message, data));
       this.paletteManager = new AuthorPaletteManager(this.generator);
       this.errorDb = new ErrorDatabase(this.localStorage, this.fs);
@@ -1176,9 +1180,10 @@ class App {
     const progressMap = {
       'generating': 10, 'agent-started': 15, 'agent-done': 25,
       'generation-complete': 30, 'judging': 40, 'judging-complete': 55,
-      'fixing': 60, 'fixing-complete': 70, 'editing': 75, 'editing-complete': 85,
-      'digests': 86, 'digest-building': 88, 'digests-complete': 90,
-      'go-nogo-start': 90, 'go-nogo-polling': 92, 'go-nogo-chapter': 95,
+      'fixing': 60, 'fixing-complete': 70, 'editing': 75, 'editing-complete': 82,
+      'cross-model-scoring': 83, 'cross-model-complete': 87, 'cross-model-error': 87,
+      'digests': 88, 'digest-building': 90, 'digests-complete': 92,
+      'go-nogo-start': 92, 'go-nogo-polling': 95, 'go-nogo-chapter': 97,
       'go-nogo-complete': 100
     };
     const fillEls = [document.getElementById('ma-pipeline-fill'), document.getElementById('iterative-pipeline-fill')];
@@ -1198,11 +1203,56 @@ class App {
       'fixing-complete': 'Fix plan ready.',
       'editing': 'Editor applying fixes...',
       'editing-complete': 'Fixes applied.',
+      'cross-model-scoring': 'GPT-5.2 cross-model scoring...',
+      'cross-model-complete': 'Cross-model scoring complete.',
+      'cross-model-error': 'Cross-model scoring unavailable.',
       'digests': 'Building chapter digests...',
       'go-nogo-start': 'GO/NO-GO sequence initiated...',
       'go-nogo-polling': 'Polling chapter agents...',
       'go-nogo-complete': data.overallStatus === 'GO' ? 'ALL SYSTEMS GO' : 'CONFLICT DETECTED'
     };
+
+    // Cross-model score display
+    if (phase === 'cross-model-complete' && data.gptScore) {
+      const crossModelPanel = document.getElementById('ma-cross-model-panel') || document.getElementById('iterative-cross-model-panel');
+      if (crossModelPanel) {
+        const gpt = data.gptScore;
+        const verdict = data.combinedVerdict;
+        const verdictColor = verdict?.verdict === 'PASS' ? '#059669' : verdict?.verdict === 'REVISE' ? '#D97706' : verdict?.verdict === 'REVIEW' ? '#2563EB' : '#DC2626';
+        crossModelPanel.innerHTML = `
+          <div style="padding:10px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:8px;">
+            <div style="font-weight:600;margin-bottom:6px;">Cross-Model Scoring (GPT-5.2)</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:0.8rem;">
+              <span>Claude Score: ${verdict?.claudeTotal || 'N/A'}/100</span>
+              <span>GPT Score: ${gpt.total || 'N/A'}/90</span>
+            </div>
+            ${gpt.scores ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+              Auth: ${gpt.scores.authenticity} | Craft: ${gpt.scores.craft} | Emotion: ${gpt.scores.emotion} | Sensory: ${gpt.scores.sensory} | Momentum: ${gpt.scores.momentum} | AI Det: ${gpt.scores.ai_detection}
+            </div>` : ''}
+            <div style="margin-top:6px;font-weight:600;color:${verdictColor};">
+              Combined Verdict: ${verdict?.verdict || 'N/A'}
+            </div>
+            ${(gpt.ai_patterns_found || []).length > 0 ? `
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+                AI Patterns: ${gpt.ai_patterns_found.join(', ')}
+              </div>` : ''}
+            ${gpt.weakest_line ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;font-style:italic;">
+              Weakest: "${gpt.weakest_line}"
+            </div>` : ''}
+          </div>`;
+        crossModelPanel.style.display = 'block';
+      }
+    }
+    if (phase === 'cross-model-error') {
+      const crossModelPanel = document.getElementById('ma-cross-model-panel') || document.getElementById('iterative-cross-model-panel');
+      if (crossModelPanel) {
+        crossModelPanel.innerHTML = `
+          <div style="padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:8px;font-size:0.8rem;color:var(--text-muted);">
+            GPT-5.2: Not configured (<a href="#" onclick="app.openSetupBookModal('settings');return false;" style="color:var(--accent-primary);">Settings \u2192 Add OpenAI key</a>)
+          </div>`;
+        crossModelPanel.style.display = 'block';
+      }
+    }
     const phaseEls = [document.getElementById('ma-phase-label'), document.getElementById('iterative-phase-label')];
     for (const phaseEl of phaseEls) {
       if (phaseEl && phaseLabels[phase]) phaseEl.textContent = phaseLabels[phase];
@@ -3358,16 +3408,31 @@ class App {
 
   _initApiKeyPinLock() {
     const hasPin = !!localStorage.getItem('genesis-api-pin');
+
+    // Claude API key PIN lock
     const lockedDiv = document.getElementById('api-key-locked');
     const unlockedDiv = document.getElementById('api-key-unlocked');
-    if (!lockedDiv || !unlockedDiv) return;
+    if (lockedDiv && unlockedDiv) {
+      if (hasPin) {
+        lockedDiv.style.display = 'block';
+        unlockedDiv.style.display = 'none';
+      } else {
+        lockedDiv.style.display = 'none';
+        unlockedDiv.style.display = 'block';
+      }
+    }
 
-    if (hasPin) {
-      lockedDiv.style.display = 'block';
-      unlockedDiv.style.display = 'none';
-    } else {
-      lockedDiv.style.display = 'none';
-      unlockedDiv.style.display = 'block';
+    // OpenAI API key PIN lock (same PIN protects both keys)
+    const openaiLockedDiv = document.getElementById('openai-key-locked');
+    const openaiUnlockedDiv = document.getElementById('openai-key-unlocked');
+    if (openaiLockedDiv && openaiUnlockedDiv) {
+      if (hasPin) {
+        openaiLockedDiv.style.display = 'block';
+        openaiUnlockedDiv.style.display = 'none';
+      } else {
+        openaiLockedDiv.style.display = 'none';
+        openaiUnlockedDiv.style.display = 'block';
+      }
     }
   }
 
@@ -3418,6 +3483,41 @@ class App {
       if (token !== (this._hfToken || '')) {
         this._hfToken = token;
         await this.localStorage.setSetting('hfToken', token);
+      }
+    }
+    // Auto-save OpenAI settings
+    if (this.openaiClient) {
+      const openaiKeyEl = document.getElementById('setting-openai-key');
+      if (openaiKeyEl) {
+        const key = (openaiKeyEl.value || '').trim();
+        if (key !== (this.openaiClient.apiKey || '')) {
+          await this.openaiClient.setApiKey(key);
+        }
+      }
+      const openaiModelEl = document.getElementById('setting-openai-model');
+      if (openaiModelEl) {
+        const model = openaiModelEl.value || 'gpt-5.2';
+        if (model !== (this.openaiClient.model || '')) {
+          await this.openaiClient.setModel(model);
+        }
+      }
+      const openaiImageModelEl = document.getElementById('setting-openai-image-model');
+      if (openaiImageModelEl) {
+        const imgModel = openaiImageModelEl.value || 'gpt-image-1.5';
+        if (imgModel !== (this.openaiClient.imageModel || '')) {
+          await this.openaiClient.setImageModel(imgModel);
+        }
+      }
+      const crossModelEl = document.getElementById('setting-cross-model-scoring');
+      if (crossModelEl) {
+        await this.openaiClient.setCrossModelScoring(crossModelEl.checked);
+      }
+      const imageTierEl = document.getElementById('setting-openai-image-tier');
+      if (imageTierEl) {
+        const tier = imageTierEl.value || 'backup';
+        if (tier !== (this.openaiClient.imageTier || '')) {
+          await this.openaiClient.setImageTier(tier);
+        }
       }
     }
   }
@@ -3938,6 +4038,68 @@ class App {
           </select>
         </div>
         <button class="btn btn-sm" id="save-api-settings" style="width:100%;">Save AI Settings</button>
+      </div>
+
+      <div class="analysis-section">
+        <h3>OpenAI API Key</h3>
+        <div class="form-group">
+          <label>OpenAI API Key</label>
+          <div id="openai-key-locked" style="display:none;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="password" class="form-input" id="openai-key-pin-input" placeholder="Enter PIN to unlock" style="flex:1;">
+              <button class="btn btn-sm" id="openai-key-unlock-btn">Unlock</button>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">API key is PIN-protected.</p>
+          </div>
+          <div id="openai-key-unlocked">
+            <input type="password" class="form-input" id="setting-openai-key" value="${this._esc(this.openaiClient?.apiKey || '')}" placeholder="sk-...">
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+              Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--accent-primary);">platform.openai.com</a>. Stored locally on this device only.
+            </p>
+            <div id="openai-key-status" style="font-size:0.8rem;margin-top:4px;${this.openaiClient?.isConfigured() ? 'color:#059669;' : 'color:var(--text-muted);'}">
+              ${this.openaiClient?.isConfigured() ? '&#10003; Connected' : 'Status: Not configured'}
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+              Used for: Cross-model scoring, HD images<br>
+              Est. cost: ~$0.05-$0.09/chapter scoring, ~$0.01-$0.20/image
+            </p>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Text/Scoring Model</label>
+          <select class="form-input" id="setting-openai-model">
+            <option value="gpt-5.2" ${(this.openaiClient?.model || 'gpt-5.2') === 'gpt-5.2' ? 'selected' : ''}>GPT-5.2 (recommended)</option>
+            <option value="gpt-4.1" ${this.openaiClient?.model === 'gpt-4.1' ? 'selected' : ''}>GPT-4.1</option>
+            <option value="gpt-4o" ${this.openaiClient?.model === 'gpt-4o' ? 'selected' : ''}>GPT-4o</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Image Model</label>
+          <select class="form-input" id="setting-openai-image-model">
+            <option value="gpt-image-1.5" ${(this.openaiClient?.imageModel || 'gpt-image-1.5') === 'gpt-image-1.5' ? 'selected' : ''}>GPT Image 1.5 (recommended)</option>
+            <option value="gpt-image-1" ${this.openaiClient?.imageModel === 'gpt-image-1' ? 'selected' : ''}>GPT Image 1</option>
+            <option value="dall-e-3" ${this.openaiClient?.imageModel === 'dall-e-3' ? 'selected' : ''}>DALL-E 3</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="setting-cross-model-scoring" ${this.openaiClient?.crossModelScoring !== false ? 'checked' : ''}>
+            Enable cross-model scoring (GPT judges Claude's output)
+          </label>
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+            Uses a different model's training weights to catch biases Claude can't see in its own output.
+          </p>
+        </div>
+        <div class="form-group">
+          <label>Image Generation Role</label>
+          <select class="form-input" id="setting-openai-image-tier">
+            <option value="backup" ${(this.openaiClient?.imageTier || 'backup') === 'backup' ? 'selected' : ''}>Backup (HuggingFace first, OpenAI fallback)</option>
+            <option value="primary" ${this.openaiClient?.imageTier === 'primary' ? 'selected' : ''}>Primary (OpenAI first)</option>
+            <option value="hero-only" ${this.openaiClient?.imageTier === 'hero-only' ? 'selected' : ''}>Hero/Print only (OpenAI for high-quality only)</option>
+          </select>
+        </div>
+        <button class="btn btn-sm" id="save-openai-settings" style="width:100%;">Save OpenAI Settings</button>
+        <button class="btn btn-sm" id="validate-openai-key" style="width:100%;margin-top:6px;border-color:var(--accent-primary);color:var(--accent-primary);">Validate Key</button>
       </div>
 
       <div class="analysis-section">
@@ -4581,6 +4743,18 @@ class App {
       });
     }
 
+    // OpenAI Direct (paid, for print/hero quality)
+    if (this.openaiClient?.isConfigured() && provs['openai-direct']?.enabled !== false) {
+      pools.push({
+        name: 'openai-direct',
+        enabled: true,
+        concurrent: 1,
+        model: this.openaiClient.imageModel || 'gpt-image-1.5',
+        generateFn: 'generateOpenAIDirect',
+        priority: 6,
+      });
+    }
+
     if (pools.length === 0) {
       console.error('[Illustration] No image providers available. Configure a HuggingFace token or enable Puter.js providers.');
     } else {
@@ -4766,6 +4940,16 @@ class App {
       this._showImageReview();
     } else if (imageReview) {
       imageReview.style.display = 'none';
+    }
+
+    // Populate the new illustration dashboard
+    await this._renderIllustrationDashboard();
+    this._updateIllustrationCostTracker();
+
+    // Show OpenAI provider option if configured
+    const openaiProvOption = document.getElementById('ill-prov-openai-option');
+    if (openaiProvOption) {
+      openaiProvOption.style.display = this.openaiClient?.isConfigured() ? '' : 'none';
     }
   }
 
@@ -5294,7 +5478,7 @@ class App {
       return;
     }
 
-    this._illustrationQueue = new IllustrationQueue(this.generator, pools);
+    this._illustrationQueue = new IllustrationQueue(this.generator, pools, this.openaiClient);
 
     // Show progress panel
     const progressPanel = document.getElementById('ill-progress-panel');
@@ -5722,6 +5906,241 @@ class App {
   _closeLightbox() {
     const overlay = document.getElementById('ill-lightbox-overlay');
     if (overlay) overlay.style.display = 'none';
+  }
+
+  // ========================================
+  //  Illustration Dashboard (Redesigned UI)
+  // ========================================
+
+  /**
+   * Render the illustration dashboard with chapter-by-scene layout.
+   */
+  async _renderIllustrationDashboard() {
+    const dashboardEl = document.getElementById('ill-chapter-scene-list');
+    const summaryEl = document.getElementById('ill-dashboard-summary');
+    if (!dashboardEl) return;
+
+    const project = this._currentProject;
+    if (!project) {
+      if (summaryEl) summaryEl.textContent = 'No project loaded.';
+      dashboardEl.innerHTML = '';
+      return;
+    }
+
+    const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    const realChapters = chapters.filter(ch => !ch.isTranslation && !ch.isFrontMatter && !ch.isBackMatter);
+
+    const totalImages = (this._illustrationData || []).length;
+    const approvedImages = (this._illustrationData || []).filter(ill => ill.approved).length;
+    if (summaryEl) {
+      summaryEl.innerHTML = `Book: "${project.title}" | ${realChapters.length} chapters | ${totalImages} images${approvedImages > 0 ? ` | ${approvedImages} approved` : ''}`;
+    }
+
+    // Show/hide OpenAI provider option based on config
+    const openaiOption = document.getElementById('ill-prov-openai-option');
+    if (openaiOption) {
+      openaiOption.style.display = this.openaiClient?.isConfigured() ? '' : 'none';
+    }
+
+    let html = '';
+    for (const ch of realChapters) {
+      const chapterIlls = (this._illustrationData || []).filter(ill => ill.chapterId === ch.id);
+      const hasScenes = chapterIlls.length > 0;
+      const chapterScenes = this._illustrationScenes?.[ch.id] || [];
+
+      html += `<div class="ill-dashboard-chapter" data-chapter-id="${ch.id}" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-weight:600;font-size:0.9rem;">Chapter ${ch.chapterNumber}: "${ch.title || 'Untitled'}"</div>
+          <div style="display:flex;gap:4px;">`;
+
+      if (!hasScenes && chapterScenes.length === 0) {
+        html += `<button class="btn btn-sm ill-extract-btn" data-ch-id="${ch.id}">Extract Scenes</button>`;
+      }
+      html += `</div></div>`;
+
+      if (chapterScenes.length === 0 && !hasScenes) {
+        html += `<div style="font-size:0.8rem;color:var(--text-muted);padding:4px 0;">No scenes extracted yet.</div>`;
+      }
+
+      // Show extracted scenes
+      for (let si = 0; si < chapterScenes.length; si++) {
+        const scene = chapterScenes[si];
+        const sceneIlls = chapterIlls.filter(ill => ill.sceneIndex === si);
+
+        html += `<div class="ill-scene-row" style="margin:8px 0;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);">
+          <div style="font-size:0.8rem;font-weight:500;margin-bottom:4px;">Scene ${si + 1}: ${this._escapeHtml((scene.action || scene.sourceText || '').slice(0, 80))}...</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">`;
+
+        // Show existing variants
+        for (const ill of sceneIlls) {
+          const variants = this._illustrationVariants?.[ill.id] || [];
+          for (let vi = 0; vi < variants.length; vi++) {
+            const variant = variants[vi];
+            const tier = variant.tier || 'preview';
+            const isSelected = ill.selectedVariant === vi;
+            html += `<div class="ill-thumb ${isSelected ? 'selected' : ''}" data-ill-id="${ill.id}" data-variant="${vi}" style="width:80px;text-align:center;cursor:pointer;border:2px solid ${isSelected ? 'var(--accent-primary)' : 'transparent'};border-radius:4px;padding:2px;">
+              <img src="${variant.imageData}" alt="v${vi + 1}" loading="lazy" style="width:100%;border-radius:2px;">
+              <div style="font-size:0.6rem;color:var(--text-muted);">${variant.providerName || variant.provider || 'Unknown'}</div>
+              <span class="quality-badge" style="display:inline-block;padding:1px 4px;border-radius:2px;font-size:0.55rem;color:#fff;background:${tier === 'print' ? '#059669' : tier === 'standard' ? '#2563EB' : '#6B7280'};">${tier === 'print' ? 'Print' : tier === 'standard' ? 'Std' : 'Preview'} ${variant.width || '?'}px</span>
+            </div>`;
+          }
+        }
+
+        // Add button
+        html += `<div class="ill-thumb-add" data-ch-id="${ch.id}" data-scene-index="${si}" style="width:80px;height:80px;display:flex;align-items:center;justify-content:center;border:2px dashed var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:1.5rem;" title="Generate new variant">+</div>`;
+
+        html += `</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">
+            <button class="btn btn-sm ill-gen-preview-btn" data-ch-id="${ch.id}" data-scene-index="${si}">Generate Preview</button>`;
+
+        if (sceneIlls.length > 0 && this.openaiClient?.isConfigured()) {
+          html += `<button class="btn btn-sm ill-upgrade-print-btn" data-ch-id="${ch.id}" data-scene-index="${si}">&#11014; Upgrade to Print</button>`;
+        }
+
+        html += `<button class="btn btn-sm ill-edit-prompt-btn" data-ch-id="${ch.id}" data-scene-index="${si}">Edit Prompt</button>
+          </div>
+        </div>`;
+      }
+
+      // Show already-generated illustrations without scene data
+      for (const ill of chapterIlls.filter(i => i.sceneIndex === undefined || i.sceneIndex === null)) {
+        const variants = this._illustrationVariants?.[ill.id] || [];
+        if (variants.length === 0) continue;
+
+        html += `<div class="ill-scene-row" style="margin:8px 0;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);">
+          <div style="font-size:0.8rem;font-weight:500;margin-bottom:4px;">Illustration ${ill.illustrationIndex + 1}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">`;
+
+        for (let vi = 0; vi < variants.length; vi++) {
+          const variant = variants[vi];
+          html += `<div class="ill-thumb" data-ill-id="${ill.id}" data-variant="${vi}" style="width:80px;text-align:center;cursor:pointer;border:2px solid transparent;border-radius:4px;padding:2px;">
+            <img src="${variant.imageData}" alt="v${vi + 1}" loading="lazy" style="width:100%;border-radius:2px;">
+            <div style="font-size:0.6rem;color:var(--text-muted);">${variant.providerName || variant.provider || ''}</div>
+          </div>`;
+        }
+
+        html += `</div></div>`;
+      }
+
+      html += `</div>`;
+    }
+
+    dashboardEl.innerHTML = html;
+
+    // Update the export panel visibility
+    this._updateIllustrationExportPanel();
+  }
+
+  /**
+   * Update the illustration workflow step indicator.
+   */
+  _updateIllustrationWorkflowStep(step) {
+    const steps = document.querySelectorAll('#ill-workflow-steps .ill-step');
+    steps.forEach(s => {
+      const stepNum = parseInt(s.dataset.step);
+      s.style.opacity = stepNum <= step ? '1' : '0.4';
+      s.classList.toggle('active', stepNum === step);
+    });
+  }
+
+  /**
+   * Update the cost tracker display.
+   */
+  _updateIllustrationCostTracker() {
+    let totalCost = 0;
+    let previewCount = 0;
+    let standardCount = 0;
+    let printCount = 0;
+    let hfCalls = 0;
+    let openaiCalls = 0;
+
+    for (const ill of (this._illustrationData || [])) {
+      const variants = this._illustrationVariants?.[ill.id] || [];
+      for (const v of variants) {
+        const cost = v.cost || 0;
+        totalCost += cost;
+        if (v.tier === 'print') printCount++;
+        else if (v.tier === 'standard') standardCount++;
+        else previewCount++;
+        if ((v.provider || '').includes('hugging') || (v.provider || '').includes('hf')) hfCalls++;
+        if ((v.provider || '').includes('openai')) openaiCalls++;
+      }
+    }
+
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setText('ill-cost-total', '$' + totalCost.toFixed(2));
+    setText('ill-cost-previews', previewCount);
+    setText('ill-cost-standard', standardCount);
+    setText('ill-cost-print', printCount);
+    setText('ill-cost-hf', hfCalls);
+    setText('ill-cost-openai', openaiCalls);
+  }
+
+  /**
+   * Update the export panel visibility and summary.
+   */
+  _updateIllustrationExportPanel() {
+    const exportPanel = document.getElementById('ill-export-panel');
+    const exportSummary = document.getElementById('ill-export-summary');
+    const data = this._illustrationData || [];
+    const withImages = data.filter(ill => (this._illustrationVariants?.[ill.id] || []).length > 0);
+
+    if (withImages.length > 0) {
+      if (exportPanel) exportPanel.style.display = '';
+      const printCount = withImages.filter(ill => {
+        const v = this._illustrationVariants?.[ill.id]?.[0];
+        return v?.tier === 'print';
+      }).length;
+      if (exportSummary) {
+        exportSummary.textContent = `${withImages.length} illustrations. ${printCount} at print quality, ${withImages.length - printCount} at standard/preview.`;
+      }
+    } else {
+      if (exportPanel) exportPanel.style.display = 'none';
+    }
+  }
+
+  /**
+   * Show the upgrade-to-print panel for a specific illustration.
+   */
+  _showUpgradeToPrintPanel(chapterId, sceneIndex) {
+    const panel = document.getElementById('ill-upgrade-panel');
+    const content = document.getElementById('ill-upgrade-content');
+    if (!panel || !content) return;
+
+    const scene = this._illustrationScenes?.[chapterId]?.[sceneIndex];
+    const chapterIlls = (this._illustrationData || []).filter(ill => ill.chapterId === chapterId && ill.sceneIndex === sceneIndex);
+    const selectedIll = chapterIlls[0];
+
+    if (!selectedIll) {
+      content.innerHTML = '<p style="color:var(--text-muted);">Generate a preview first before upgrading.</p>';
+      panel.style.display = '';
+      return;
+    }
+
+    const currentVariant = this._illustrationVariants?.[selectedIll.id]?.[0];
+    const currentRes = currentVariant ? `${currentVariant.width || 512}\u00d7${currentVariant.height || 512}` : 'Unknown';
+    const currentTier = currentVariant?.tier || 'preview';
+
+    content.innerHTML = `
+      <div style="font-size:0.85rem;margin-bottom:8px;">
+        <div><strong>Scene:</strong> ${this._escapeHtml((scene?.action || 'Scene ' + (sceneIndex + 1)).slice(0, 100))}</div>
+        <div style="margin-top:4px;">Current: ${currentRes} (${currentTier}, ${currentVariant?.provider || 'Unknown'})</div>
+        <div>Target: 1800\u00d72700 (6\u00d79" at 300 DPI)</div>
+      </div>
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">
+        Process:<br>
+        1. Regenerate at 1024\u00d71536 via OpenAI GPT Image 1.5 (High quality)<br>
+        2. Upscale to 1800\u00d72700 for print
+      </div>
+      <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;">
+        Estimated cost: ~$0.20
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-sm" id="btn-ill-upgrade-cancel">Cancel</button>
+        <button class="btn btn-sm btn-primary" id="btn-ill-upgrade-confirm" data-ill-id="${selectedIll.id}" data-ch-id="${chapterId}" data-scene-index="${sceneIndex}">Upgrade &mdash; $0.20</button>
+      </div>`;
+
+    panel.style.display = '';
   }
 
   _showIllustrationStatus(msg) {
@@ -8700,6 +9119,150 @@ class App {
       if (e.target.id === 'ill-lightbox-overlay') this._closeLightbox();
     });
 
+    // --- New Illustration Dashboard Events ---
+
+    // Style Settings toggle
+    document.getElementById('btn-ill-style-settings')?.addEventListener('click', () => {
+      const panel = document.getElementById('ill-style-settings-panel');
+      if (panel) panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    });
+
+    // Auto-Extract Scenes
+    document.getElementById('btn-ill-auto-extract')?.addEventListener('click', async () => {
+      if (!this.generator.hasApiKey()) { alert('Set your Anthropic API key first.'); return; }
+      this._showIllustrationStatus('Extracting scenes from all chapters...');
+      this._updateIllustrationWorkflowStep(1);
+      try {
+        const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+        this._illustrationScenes = this._illustrationScenes || {};
+        for (const ch of chapters.filter(c => !c.isTranslation)) {
+          if (!ch.content) continue;
+          const prose = ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (prose.length < 200) continue;
+          this._showIllustrationStatus(`Extracting scenes from Chapter ${ch.chapterNumber}...`);
+          const config = this._currentProject?.illustrationConfig || this._defaultIllustrationConfig();
+          const scenes = await this.generator.extractScenesFromProse(prose, 2, config);
+          this._illustrationScenes[ch.id] = scenes;
+        }
+        this._hideIllustrationStatus();
+        await this._renderIllustrationDashboard();
+        this._updateIllustrationWorkflowStep(2);
+      } catch (err) {
+        this._showIllustrationError('Scene extraction failed: ' + err.message);
+      }
+    });
+
+    // Generate All Previews
+    document.getElementById('btn-ill-generate-all-previews')?.addEventListener('click', () => {
+      this._startIllustrationGeneration();
+    });
+
+    // Delegated events on the dashboard
+    document.getElementById('ill-chapter-scene-list')?.addEventListener('click', async (e) => {
+      // Extract scenes for a single chapter
+      if (e.target.classList.contains('ill-extract-btn')) {
+        const chId = e.target.dataset.chId;
+        if (!chId || !this.generator.hasApiKey()) return;
+        this._showIllustrationStatus('Extracting scenes...');
+        try {
+          const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+          const ch = chapters.find(c => c.id === chId);
+          if (!ch?.content) throw new Error('No chapter content');
+          const prose = ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          const config = this._currentProject?.illustrationConfig || this._defaultIllustrationConfig();
+          const scenes = await this.generator.extractScenesFromProse(prose, 2, config);
+          this._illustrationScenes = this._illustrationScenes || {};
+          this._illustrationScenes[chId] = scenes;
+          this._hideIllustrationStatus();
+          await this._renderIllustrationDashboard();
+        } catch (err) {
+          this._showIllustrationError('Failed: ' + err.message);
+        }
+        return;
+      }
+
+      // Upgrade to print
+      if (e.target.classList.contains('ill-upgrade-print-btn')) {
+        const chId = e.target.dataset.chId;
+        const si = parseInt(e.target.dataset.sceneIndex);
+        this._showUpgradeToPrintPanel(chId, si);
+        return;
+      }
+
+      // Thumbnail click for variant selection
+      const thumb = e.target.closest('.ill-thumb');
+      if (thumb && thumb.dataset.illId) {
+        const illId = thumb.dataset.illId;
+        const vi = parseInt(thumb.dataset.variant);
+        // Deselect siblings
+        thumb.parentElement.querySelectorAll('.ill-thumb').forEach(t => {
+          t.style.borderColor = 'transparent';
+          t.classList.remove('selected');
+        });
+        thumb.style.borderColor = 'var(--accent-primary)';
+        thumb.classList.add('selected');
+        // Update selected variant
+        const ill = (this._illustrationData || []).find(i => i.id === illId);
+        if (ill) ill.selectedVariant = vi;
+        return;
+      }
+    });
+
+    // Upgrade confirm/cancel
+    document.addEventListener('click', async (e) => {
+      if (e.target.id === 'btn-ill-upgrade-cancel') {
+        const panel = document.getElementById('ill-upgrade-panel');
+        if (panel) panel.style.display = 'none';
+      }
+      if (e.target.id === 'btn-ill-upgrade-confirm') {
+        if (!this.openaiClient?.isConfigured()) {
+          alert('OpenAI key not configured. Go to Settings to add your key.');
+          return;
+        }
+        const illId = e.target.dataset.illId;
+        const ill = (this._illustrationData || []).find(i => i.id === illId);
+        if (!ill) return;
+        this._showIllustrationStatus('Upgrading to print quality via OpenAI...');
+        try {
+          const { upscaleForPrint } = await import('./openai.js');
+          const config = this.openaiClient.getImageConfig('print');
+          const blob = await this.openaiClient.generateImage(
+            ill.prompt || 'detailed illustration',
+            config.size,
+            config.quality
+          );
+          // Upscale to print dimensions
+          const printBlob = await upscaleForPrint(blob);
+          // Convert to data URL
+          const reader = new FileReader();
+          const dataUrl = await new Promise(resolve => {
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(printBlob);
+          });
+          // Add as new variant
+          this._illustrationVariants = this._illustrationVariants || {};
+          if (!this._illustrationVariants[illId]) this._illustrationVariants[illId] = [];
+          this._illustrationVariants[illId].push({
+            imageData: dataUrl,
+            provider: 'openai',
+            providerName: 'OpenAI GPT Image 1.5',
+            tier: 'print',
+            width: 1800,
+            height: 2700,
+            cost: 0.20
+          });
+          this._hideIllustrationStatus();
+          const panel = document.getElementById('ill-upgrade-panel');
+          if (panel) panel.style.display = 'none';
+          await this._renderIllustrationDashboard();
+          this._updateIllustrationCostTracker();
+          this._updateIllustrationWorkflowStep(3);
+        } catch (err) {
+          this._showIllustrationError('Print upgrade failed: ' + err.message);
+        }
+      }
+    });
+
     // Reference search modal
     document.getElementById('ill-ref-search-close')?.addEventListener('click', () => {
       document.getElementById('ill-ref-search-overlay').style.display = 'none';
@@ -9010,6 +9573,63 @@ class App {
         this._hfToken = token;
         await this.localStorage.setSetting('hfToken', token);
         alert('Cover settings saved.');
+      }
+      // --- OpenAI Settings Events ---
+      if (e.target.id === 'openai-key-unlock-btn') {
+        const pin = document.getElementById('openai-key-pin-input')?.value || '';
+        const stored = localStorage.getItem('genesis-api-pin');
+        if (pin === stored) {
+          document.getElementById('openai-key-locked').style.display = 'none';
+          document.getElementById('openai-key-unlocked').style.display = 'block';
+          document.getElementById('openai-key-pin-input').value = '';
+        } else {
+          alert('Incorrect PIN.');
+        }
+      }
+      if (e.target.id === 'save-openai-settings') {
+        const key = (document.getElementById('setting-openai-key')?.value || '').trim();
+        const model = document.getElementById('setting-openai-model')?.value || 'gpt-5.2';
+        const imageModel = document.getElementById('setting-openai-image-model')?.value || 'gpt-image-1.5';
+        const crossModel = document.getElementById('setting-cross-model-scoring')?.checked ?? true;
+        const imageTier = document.getElementById('setting-openai-image-tier')?.value || 'backup';
+        if (this.openaiClient) {
+          await this.openaiClient.setApiKey(key);
+          await this.openaiClient.setModel(model);
+          await this.openaiClient.setImageModel(imageModel);
+          await this.openaiClient.setCrossModelScoring(crossModel);
+          await this.openaiClient.setImageTier(imageTier);
+        }
+        const statusEl = document.getElementById('openai-key-status');
+        if (key) {
+          if (statusEl) { statusEl.textContent = '\u2713 Key saved'; statusEl.style.color = '#059669'; }
+          alert('OpenAI settings saved.');
+        } else {
+          if (statusEl) { statusEl.textContent = 'Status: Not configured'; statusEl.style.color = 'var(--text-muted)'; }
+          alert('OpenAI model settings saved. No API key entered.');
+        }
+      }
+      if (e.target.id === 'validate-openai-key') {
+        const key = (document.getElementById('setting-openai-key')?.value || '').trim();
+        const statusEl = document.getElementById('openai-key-status');
+        if (!key) {
+          alert('Enter an OpenAI API key first.');
+          return;
+        }
+        if (statusEl) { statusEl.textContent = 'Validating...'; statusEl.style.color = 'var(--text-muted)'; }
+        if (this.openaiClient) {
+          const result = await this.openaiClient.validateKey(key);
+          if (result.valid) {
+            if (statusEl) { statusEl.innerHTML = '&#10003; Connected'; statusEl.style.color = '#059669'; }
+            await this.openaiClient.setApiKey(key);
+            alert('OpenAI key validated successfully.');
+          } else if (result.status === 'invalid') {
+            if (statusEl) { statusEl.innerHTML = '&#10007; Invalid key'; statusEl.style.color = 'var(--danger)'; }
+            alert('Invalid OpenAI API key.');
+          } else {
+            if (statusEl) { statusEl.innerHTML = '&#9888; Connection error'; statusEl.style.color = '#D97706'; }
+            alert('Could not connect to OpenAI. Check your network.');
+          }
+        }
       }
       // --- Book Structure events ---
       if (e.target.id === 'btn-save-book-structure') {
