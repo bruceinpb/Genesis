@@ -398,7 +398,12 @@ ${project.coverImage ? `<div class="cover-page">
     if (!html) return '';
     // Remove the first H1-H6 element from the content to avoid duplication
     // since export formats add their own chapter heading
-    return html.replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
+    let cleaned = html.replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
+    // Strip any strategy markers left by the micro-fix pipeline
+    cleaned = cleaned.replace(/---STRATEGY---[\s\S]*?(?=(<p>|<\/p>|\n\n|$))/g, '');
+    // Strip markdown-style headings that leaked into prose (e.g. "# Chapter Title")
+    cleaned = cleaned.replace(/<p>\s*#+\s+[^<]*<\/p>/g, '');
+    return cleaned;
   }
 
   _sanitizeContent(html) {

@@ -2607,7 +2607,8 @@ select.form-input {
 .accept-outline-textarea {
   width: 100%;
   flex: 1;
-  min-height: 150px;
+  min-height: 350px;
+  max-height: 60vh;
   font-family: var(--font-serif);
   font-size: 0.95rem;
   line-height: 1.7;
@@ -3933,22 +3934,26 @@ select.form-input {
 
 .btn-lock {
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   padding: 4px 8px;
   cursor: pointer;
-  font-size: 14px;
-  transition: background 0.2s;
-  color: var(--text-primary, #fff);
+  font-size: 16px;
+  transition: background 0.2s, opacity 0.2s, border-color 0.2s;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
+  opacity: 0.45;
 }
 
 .btn-lock:hover {
   background: rgba(255, 255, 255, 0.08);
+  opacity: 0.7;
 }
 
 .btn-lock.locked {
   background: rgba(255, 200, 50, 0.15);
   border-color: rgba(255, 200, 50, 0.4);
+  color: var(--text-primary, #fff);
+  opacity: 1;
 }
 
 .author-card-body {

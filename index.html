@@ -1351,14 +1351,15 @@
         <h3 id="accept-outline-ch-title" style="font-family:var(--font-serif);font-size:1.05rem;color:var(--accent-primary);margin-bottom:10px;">Chapter Outline</h3>
         <!-- Single chapter outline (original) -->
         <div id="accept-outline-single">
-          <textarea class="accept-outline-textarea" id="accept-outline-text" rows="10"
+          <textarea class="accept-outline-textarea" id="accept-outline-text" rows="20"
             placeholder="No outline available for this chapter."></textarea>
         </div>
         <!-- Multi-chapter outlines container -->
         <div id="accept-outline-multi" style="display:none;max-height:45vh;overflow-y:auto;"></div>
         <div class="accept-outline-btn-row">
-          <button class="btn btn-primary" id="btn-accept-outline-accept">Accept Outline</button>
+          <button class="btn btn-primary" id="btn-accept-outline-accept">Accept</button>
           <button class="btn" id="btn-accept-outline-rethink" style="background:#dc3545;color:#fff;border-color:#dc3545;">Rethink</button>
+          <button class="btn" id="btn-accept-outline-cancel">Cancel</button>
         </div>
         <div class="accept-outline-rethink-area" id="accept-outline-rethink-area" style="display:none;">
           <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;">
@@ -1378,10 +1379,7 @@
         </div>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn" id="btn-accept-outline-cancel">Cancel</button>
-      <button class="btn btn-primary" id="btn-accept-outline-continue">Continue</button>
-    </div>
+    <!-- Footer removed: Accept/Rethink/Cancel buttons are now in the outline panel -->
   </div>
 </div>
 
