@@ -965,6 +965,13 @@
                 </div>
               </label>
               <label class="matter-option">
+                <input type="checkbox" id="bs-ill-prov-gpt-image-1" checked>
+                <div class="matter-info">
+                  <span class="matter-name">GPT Image 1 via Puter.js (1 parallel slot)</span>
+                  <span class="matter-desc">Free, no API key needed, high quality</span>
+                </div>
+              </label>
+              <label class="matter-option">
                 <input type="checkbox" id="bs-ill-prov-puter-sd3" checked>
                 <div class="matter-info">
                   <span class="matter-name">Puter.js SD3 (1 parallel slot)</span>
@@ -1061,6 +1068,11 @@
               <button class="btn btn-secondary" id="btn-ill-pause">Pause</button>
               <button class="btn btn-secondary" id="btn-ill-cancel">Cancel</button>
             </div>
+          </div>
+
+          <div id="illustration-errors" style="display:none;" class="analysis-section">
+            <h3 style="color:var(--danger);">Generation Errors</h3>
+            <div id="illustration-errors-content"></div>
           </div>
 
           <button class="btn btn-primary" id="btn-generate-illustrations" style="width:100%;margin-top:12px;">Generate Illustrations</button>

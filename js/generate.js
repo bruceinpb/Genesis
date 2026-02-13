@@ -2523,32 +2523,147 @@ Output valid JSON only:
   }
 
   /**
-   * Convert an Image element to a base64 data URL via canvas.
+   * Convert an Image element to a base64 data URL via canvas with a timeout.
+   * Handles broken images and tainted canvas scenarios.
    */
-  _imgElementToDataUrl(img) {
+  _imgElementToDataUrl(img, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
-      const convert = () => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Image conversion timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const tryConvert = () => {
         try {
+          if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+            clearTimeout(timer);
+            reject(new Error('Image has zero dimensions — broken or not loaded'));
+            return;
+          }
           const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth || img.width || 768;
-          canvas.height = img.naturalHeight || img.height || 1152;
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
+          ctx.drawImage(img, 0, 0);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          clearTimeout(timer);
+          resolve(dataUrl);
         } catch (err) {
-          // If canvas tainted (cross-origin), use img.src directly
-          if (img.src) resolve(img.src);
-          else reject(err);
+          clearTimeout(timer);
+          reject(err); // Catches SecurityError from tainted canvas
         }
       };
 
       if (img.complete && img.naturalWidth > 0) {
-        convert();
+        tryConvert();
+      } else if (img.complete && img.naturalWidth === 0) {
+        clearTimeout(timer);
+        reject(new Error('Image already complete but has zero width — broken'));
       } else {
-        img.onload = convert;
-        img.onerror = () => reject(new Error('Puter image element failed to load'));
+        img.onload = tryConvert;
+        img.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error('Image failed to load'));
+        };
       }
     });
+  }
+
+  /**
+   * Convert a Puter.js txt2img result to a safe data: URL.
+   * Puter returns either an HTMLImageElement, a Blob, or a base64 string.
+   * If it's an HTMLImageElement from a cross-origin CDN, we can't use
+   * canvas.toDataURL() — it will throw SecurityError.
+   *
+   * Solution: Use puter.net.fetch() which is a CORS-free proxy, fetch
+   * the image URL as a blob, then convert to data: URL via FileReader.
+   */
+  async _puterResultToDataUrl(result) {
+    // Case 1: Already a base64 data URL string
+    if (typeof result === 'string' && result.startsWith('data:')) {
+      return result;
+    }
+
+    // Case 2: Base64 string without data: prefix
+    if (typeof result === 'string' && !result.startsWith('http')) {
+      return `data:image/png;base64,${result}`;
+    }
+
+    // Case 3: Blob — convert directly
+    if (result instanceof Blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('FileReader failed'));
+        reader.readAsDataURL(result);
+      });
+    }
+
+    // Case 4: HTMLImageElement from CDN — CANNOT use canvas (tainted)
+    // Use Puter's CORS-free proxy to re-fetch as blob
+    if (result instanceof HTMLImageElement || (result && result.src)) {
+      const imageUrl = result.src || result;
+
+      try {
+        // puter.net.fetch() bypasses CORS restrictions
+        const response = await puter.net.fetch(imageUrl);
+        const blob = await response.blob();
+
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('FileReader failed on re-fetched blob'));
+          reader.readAsDataURL(blob);
+        });
+      } catch (proxyErr) {
+        console.error('[Illustration] puter.net.fetch proxy failed:', proxyErr);
+
+        // Last resort: try canvas anyway (will fail if cross-origin, but
+        // might work if same-origin in some environments)
+        return this._imgElementToDataUrl(result, 10000);
+      }
+    }
+
+    // Case 5: Object with .base64 property (some Puter API responses)
+    if (result && result.base64) {
+      return `data:image/png;base64,${result.base64}`;
+    }
+
+    // Case 6: Object with .url property
+    if (result && result.url) {
+      return this._puterResultToDataUrl(result.url); // Recurse with the URL string
+    }
+
+    throw new Error(`Unknown Puter result type: ${typeof result}`);
+  }
+
+  /**
+   * Map requested dimensions to the nearest valid DALL-E 3 size string.
+   * DALL-E 3 ONLY accepts: "1024x1024", "1024x1792", "1792x1024"
+   */
+  static _getDalle3Size(requestedWidth, requestedHeight) {
+    const ratio = requestedWidth / requestedHeight;
+    if (ratio > 1.3) {
+      return '1792x1024'; // Landscape
+    } else if (ratio < 0.77) {
+      return '1024x1792'; // Portrait
+    } else {
+      return '1024x1024'; // Square-ish
+    }
+  }
+
+  /**
+   * Map requested dimensions to the nearest valid GPT Image 1 size string.
+   * GPT Image 1 supports: "1024x1024", "1024x1536", "1536x1024"
+   */
+  static _getGptImageSize(requestedWidth, requestedHeight) {
+    const ratio = requestedWidth / requestedHeight;
+    if (ratio > 1.3) {
+      return '1536x1024'; // Landscape
+    } else if (ratio < 0.77) {
+      return '1024x1536'; // Portrait
+    } else {
+      return '1024x1024'; // Square
+    }
   }
 
   /**
@@ -3220,21 +3335,43 @@ Generate an image prompt for this scene.`;
     for (let i = 0; i < illustrations.length; i += PROMPT_WORKERS) {
       const batch = illustrations.slice(i, i + PROMPT_WORKERS);
 
-      const batchResults = await Promise.all(
+      const settledResults = await Promise.allSettled(
         batch.map(ill => this.generateIllustrationPrompt(ill.scene, config))
       );
 
-      results.push(...batchResults.map((result, idx) => ({
-        ...batch[idx],
-        ...result,
-        state: 'prompt_ready',
-      })));
+      for (let idx = 0; idx < settledResults.length; idx++) {
+        const result = settledResults[idx];
+        if (result.status === 'fulfilled') {
+          results.push({
+            ...batch[idx],
+            ...result.value,
+            state: 'prompt_ready',
+          });
+        } else {
+          console.error(`[Illustration] Prompt generation failed for scene ${i + idx}:`, result.reason);
+          results.push({
+            ...batch[idx],
+            prompt: null,
+            negativePrompt: '',
+            altText: '',
+            state: 'prompt_failed',
+            error: result.reason?.message || 'Prompt generation failed',
+          });
+        }
+      }
 
       if (onProgress) onProgress(results.length, illustrations.length);
 
       if (i + PROMPT_WORKERS < illustrations.length) {
         await new Promise(r => setTimeout(r, 1000));
       }
+    }
+
+    // Filter out failed prompts and warn
+    const valid = results.filter(r => r.prompt !== null);
+    const failedCount = results.length - valid.length;
+    if (failedCount > 0) {
+      console.warn(`[Illustration] ${failedCount} prompt(s) failed — proceeding with ${valid.length} valid prompts`);
     }
 
     return results;
@@ -3414,23 +3551,61 @@ Generate an image prompt for this scene.`;
       throw new Error('Puter.js not loaded');
     }
 
-    const opts = {
-      model: model,
-      width: dimensions.w,
-      height: dimensions.h,
-    };
+    const opts = { model: model };
 
-    if (model !== 'dall-e-3') {
+    if (model === 'dall-e-3') {
+      // DALL-E 3 requires a size string, not width/height integers
+      opts.size = ProseGenerator._getDalle3Size(dimensions.w, dimensions.h);
+    } else if (model === 'gpt-image-1') {
+      // GPT Image 1 also requires a size string
+      opts.size = ProseGenerator._getGptImageSize(dimensions.w, dimensions.h);
+    } else {
+      opts.width = dimensions.w;
+      opts.height = dimensions.h;
       opts.steps = 25;
       opts.negative_prompt = 'text, words, letters, typography, watermark, blurry, low quality';
     }
 
-    const img = await puter.ai.txt2img(prompt, opts);
-    const imageData = await this._imgElementToDataUrl(img);
+    console.log(`[Illustration] Generating via ${model} (Puter), opts:`, JSON.stringify(opts));
+
+    const result = await puter.ai.txt2img(prompt, opts);
+    // Use the safe CORS-free conversion instead of canvas-based conversion
+    const imageData = await this._puterResultToDataUrl(result);
 
     return {
       imageData: imageData,
       model: model,
+      provider: 'puter',
+      dimensions: dimensions,
+    };
+  }
+
+  /**
+   * Generate illustration using GPT Image 1 via Puter.js.
+   * This is a FREE provider — no API key needed.
+   * Supports sizes: "1024x1024", "1024x1536", "1536x1024"
+   */
+  async generateIllustrationGptImage1(prompt, dimensions) {
+    await loadPuterSDK();
+    if (typeof puter === 'undefined' || !puter.ai) {
+      throw new Error('Puter.js not loaded');
+    }
+
+    const size = ProseGenerator._getGptImageSize(dimensions.w, dimensions.h);
+
+    console.log(`[Illustration] Generating via GPT Image 1 (Puter), size: ${size}`);
+
+    const result = await puter.ai.txt2img(prompt, {
+      model: 'gpt-image-1',
+      size: size,
+    });
+
+    // Use the safe conversion (handles cross-origin, blobs, etc.)
+    const imageData = await this._puterResultToDataUrl(result);
+
+    return {
+      imageData: imageData,
+      model: 'gpt-image-1',
       provider: 'puter',
       dimensions: dimensions,
     };
@@ -4006,10 +4181,48 @@ class IllustrationQueue {
         totalFailed: 0,
       }));
 
+    this._illustrationErrors = [];
+    this._providerStats = {};
+    this.pools.forEach(pool => {
+      this._providerStats[pool.name] = { success: 0, failed: 0, retries: 0 };
+    });
+
     this.onProgress = null;
     this.onImageReady = null;
     this.onError = null;
     this.onWorkerUpdate = null;
+  }
+
+  _recordError(job, pool, error) {
+    const errorEntry = {
+      illustrationId: job.illustrationId || 'unknown',
+      provider: pool ? pool.name : 'unknown',
+      error: error.message || String(error),
+      timestamp: new Date().toISOString(),
+      retryCount: job.retryCount || 0,
+    };
+    this._illustrationErrors.push(errorEntry);
+    if (pool && this._providerStats[pool.name]) {
+      this._providerStats[pool.name].failed++;
+    }
+    console.error(`[Illustration] Error on ${errorEntry.provider}: ${errorEntry.error}`);
+  }
+
+  _recordSuccess(job, pool) {
+    if (pool && this._providerStats[pool.name]) {
+      this._providerStats[pool.name].success++;
+    }
+  }
+
+  getErrorSummary() {
+    return {
+      totalErrors: this._illustrationErrors.length,
+      errors: this._illustrationErrors,
+      providerStats: this._providerStats,
+      failedIllustrations: this._illustrationErrors
+        .filter(e => e.retryCount >= 2)
+        .map(e => `${e.illustrationId}: ${e.error} (${e.provider})`),
+    };
   }
 
   getAvailablePool() {
@@ -4103,6 +4316,7 @@ class IllustrationQueue {
             .then(result => {
               pool.active--;
               pool.totalGenerated++;
+              this._recordSuccess(job, pool);
               results.push({ ...result, illustrationId: job.illustrationId, variantIndex: job.variantIndex });
 
               if (this.onImageReady) {
@@ -4118,9 +4332,13 @@ class IllustrationQueue {
             .catch(err => {
               pool.active--;
               pool.totalFailed++;
+              this._recordError(job, pool, err);
 
               if (job.retryCount < job.maxRetries) {
                 job.retryCount++;
+                if (this._providerStats[pool.name]) {
+                  this._providerStats[pool.name].retries++;
+                }
                 job.preferredProvider = null;
                 pending.push(job);
               } else {
@@ -4159,6 +4377,10 @@ class IllustrationQueue {
       case 'generateHF':
         return await this.generator.generateIllustrationHF(
           job.prompt, job.negativePrompt, pool.model, dimensions
+        );
+      case 'generateGptImage1':
+        return await this.generator.generateIllustrationGptImage1(
+          job.prompt, dimensions
         );
       case 'generatePuterSD':
         return await this.generator.generateIllustrationPuter(
