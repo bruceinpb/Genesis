@@ -1014,6 +1014,19 @@
             </div>
           </div>
 
+          <!-- ═══ Select Chapters ═══ -->
+          <div class="analysis-section">
+            <h3>Select Chapters</h3>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">Choose which chapters to illustrate and how many images per chapter.</p>
+            <label class="matter-option" style="font-size:0.85rem;margin-bottom:4px;">
+              <input type="checkbox" id="bs-ill-select-all">
+              <div class="matter-info">
+                <span class="matter-name">Select All Chapters</span>
+              </div>
+            </label>
+            <div id="ill-chapter-list" style="display:flex;flex-direction:column;gap:2px;"></div>
+          </div>
+
           <!-- ═══ Chapter-by-Scene Illustration Dashboard ═══ -->
           <div class="analysis-section">
             <h3>Illustration Dashboard</h3>
@@ -1145,8 +1158,6 @@
           <input type="hidden" id="bs-ill-workers" value="5">
           <input type="hidden" id="bs-ill-wf-vellum" value="true">
           <input type="hidden" id="bs-ill-wf-docx" value="true">
-          <input type="hidden" id="bs-ill-select-all" value="">
-          <div id="ill-chapter-list" style="display:none;"></div>
 
         </div>
       </div>
