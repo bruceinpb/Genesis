@@ -108,6 +108,17 @@ class MultiAgentOrchestrator {
     this._pipelineLog = [];
   }
 
+  /**
+   * Add a notation entry to the pipeline log (e.g. chapter deletion events).
+   */
+  addLogEntry(phase, message) {
+    this._pipelineLog.push({
+      timestamp: new Date().toISOString(),
+      phase,
+      message
+    });
+  }
+
   /** @private Simple string hash for cache invalidation. */
   _hash(str) {
     let hash = 0;
