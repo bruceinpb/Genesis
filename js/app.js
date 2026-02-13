@@ -1880,6 +1880,23 @@ class App {
     prose = prose.replace(/---ROUGHNESS_LOG---[\s\S]*/g, '').trim();
     // Strip markdown headings from the prose body (they'll be replaced by proper HTML heading)
     prose = prose.replace(/^#+\s+.*$/gm, '').trim();
+    // Strip em dashes and en dashes before display
+    prose = this._stripEmDashes(prose);
+    // Strip leading chapter title if present as plain text in body
+    if (chapterTitle) {
+      const lines = prose.split('\n').filter(l => l.trim());
+      if (lines.length > 0) {
+        const firstLine = lines[0].trim();
+        const titleNormalized = chapterTitle.trim().toLowerCase();
+        const lineNormalized = firstLine.toLowerCase();
+        if (lineNormalized === titleNormalized ||
+            lineNormalized.includes(titleNormalized) ||
+            titleNormalized.includes(lineNormalized)) {
+          lines.shift();
+          prose = lines.join('\n');
+        }
+      }
+    }
     // Convert markdown italic markers (*text*) to HTML <em> tags
     prose = prose.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
     const paragraphs = prose.split('\n\n').filter(p => p.trim());
@@ -9777,11 +9794,18 @@ class App {
     // Convert scene break paragraphs (e.g. "* * *") to centered format
     html = html.replace(/<p>\s*\*\s*\*\s*\*\s*<\/p>/gi, '<p style="text-align:center;text-indent:0">* * *</p>');
 
-    // If the first paragraph matches the chapter title, convert it to H1
+    // If the first paragraph matches the chapter title, remove it to avoid duplication
+    // (the chapter title is rendered separately as a heading by the UI)
     if (chapterTitle) {
       const escapedTitle = chapterTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const h1Regex = new RegExp(`^(<p>)(\\s*${escapedTitle}\\s*)(</p>)`, 'i');
-      html = html.replace(h1Regex, '<h1 style="text-align:center;margin:1em 0 0.5em;font-size:1.8em;">$2</h1>');
+      // Remove plain paragraph that duplicates the chapter title
+      const removeRegex = new RegExp(`^\\s*<p>\\s*${escapedTitle}\\s*</p>\\s*`, 'i');
+      html = html.replace(removeRegex, '');
+      // Also handle if it was already turned into an H1 followed by the same text as body
+      const h1ThenDupeRegex = new RegExp(
+        `(<h1[^>]*>\\s*${escapedTitle}\\s*</h1>)\\s*<p>\\s*${escapedTitle}\\s*</p>`, 'i'
+      );
+      html = html.replace(h1ThenDupeRegex, '$1');
     }
     return html;
   }
@@ -9792,16 +9816,21 @@ class App {
   _stripEmDashes(text) {
     if (!text) return text;
     // Replace em dash (U+2014) and en dash (U+2013) surrounded by spaces with comma
-    text = text.replace(/\s*\u2014\s*/g, ', ');
-    text = text.replace(/\s*\u2013\s*/g, ', ');
+    text = text.replace(/\s*[\u2014\u2013]\s*/g, ', ');
+    // Replace any remaining unspaced em/en dashes
+    text = text.replace(/[\u2014\u2013]/g, ', ');
     // Replace double/triple hyphens used as em dashes
     text = text.replace(/\s*---\s*/g, ', ');
     text = text.replace(/\s*--\s*/g, ', ');
+    // Fix existing ` ,  ` artifacts from previous bad replacements
+    text = text.replace(/ ,  /g, ', ');
     // Clean up double commas or comma-period
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/,\s*\./g, '.');
     text = text.replace(/,\s*!/g, '!');
     text = text.replace(/,\s*\?/g, '?');
+    // Clean up any double-space artifacts
+    text = text.replace(/  +/g, ' ');
     return text;
   }
 
