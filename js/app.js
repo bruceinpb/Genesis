@@ -4482,6 +4482,7 @@ class App {
       providers: {
         'huggingface-flux': { enabled: true, concurrent: 2 },
         'huggingface-sdxl': { enabled: true, concurrent: 1 },
+        'puter-gpt-image-1': { enabled: true, concurrent: 1 },
         'puter-sd3': { enabled: true, concurrent: 1 },
         'puter-dalle3': { enabled: true, concurrent: 1 },
       },
@@ -4494,43 +4495,82 @@ class App {
 
   /**
    * Build provider pool config for IllustrationQueue from illustration config.
+   * Auto-disables HuggingFace providers when no HF token is configured.
    */
   _buildProviderPools(config) {
     const provs = config.providers || {};
-    return [
-      {
-        name: 'huggingface-flux',
-        enabled: provs['huggingface-flux']?.enabled !== false,
-        concurrent: provs['huggingface-flux']?.concurrent || 2,
-        model: 'black-forest-labs/FLUX.1-schnell',
-        generateFn: 'generateHF',
-        priority: 1,
-      },
-      {
-        name: 'huggingface-sdxl',
-        enabled: provs['huggingface-sdxl']?.enabled !== false,
-        concurrent: provs['huggingface-sdxl']?.concurrent || 1,
-        model: 'stabilityai/stable-diffusion-xl-base-1.0',
-        generateFn: 'generateHF',
-        priority: 2,
-      },
-      {
+    const hasHfToken = this._hfToken && this._hfToken.trim() !== '';
+    const pools = [];
+
+    // Only add HuggingFace providers if token is configured
+    if (hasHfToken) {
+      if (provs['huggingface-flux']?.enabled !== false) {
+        pools.push({
+          name: 'huggingface-flux',
+          enabled: true,
+          concurrent: provs['huggingface-flux']?.concurrent || 2,
+          model: 'black-forest-labs/FLUX.1-schnell',
+          generateFn: 'generateHF',
+          priority: 1,
+        });
+      }
+      if (provs['huggingface-sdxl']?.enabled !== false) {
+        pools.push({
+          name: 'huggingface-sdxl',
+          enabled: true,
+          concurrent: provs['huggingface-sdxl']?.concurrent || 1,
+          model: 'stabilityai/stable-diffusion-xl-base-1.0',
+          generateFn: 'generateHF',
+          priority: 2,
+        });
+      }
+    } else {
+      console.warn('[Illustration] HuggingFace token not set — HF providers disabled');
+    }
+
+    // GPT Image 1 via Puter.js (free, no API key needed)
+    if (provs['puter-gpt-image-1']?.enabled !== false) {
+      pools.push({
+        name: 'puter-gpt-image-1',
+        enabled: true,
+        concurrent: provs['puter-gpt-image-1']?.concurrent || 1,
+        model: 'gpt-image-1',
+        generateFn: 'generateGptImage1',
+        priority: 3,
+      });
+    }
+
+    // Puter SD3 (free, no API key needed)
+    if (provs['puter-sd3']?.enabled !== false) {
+      pools.push({
         name: 'puter-sd3',
-        enabled: provs['puter-sd3']?.enabled !== false,
+        enabled: true,
         concurrent: provs['puter-sd3']?.concurrent || 1,
         model: 'stabilityai/stable-diffusion-3-medium',
         generateFn: 'generatePuterSD',
-        priority: 3,
-      },
-      {
+        priority: 4,
+      });
+    }
+
+    // Puter DALL-E 3 (free, no API key needed)
+    if (provs['puter-dalle3']?.enabled !== false) {
+      pools.push({
         name: 'puter-dalle3',
-        enabled: provs['puter-dalle3']?.enabled !== false,
+        enabled: true,
         concurrent: provs['puter-dalle3']?.concurrent || 1,
         model: 'dall-e-3',
         generateFn: 'generatePuterDalle',
-        priority: 4,
-      },
-    ];
+        priority: 5,
+      });
+    }
+
+    if (pools.length === 0) {
+      console.error('[Illustration] No image providers available. Configure a HuggingFace token or enable Puter.js providers.');
+    } else {
+      console.log(`[Illustration] Active providers: ${pools.map(p => p.name).join(', ')}`);
+    }
+
+    return pools;
   }
 
   /**
@@ -4874,6 +4914,7 @@ class App {
       providers: {
         'huggingface-flux': { enabled: getCb('bs-ill-prov-hf-flux'), concurrent: 2 },
         'huggingface-sdxl': { enabled: getCb('bs-ill-prov-hf-sdxl'), concurrent: 1 },
+        'puter-gpt-image-1': { enabled: getCb('bs-ill-prov-gpt-image-1'), concurrent: 1 },
         'puter-sd3': { enabled: getCb('bs-ill-prov-puter-sd3'), concurrent: 1 },
         'puter-dalle3': { enabled: getCb('bs-ill-prov-puter-dalle'), concurrent: 1 },
       },
@@ -5095,9 +5136,14 @@ class App {
           return illustrations;
         });
 
-        const batchResults = await Promise.all(extractPromises);
-        for (const ills of batchResults) {
-          this._illustrationData.push(...ills);
+        const settledResults = await Promise.allSettled(extractPromises);
+        for (let idx = 0; idx < settledResults.length; idx++) {
+          const result = settledResults[idx];
+          if (result.status === 'fulfilled') {
+            this._illustrationData.push(...result.value);
+          } else {
+            console.error(`[Illustration] Scene extraction failed for batch item ${idx}:`, result.reason);
+          }
         }
 
         this._showIllustrationStatus(`Extracted scenes: ${this._illustrationData.length} illustrations from ${Math.min(i + EXTRACT_BATCH, enabledChapters.length)} chapters...`);
@@ -5359,6 +5405,30 @@ class App {
 
       this._hideIllustrationStatus();
       if (progressPanel) progressPanel.style.display = 'none';
+
+      // Show error summary if there were failures
+      if (this._illustrationQueue) {
+        const errorSummary = this._illustrationQueue.getErrorSummary();
+        if (errorSummary.totalErrors > 0) {
+          const errPanel = document.getElementById('illustration-errors');
+          const errContent = document.getElementById('illustration-errors-content');
+          if (errPanel && errContent) {
+            let html = `<p style="font-size:0.85rem;margin-bottom:8px;"><strong>${errorSummary.totalErrors} error(s) during generation.</strong></p>`;
+            if (errorSummary.failedIllustrations.length > 0) {
+              html += '<ul style="font-size:0.8rem;margin-bottom:8px;">';
+              for (const msg of errorSummary.failedIllustrations) {
+                html += `<li>${msg}</li>`;
+              }
+              html += '</ul>';
+            }
+            html += '<details style="font-size:0.8rem;"><summary>Provider Statistics</summary><pre style="font-size:0.75rem;margin-top:4px;">';
+            html += JSON.stringify(errorSummary.providerStats, null, 2);
+            html += '</pre></details>';
+            errContent.innerHTML = html;
+            errPanel.style.display = '';
+          }
+        }
+      }
 
       // Show image review
       this._showImageReview();
