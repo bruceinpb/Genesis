@@ -27,7 +27,8 @@
  *   7.   Index compilation (conditional on scholarlyApparatus.indexEnabled)
  */
 
-import { deterministicVerification } from './verification.js';
+import { deterministicVerification, autoFixBannedPatterns } from './verification.js';
+import { buildGhostAuthorPrompt, buildGenesis4GenerationPrompt } from './ghost-author.js';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -133,6 +134,53 @@ const GENESIS_3_CONFIG = {
   }
 };
 
+// ═══════════════════════════════════════════════════════════
+//  GENESIS 4.0 CONFIGURATION
+// ═══════════════════════════════════════════════════════════
+const GENESIS_4_CONFIG = {
+  pipeline: {
+    phases: ['generate', 'verify', 'polish', 'roughen'],
+    disabled: [
+      'sentence_iteration', 'prosecution_score',
+      'micro_fix', 'adversarial_audit', 'voice_check'
+    ]
+  },
+  generation: {
+    agentCount: 1,          // 3 for deep mode
+    chunkMaxWords: 750,
+    temperature: 0.80,      // slightly higher for naturalness
+    useReferencePassage: true,
+    useGhostAuthorPrompt: true
+  },
+  deepMode: {
+    enabled: false,         // toggled for critical chapters
+    agentCount: 3,          // generate 3 candidates in parallel
+    selectWhole: true       // pick best whole output, not paragraph chimera
+  },
+  polish: {
+    maxPasses: 1,           // ONE pass, not three
+    onlyFixVerificationFailures: true,
+    allowQualityImprovement: true
+  },
+  roughness: {
+    enabled: true,
+    mundaneParagraphRate: 0.15,   // 15% of paragraphs left slightly mundane
+    authorTicEnabled: true,
+    maxDowngrades: 2              // max 2 sentences get roughened
+  },
+  scoring: {
+    method: 'on_demand',    // only when user clicks Score
+    crossModel: true        // use different model for scoring when available
+  },
+  docxExport: {
+    deduplicateHeadings: true,
+    emDashScrub: true,
+    smartQuotes: true,
+    vellumCompatible: true,
+    sceneBreakMarker: '* * *'
+  }
+};
+
 class MultiAgentOrchestrator {
   constructor(generator, storage) {
     this.generator = generator;
@@ -143,6 +191,10 @@ class MultiAgentOrchestrator {
     this.chapterAgentsEnabled = true;
     // Genesis 3.0: Pipeline mode flag (true = new single-voice pipeline, false = legacy chimera)
     this.genesis3Enabled = true;
+    // Genesis 4.0: Generate-better-fix-less pipeline (default OFF — opt-in)
+    this.genesis4Enabled = false;
+    // Genesis 4.0: Deep mode for critical chapters (3 parallel candidates)
+    this.genesis4DeepMode = false;
     // Genesis 3.0: Human review gate (default ON)
     this.humanReviewEnabled = true;
 
@@ -165,10 +217,12 @@ class MultiAgentOrchestrator {
   /**
    * Configure orchestrator settings.
    */
-  configure({ agentCount, chapterAgentsEnabled, genesis3Enabled, humanReviewEnabled }) {
+  configure({ agentCount, chapterAgentsEnabled, genesis3Enabled, genesis4Enabled, genesis4DeepMode, humanReviewEnabled }) {
     if (agentCount !== undefined) this.agentCount = Math.max(1, Math.min(10, agentCount));
     if (chapterAgentsEnabled !== undefined) this.chapterAgentsEnabled = chapterAgentsEnabled;
     if (genesis3Enabled !== undefined) this.genesis3Enabled = genesis3Enabled;
+    if (genesis4Enabled !== undefined) this.genesis4Enabled = genesis4Enabled;
+    if (genesis4DeepMode !== undefined) this.genesis4DeepMode = genesis4DeepMode;
     if (humanReviewEnabled !== undefined) this.humanReviewEnabled = humanReviewEnabled;
   }
 
@@ -3435,13 +3489,535 @@ If NO, list paragraph numbers with one-line explanations:
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  PIPELINE ROUTER: Chooses between Genesis 3.0 and legacy
+  //  GENESIS 4.0 — ROUGHNESS INJECTION
   // ═══════════════════════════════════════════════════════════
 
   /**
-   * Main entry point — routes to Genesis 3.0 or legacy pipeline.
+   * Inject controlled imperfection into prose to pass AI detection.
+   *
+   * Real prose has rough spots that emerge organically from the messy process
+   * of thinking-while-writing. AI prose is uniformly polished. This function
+   * adds the kind of imperfections that published novels actually have:
+   *   - Some paragraphs start plainly
+   *   - Some sentences are merely functional
+   *   - One or two structural quirks (slightly long sentence, mid-thought ending)
+   *   - Occasional repeated transition word (real authors do this)
+   *
+   * ZERO API calls. Pure deterministic transforms.
+   *
+   * @param {string} prose - The polished prose to roughen
+   * @param {Object} [config] - Roughness configuration from GENESIS_4_CONFIG
+   * @returns {string} Prose with controlled imperfections
+   */
+  _injectRoughness(prose, config = GENESIS_4_CONFIG.roughness) {
+    if (!prose || !config || !config.enabled) return prose;
+
+    const paragraphs = this._segmentParagraphs(prose);
+    if (paragraphs.length < 3) return prose; // too short to roughen
+
+    const maxDowngrades = config.maxDowngrades || 2;
+    let downgrades = 0;
+
+    // ── 1. Downgrade one paragraph opening to be "merely adequate" ──
+    // Pick a middle paragraph (not first or last) and simplify its opener
+    const middleIndices = [];
+    for (let i = 1; i < paragraphs.length - 1; i++) {
+      middleIndices.push(i);
+    }
+
+    if (middleIndices.length > 0 && downgrades < maxDowngrades) {
+      const targetIdx = middleIndices[Math.floor(Math.random() * middleIndices.length)];
+      const para = paragraphs[targetIdx];
+      const sentences = para.split(/(?<=[.!?])\s+/);
+
+      if (sentences.length > 1) {
+        const firstSentence = sentences[0];
+        // If the first sentence uses a vivid/literary verb, try to make it plainer
+        const vividVerbs = /\b(cascaded|thundered|shimmered|gleamed|unfurled|blossomed|crackled|surged|radiated|billowed|danced|sang)\b/i;
+        if (vividVerbs.test(firstSentence)) {
+          const plainReplacements = {
+            'cascaded': 'fell', 'thundered': 'was loud', 'shimmered': 'was bright',
+            'gleamed': 'shone', 'unfurled': 'opened', 'blossomed': 'grew',
+            'crackled': 'sounded', 'surged': 'moved', 'radiated': 'spread',
+            'billowed': 'moved', 'danced': 'moved', 'sang': 'sounded'
+          };
+
+          let modified = firstSentence;
+          for (const [vivid, plain] of Object.entries(plainReplacements)) {
+            const regex = new RegExp(`\\b${vivid}\\b`, 'i');
+            if (regex.test(modified)) {
+              modified = modified.replace(regex, plain);
+              break;
+            }
+          }
+
+          if (modified !== firstSentence) {
+            sentences[0] = modified;
+            paragraphs[targetIdx] = sentences.join(' ');
+            downgrades++;
+          }
+        }
+      }
+    }
+
+    // ── 2. Vary paragraph lengths: ensure at least one short paragraph ──
+    // If all paragraphs are roughly the same length, shorten one
+    const paraWordCounts = paragraphs.map(p => (p.match(/\S+/g) || []).length);
+    const avgLen = paraWordCounts.reduce((a, b) => a + b, 0) / paraWordCounts.length;
+    const allSimilar = paraWordCounts.every(c => Math.abs(c - avgLen) < avgLen * 0.3);
+
+    if (allSimilar && paragraphs.length > 4 && downgrades < maxDowngrades) {
+      // Find a middle paragraph and truncate it to just 2 sentences
+      const shortTarget = middleIndices[Math.floor(Math.random() * middleIndices.length)];
+      const sentences = paragraphs[shortTarget].split(/(?<=[.!?])\s+/);
+      if (sentences.length > 3) {
+        paragraphs[shortTarget] = sentences.slice(0, 2).join(' ');
+        downgrades++;
+      }
+    }
+
+    // ── 3. Author tic: occasionally start 1-2 sentences with "And" or "But" ──
+    if (config.authorTicEnabled) {
+      // Find sentences that start with "The" or "It" or "He/She" — common AI patterns
+      // Replace one with "And" or "But" starter
+      const ticCandidates = ['And ', 'But '];
+      const tic = ticCandidates[Math.floor(Math.random() * ticCandidates.length)];
+
+      let ticApplied = false;
+      for (let i = 1; i < paragraphs.length - 1 && !ticApplied; i++) {
+        const sentences = paragraphs[i].split(/(?<=[.!?])\s+/);
+        for (let j = 1; j < sentences.length && !ticApplied; j++) {
+          // Only modify sentences starting with "The " or "It " in mid-paragraph
+          if (/^(The |It |This )/.test(sentences[j]) && sentences[j].split(/\s+/).length > 6) {
+            sentences[j] = tic + sentences[j].charAt(0).toLowerCase() + sentences[j].slice(1);
+            paragraphs[i] = sentences.join(' ');
+            ticApplied = true;
+          }
+        }
+      }
+    }
+
+    // ── 4. Final em-dash scrub (safety net) ──
+    let result = paragraphs.join('\n\n');
+    result = this._stripEmDashes(result);
+
+    return result;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 4.0 — SINGLE-PASS POLISH
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Single-pass polish: fix verification failures + light quality improvement.
+   * Replaces the multi-pass micro-fix loop from Genesis 3.
+   *
+   * @param {string} prose - The prose to polish
+   * @param {Object} verificationResult - Output from deterministicVerification()
+   * @param {string[]} flaggedForPolish - Patterns from autoFixBannedPatterns()
+   * @param {Object} context - Pipeline context
+   * @returns {Promise<string>} Polished prose
+   */
+  async _singlePassPolish(prose, verificationResult, flaggedForPolish, context) {
+    // Build a focused fix list from verification failures + flagged patterns
+    const issues = [];
+
+    if (verificationResult.failures && verificationResult.failures.length > 0) {
+      for (const f of verificationResult.failures) {
+        issues.push(f);
+      }
+    }
+
+    if (flaggedForPolish && flaggedForPolish.length > 0) {
+      for (const f of flaggedForPolish) {
+        issues.push(`Contains banned pattern: ${f}`);
+      }
+    }
+
+    // If nothing to fix, return as-is
+    if (issues.length === 0) {
+      this._logPipeline('polish-v4', 'No issues to fix. Skipping polish.');
+      return prose;
+    }
+
+    this._logPipeline('polish-v4', `Polishing ${issues.length} issue(s) in single pass...`);
+
+    const systemPrompt = `You are a careful prose editor. Fix ONLY the specific issues listed below. Change nothing else. Preserve the voice, rhythm, and word count (within 5%).
+
+=== ISSUES TO FIX ===
+${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
+
+=== RULES ===
+- Fix the listed issues. Do not rewrite for style.
+- Do not introduce em dashes, tricolons, or pet phrases.
+- Do not add dramatic kicker endings.
+- Preserve paragraph structure and approximate word count.
+- Return the COMPLETE prose with fixes applied. No preamble or explanation.`;
+
+    const response = await this._callApi(systemPrompt, `PROSE:\n\n${prose}`, {
+      temperature: 0.3,
+      maxTokens: Math.max(2000, Math.ceil(this._countWords(prose) * 2))
+    });
+
+    if (!response || response.trim().length < 50) {
+      this._logPipeline('polish-v4', 'Polish returned empty/short response. Keeping original.');
+      return prose;
+    }
+
+    // Validate word count drift
+    const drift = Math.abs(this._countWords(response) - this._countWords(prose)) / this._countWords(prose);
+    if (drift > 0.10) {
+      this._logPipeline('polish-v4', `Word drift ${(drift * 100).toFixed(0)}% too high. Keeping original.`);
+      return prose;
+    }
+
+    this._logPipeline('polish-v4', `Polish complete. ${this._countWords(response)} words (drift: ${(drift * 100).toFixed(1)}%).`);
+    return response.trim();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 4.0 — FULL PIPELINE (Generate Better, Fix Less)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Run the Genesis 4.0 pipeline:
+   *   Phase 1 → Generate (Ghost Author prompt, reference passage, single or 3-way parallel)
+   *   Phase 2 → Verify (deterministic) + auto-fix (regex)
+   *   Phase 3 → Single-pass polish (1 API call, fix verification failures only)
+   *   Phase 4 → Roughness injection (deterministic, 0 API calls)
+   *
+   * Total API calls: 2 per chunk (standard) or 4-5 (deep mode)
+   * Estimated wall-clock: 10-20 seconds per chunk
+   */
+  async runGenesis4Pipeline(params) {
+    const {
+      systemPrompt, userPrompt, maxTokens,
+      genre, genreRules, voice, authorPalette, qualityThreshold,
+      currentChapterId, currentChapterTitle, chapters,
+      errorPatterns, scholarlyApparatus, chapterVoice: preferredVoice,
+      poetryLevel, tone, style
+    } = params;
+
+    this._abortController = new AbortController();
+
+    const context = {
+      genre, genreRules, voice, authorPalette, qualityThreshold,
+      chapterTitle: currentChapterTitle,
+      currentChapterTitle,
+      errorPatterns: errorPatterns || [],
+      scholarlyApparatus: scholarlyApparatus || {}
+    };
+
+    try {
+      // ============ SELECT CHAPTER VOICE ============
+      const chapterVoice = this._selectChapterVoice(authorPalette, preferredVoice);
+      this._logPipeline('pipeline-v4', `Chapter voice: ${chapterVoice.name} (${chapterVoice.label})`);
+
+      // ============ PHASE 1: GENERATE ============
+      this._emit('pipeline', '=== PHASE 1: Generate (Ghost Author) ===');
+
+      let currentProse;
+
+      if (this.genesis4DeepMode) {
+        // ── Deep Mode: 3 candidates in parallel, pick best whole output ──
+        this._logPipeline('gen-v4', 'Deep mode: generating 3 candidates in parallel...');
+
+        const voices = this._selectDeepModeVoices(authorPalette, chapterVoice);
+
+        const candidates = await Promise.all(
+          voices.map(v => this._generateGenesis4Chunk({
+            userPrompt, maxTokens, chapterVoice: v,
+            genre, genreRules, voice, poetryLevel, tone, style,
+            errorPatterns, currentChapterTitle
+          }))
+        );
+
+        // Judge: pick the best whole candidate
+        currentProse = await this._judgeGenesis4Candidates(candidates, chapterVoice);
+        this._logPipeline('gen-v4', `Deep mode: selected best of ${candidates.length} candidates. ${this._countWords(currentProse)} words.`);
+      } else {
+        // ── Standard Mode: single generation ──
+        currentProse = await this._generateGenesis4Chunk({
+          userPrompt, maxTokens, chapterVoice,
+          genre, genreRules, voice, poetryLevel, tone, style,
+          errorPatterns, currentChapterTitle
+        });
+        this._logPipeline('gen-v4', `Standard generation complete. ${this._countWords(currentProse)} words.`);
+      }
+
+      // ============ PHASE 2: VERIFY + AUTO-FIX ============
+      this._emit('pipeline', '=== PHASE 2: Verify + Auto-Fix ===');
+
+      // Step 2a: Auto-fix deterministic patterns (0 API calls)
+      const autoFixed = autoFixBannedPatterns(currentProse);
+      currentProse = autoFixed.prose;
+
+      if (autoFixed.fixes.length > 0) {
+        for (const fix of autoFixed.fixes) {
+          this._logPipeline('autofix-v4', `Auto-fixed: ${fix}`);
+        }
+      }
+
+      // Step 2b: Run deterministic verification
+      let verificationResult = deterministicVerification(currentProse);
+      this._logPipeline('verify-v4', `Checks: ${verificationResult.allPassed ? 'ALL PASSED' : `${verificationResult.failCount} FAILURES`}`);
+      for (const f of verificationResult.failures) {
+        this._logPipeline('verify-v4', `  FAIL: ${f}`);
+      }
+
+      // ============ PHASE 3: SINGLE-PASS POLISH ============
+      this._emit('pipeline', '=== PHASE 3: Single-Pass Polish ===');
+
+      if (!verificationResult.allPassed || autoFixed.flaggedForPolish.length > 0) {
+        currentProse = await this._singlePassPolish(
+          currentProse, verificationResult, autoFixed.flaggedForPolish, context
+        );
+
+        // Strip em dashes after polish (safety)
+        currentProse = this._stripEmDashes(currentProse);
+
+        // Re-verify after polish
+        verificationResult = deterministicVerification(currentProse);
+        this._logPipeline('verify-v4', `Post-polish: ${verificationResult.allPassed ? 'ALL PASSED' : `${verificationResult.failCount} failures remain`}`);
+      } else {
+        this._logPipeline('polish-v4', 'Verification passed. No polish needed.');
+      }
+
+      // ============ PHASE 4: ROUGHNESS INJECTION ============
+      this._emit('pipeline', '=== PHASE 4: Roughness Injection ===');
+
+      currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+      this._logPipeline('roughness-v4', 'Roughness injection complete.');
+
+      // Final em-dash scrub
+      currentProse = this._stripEmDashes(currentProse);
+      if (currentChapterTitle) {
+        currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+      }
+
+      // Final verification (for reporting)
+      verificationResult = deterministicVerification(currentProse);
+
+      // ============ HUMAN REVIEW GATE ============
+      let humanDecision = 'accept';
+      if (this.humanReviewEnabled) {
+        this._emit('pipeline', '=== Human Review Gate ===');
+        this._emit('human-gate', 'Awaiting human review...', {
+          prose: currentProse,
+          verificationResult,
+          scoreResult: { overall: null, rawResponse: 'Genesis 4: scoring on demand only' },
+          auditResult: { anyYes: false, findings: [], rawResponse: 'Genesis 4: adversarial audit removed' },
+          voiceCheck: { isConsistent: true, flaggedParagraphs: [], rawResponse: 'Genesis 4: voice check removed' },
+          chapterVoice: chapterVoice.name
+        });
+
+        humanDecision = await new Promise((resolve) => {
+          this._humanGateResolve = resolve;
+          setTimeout(() => {
+            if (this._humanGateResolve === resolve) {
+              this._humanGateResolve = null;
+              resolve('accept');
+            }
+          }, 60000);
+        });
+        this._humanGateResolve = null;
+
+        if (humanDecision === 'rethink') {
+          this._logPipeline('human-gate', 'User requested rethink. Regenerating...');
+          return this.runGenesis4Pipeline(params);
+        }
+      }
+
+      this._logPipeline('human-gate', humanDecision === 'accept' ? 'Chunk accepted.' : 'Auto-accepted.');
+
+      // ============ GO/NO-GO (cross-chapter check) ============
+      let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
+      if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
+        this._emit('pipeline', '=== GO/NO-GO Launch Control ===');
+        goNoGoResult = await this.runGoNoGo(
+          currentProse, currentChapterId, chapters, currentChapterTitle
+        );
+      }
+
+      // Footnotes (conditional)
+      let footnoteResult = { prose: currentProse, footnotes: [], endnotes: [] };
+      if (scholarlyApparatus && scholarlyApparatus.footnotesEnabled) {
+        footnoteResult = await this._generateFootnotes(currentProse, context);
+        currentProse = footnoteResult.prose;
+      }
+
+      // Index (conditional)
+      let indexResult = { entries: [], type: null };
+      if (scholarlyApparatus && scholarlyApparatus.indexEnabled) {
+        indexResult = await this._compileIndex(currentProse, context);
+      }
+
+      this._abortController = null;
+
+      return {
+        prose: currentProse,
+        score: null, // Genesis 4: scoring is on-demand only
+        humanLikenessScore: null,
+        candidates: [],
+        chimeraMethod: this.genesis4DeepMode ? 'ghost-author-deep-v4' : 'ghost-author-v4',
+        chimeraRationale: `Genesis 4: Ghost Author generation in ${chapterVoice.name} style with reference-passage prompting`,
+        fixesApplied: autoFixed.fixes.map(f => ({ pass: 0, category: 'autofix', text: f, scoreBefore: null, scoreAfter: null })),
+        goNoGoResult,
+        auditResult: { anyYes: false, findings: [], rawResponse: 'Genesis 4: adversarial audit replaced by roughness injection' },
+        verificationResult,
+        scoreResult: { overall: null, rawResponse: 'Genesis 4: scoring on demand' },
+        voiceCheck: { isConsistent: true, flaggedParagraphs: [], rawResponse: 'Genesis 4: voice consistency via reference passage' },
+        chapterVoice: chapterVoice.name,
+        footnoteResult,
+        indexResult,
+        wordCount: this._countWords(currentProse),
+        dualGateIterations: 0,
+        humanDecision,
+        judgeReport: null,
+        fixPlan: null,
+        winner: null
+      };
+    } catch (err) {
+      this._abortController = null;
+      throw err;
+    }
+  }
+
+  /**
+   * Generate a single chunk using the Genesis 4 Ghost Author approach.
+   * Uses the slim ~500-word prompt with reference passage instead of
+   * the 3,000-word constraint-based prompt.
+   */
+  async _generateGenesis4Chunk(params) {
+    const {
+      userPrompt, maxTokens, chapterVoice,
+      genre, genreRules, voice, poetryLevel, tone, style,
+      errorPatterns, currentChapterTitle
+    } = params;
+
+    const authorName = chapterVoice.name || chapterVoice.label;
+    this._logPipeline('gen-v4', `Generating in ${authorName} voice (Ghost Author)...`);
+
+    // Build the Ghost Author prompt
+    const ghostPrompt = buildGenesis4GenerationPrompt({
+      genre, genreRules, voice, chapterVoice,
+      poetryLevel, wordTarget: 750, tone, style,
+      errorPatternsPrompt: this._buildBannedPatternsFromErrorDB(errorPatterns)
+    });
+
+    let text = await this._callApi(ghostPrompt, userPrompt, {
+      maxTokens: maxTokens || 4096,
+      temperature: GENESIS_4_CONFIG.generation.temperature
+    });
+
+    // Post-processing: strip em dashes and leading title
+    text = this._stripEmDashes(text);
+    if (currentChapterTitle) {
+      text = this._stripLeadingTitle(text, currentChapterTitle);
+    }
+
+    return text;
+  }
+
+  /**
+   * Select 3 different voices for deep mode parallel generation.
+   */
+  _selectDeepModeVoices(authorPalette, primaryVoice) {
+    const voices = [primaryVoice];
+
+    // Build pool from palette, excluding the primary voice
+    const pool = [];
+    if (authorPalette && typeof authorPalette === 'object' && authorPalette.authors) {
+      for (const a of authorPalette.authors) {
+        if (a.name !== primaryVoice.name) {
+          const paletteAuthor = Object.values(GENESIS_AUTHOR_PALETTE).find(
+            ga => ga.name.toLowerCase() === (a.name || '').toLowerCase()
+          );
+          pool.push(paletteAuthor || {
+            id: a.id || a.name?.toLowerCase().replace(/\s+/g, '-'),
+            name: a.name, label: a.label || a.name,
+            temperature: a.temperature || 0.7,
+            voicePrompt: a.voicePrompt || ''
+          });
+        }
+      }
+    }
+
+    // Fallback to Genesis palette if pool is small
+    if (pool.length < 2) {
+      const all = Object.values(GENESIS_AUTHOR_PALETTE);
+      for (const a of all) {
+        if (a.name !== primaryVoice.name && !pool.find(p => p.name === a.name)) {
+          pool.push(a);
+        }
+      }
+    }
+
+    // Shuffle and pick 2 more
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    voices.push(...pool.slice(0, 2));
+
+    return voices;
+  }
+
+  /**
+   * Judge 3 candidate outputs and select the best whole output.
+   * Does NOT do paragraph-level chimera — picks the best complete piece.
+   */
+  async _judgeGenesis4Candidates(candidates, primaryVoice) {
+    if (!candidates || candidates.length === 0) return '';
+    if (candidates.length === 1) return candidates[0];
+
+    // Filter out empty candidates
+    const valid = candidates.filter(c => c && c.trim().length > 50);
+    if (valid.length === 0) return candidates[0] || '';
+    if (valid.length === 1) return valid[0];
+
+    this._logPipeline('judge-v4', `Judging ${valid.length} candidates...`);
+
+    const systemPrompt = `You are selecting the best prose output from ${valid.length} candidates. All cover the same material.
+
+Pick the one that reads most like published human prose. Look for:
+- Natural rhythm variation (not uniformly polished)
+- Concrete specificity over abstract prettiness
+- Rough spots that feel authentic (not every sentence needs to be brilliant)
+- Voice consistency throughout
+
+Reply with ONLY the number: 1, 2, or 3. Nothing else.`;
+
+    const userContent = valid.map((c, i) =>
+      `=== CANDIDATE ${i + 1} ===\n${c}\n`
+    ).join('\n');
+
+    const response = await this._callApi(systemPrompt, userContent, {
+      temperature: 0.1, maxTokens: 10
+    });
+
+    const choice = parseInt(response.trim());
+    if (choice >= 1 && choice <= valid.length) {
+      this._logPipeline('judge-v4', `Selected candidate ${choice}.`);
+      return valid[choice - 1];
+    }
+
+    // Fallback: return first valid candidate
+    this._logPipeline('judge-v4', 'Could not parse judge response. Using candidate 1.');
+    return valid[0];
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  PIPELINE ROUTER: Chooses between Genesis 4, 3, and legacy
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Main entry point — routes to Genesis 4.0, 3.0, or legacy pipeline.
    */
   async runPipeline(params) {
+    if (this.genesis4Enabled) {
+      return this.runGenesis4Pipeline(params);
+    }
     if (this.genesis3Enabled) {
       return this.runGenesis3Pipeline(params);
     }
@@ -3449,4 +4025,4 @@ If NO, list paragraph numbers with one-line explanations:
   }
 }
 
-export { MultiAgentOrchestrator, GENESIS_AUTHOR_PALETTE };
+export { MultiAgentOrchestrator, GENESIS_AUTHOR_PALETTE, GENESIS_4_CONFIG };

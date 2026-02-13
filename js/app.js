@@ -1757,7 +1757,10 @@ class App {
     const uiAgentCount = parseInt(document.getElementById('bs-agent-count')?.value);
     const agentCount = Math.max(1, Math.min(10, uiAgentCount || project.agentCount || 5));
     const chapterAgentsEnabled = project.chapterAgentsEnabled !== false;
-    this.orchestrator.configure({ agentCount, chapterAgentsEnabled });
+    // Genesis 4 toggle: check project settings
+    const genesis4Enabled = project.genesis4Enabled === true;
+    const genesis4DeepMode = project.genesis4DeepMode === true;
+    this.orchestrator.configure({ agentCount, chapterAgentsEnabled, genesis4Enabled, genesis4DeepMode });
 
     // Close panels and show pipeline overlay
     this._showContinueBar(false);
@@ -1767,7 +1770,7 @@ class App {
     this._generateCancelled = false;
 
     // Show the appropriate overlay based on pipeline mode
-    if (this.orchestrator.genesis3Enabled) {
+    if (this.orchestrator.genesis4Enabled || this.orchestrator.genesis3Enabled) {
       this._showGenesis3Overlay(true);
     } else {
       this._showIterativeOverlay(true, { showAgentPanel: true, agentCount });
@@ -1803,14 +1806,19 @@ class App {
 
       const result = await this.orchestrator.runPipeline({
         systemPrompt, userPrompt, maxTokens,
-        genre, voice: project.voice || '',
+        genre, genreRules: genreRules || '',
+        voice: project.voice || '',
         authorPalette: project.authorPalette || '',
         qualityThreshold: project.qualityThreshold || 90,
         currentChapterId: this.state.currentChapterId,
         currentChapterTitle: chapterTitle,
         chapters,
         errorPatterns,
-        scholarlyApparatus: project.scholarlyApparatus || {}
+        scholarlyApparatus: project.scholarlyApparatus || {},
+        // Genesis 4 params
+        poetryLevel: project.poetryLevel || 3,
+        tone: project.tone || '',
+        style: project.style || ''
       });
 
       this._showMultiAgentOverlay(false);
@@ -2054,7 +2062,12 @@ class App {
           projectGoal: project.wordCountGoal || 0
         });
 
-        this.orchestrator.configure({ agentCount, chapterAgentsEnabled: project.chapterAgentsEnabled !== false });
+        this.orchestrator.configure({
+          agentCount,
+          chapterAgentsEnabled: project.chapterAgentsEnabled !== false,
+          genesis4Enabled: project.genesis4Enabled === true,
+          genesis4DeepMode: project.genesis4DeepMode === true
+        });
 
         // Reset agent grid for this chapter
         this._showMultiAgentOverlay(true, agentCount, chInfo.title);
@@ -2068,16 +2081,20 @@ class App {
             try { errorPatterns = await this.errorDb.getPatterns({ minFrequency: 1, limit: 50 }); } catch (_) {}
           }
 
-          const result = await this.orchestrator.runFullPipeline({
+          const result = await this.orchestrator.runPipeline({
             systemPrompt, userPrompt, maxTokens,
-            genre, voice: project.voice || '',
+            genre, genreRules: genreRules || '',
+            voice: project.voice || '',
             authorPalette: project.authorPalette || '',
             qualityThreshold: project.qualityThreshold || 90,
             currentChapterId: chInfo.chapterId,
             currentChapterTitle: chInfo.title,
             chapters: allChapters,
             errorPatterns,
-            scholarlyApparatus: project.scholarlyApparatus || {}
+            scholarlyApparatus: project.scholarlyApparatus || {},
+            poetryLevel: project.poetryLevel || 3,
+            tone: project.tone || '',
+            style: project.style || ''
           });
 
           if (this._generateCancelled) break;

@@ -4,6 +4,8 @@
  * Calls the API directly from the browser via CORS-enabled endpoint.
  */
 
+import { buildGhostAuthorPrompt } from './ghost-author.js';
+
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
 
@@ -1338,6 +1340,28 @@ This self-checking protocol is MANDATORY. The error database represents patterns
     }
 
     return prompt;
+  }
+
+  /**
+   * Build a Ghost Author system prompt (Genesis 4).
+   * ~500 words instead of ~3,000. Uses a reference passage to demonstrate
+   * the target register, rhythm, and craft level.
+   *
+   * @param {Object} options - Same options as _buildSystemPrompt
+   * @returns {string} The Ghost Author system prompt
+   */
+  _buildGhostAuthorSystemPrompt({ tone, style, genre, genreRules, voice, errorPatternsPrompt, poetryLevel, authorPalette, chapterVoice }) {
+    return buildGhostAuthorPrompt({
+      genre,
+      genreRules,
+      voice,
+      chapterVoice: chapterVoice || null,
+      authorPalette,
+      poetryLevel,
+      wordTarget: 750,
+      tone,
+      style
+    });
   }
 
   /**
