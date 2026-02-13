@@ -4063,6 +4063,11 @@ class App {
               Used for: Cross-model scoring, HD images<br>
               Est. cost: ~$0.05-$0.09/chapter scoring, ~$0.01-$0.20/image
             </p>
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+              <input type="password" class="form-input" id="openai-key-set-pin" placeholder="${localStorage.getItem('genesis-api-pin') ? 'New PIN (leave blank to keep)' : 'Set a PIN to lock (optional)'}" style="flex:1;">
+              <button class="btn btn-sm" id="openai-key-lock-btn">${localStorage.getItem('genesis-api-pin') ? 'Update PIN' : 'Set PIN'}</button>
+              ${localStorage.getItem('genesis-api-pin') ? '<button class="btn btn-sm" id="openai-key-remove-pin">Remove PIN</button>' : ''}
+            </div>
           </div>
         </div>
         <div class="form-group">
@@ -9585,6 +9590,21 @@ class App {
         } else {
           alert('Incorrect PIN.');
         }
+      }
+      if (e.target.id === 'openai-key-lock-btn') {
+        const pin = document.getElementById('openai-key-set-pin')?.value || '';
+        if (!pin || pin.length < 4) {
+          alert('PIN must be at least 4 characters.');
+          return;
+        }
+        localStorage.setItem('genesis-api-pin', pin);
+        alert('PIN set. API keys are now protected.');
+        await this.openSettingsPanel();
+      }
+      if (e.target.id === 'openai-key-remove-pin') {
+        localStorage.removeItem('genesis-api-pin');
+        alert('PIN removed.');
+        await this.openSettingsPanel();
       }
       if (e.target.id === 'save-openai-settings') {
         const key = (document.getElementById('setting-openai-key')?.value || '').trim();
