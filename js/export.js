@@ -434,6 +434,29 @@ ${project.coverImage ? `<div class="cover-page">
 
   // --- Helpers ---
 
+  /**
+   * Clean em dashes, en dashes, and related artifacts from text before export.
+   */
+  _cleanForExport(text) {
+    if (!text) return text;
+    // Replace em/en dashes with proper punctuation
+    text = text.replace(/\s*[\u2014\u2013]\s*/g, ', ');
+    text = text.replace(/[\u2014\u2013]/g, ', ');
+    // Replace double/triple hyphens used as em dashes
+    text = text.replace(/\s*---\s*/g, ', ');
+    text = text.replace(/\s*--\s*/g, ', ');
+    // Fix existing ` ,  ` artifacts from previous bad replacements
+    text = text.replace(/ ,  /g, ', ');
+    // Clean up double commas or comma before other punctuation
+    text = text.replace(/,\s*,/g, ',');
+    text = text.replace(/,\s*\./g, '.');
+    text = text.replace(/,\s*!/g, '!');
+    text = text.replace(/,\s*\?/g, '?');
+    // Clean double spaces
+    text = text.replace(/  +/g, ' ');
+    return text;
+  }
+
   _htmlToText(html) {
     if (!html) return '';
     const div = document.createElement('div');
@@ -448,7 +471,8 @@ ${project.coverImage ? `<div class="cover-page">
       }
     });
 
-    return (div.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+    let text = (div.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+    return this._cleanForExport(text);
   }
 
   _contentToParagraphs(html) {
@@ -458,7 +482,7 @@ ${project.coverImage ? `<div class="cover-page">
     const paragraphs = [];
 
     div.querySelectorAll('p').forEach(p => {
-      const text = (p.textContent || '').trim();
+      const text = this._cleanForExport((p.textContent || '').trim());
       if (text) paragraphs.push(text);
     });
 
@@ -466,7 +490,7 @@ ${project.coverImage ? `<div class="cover-page">
       const text = (div.textContent || '').trim();
       if (text) {
         text.split(/\n\s*\n/).forEach(p => {
-          const t = p.trim();
+          const t = this._cleanForExport(p.trim());
           if (t) paragraphs.push(t);
         });
       }

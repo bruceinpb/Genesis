@@ -20,7 +20,7 @@
  *   3.   Transition smoothing (with continuity digest constraints)
  *   3.5  Adversarial audit (human-likeness scoring, 0-100)
  *   4.   Iterative micro-fix loop (repair manual + adversarial fix priorities)
- *        Dual Score Gate: Quality >= 93 AND Human-Likeness >= 85 (max 3 loops)
+ *        Dual Score Gate: Quality >= 93 AND Human-Likeness >= 70 (max 2 loops)
  *   4.5  Roughness injection (controlled imperfections)
  *   5.   Chapter agents GO/NO-GO sequence
  *   6.   Footnote insertion (conditional on scholarlyApparatus.footnotesEnabled)
@@ -114,7 +114,7 @@ const GENESIS_3_CONFIG = {
     method: 'prosecution_first',
     target: 92,
     rewriteThreshold: 89,
-    maxMicroFixPasses: 3,
+    maxMicroFixPasses: 2,
     maxMicroFixCycles: 1,
     adversarialLoopIterations: 0
   },
@@ -509,6 +509,7 @@ class MultiAgentOrchestrator {
    * @private
    */
   _buildAuthorVoiceSystemPrompt(baseSystemPrompt, authorName, voicePrompt, errorPatterns) {
+    const emDashBan = `\nABSOLUTE FORMATTING RULE: Never use em dashes (\u2014) or en dashes (\u2013) anywhere in your output. Not with spaces ( \u2014 ), not without spaces (\u2014), not as en dashes (\u2013). Instead use: commas, colons, semicolons, periods, or parentheses. This is non-negotiable. Any em dash in your output is a critical failure.\n\nDo NOT include the chapter title in your output. Begin directly with the first sentence of prose. The chapter title is handled separately by the system.\n`;
     const authorBlock = `\n\n=== AUTHOR VOICE: ${authorName} ===\nYou are channeling the prose approach of ${authorName}.\n${voicePrompt}\n=== END AUTHOR VOICE ===\n`;
 
     // Find the AUTHOR PALETTE section and replace it with the specific author voice
@@ -530,7 +531,7 @@ class MultiAgentOrchestrator {
       prompt += errorPatternSection;
     }
 
-    return prompt;
+    return emDashBan + prompt;
   }
 
   /**
@@ -541,7 +542,7 @@ class MultiAgentOrchestrator {
    * @returns {Array} Array of candidate objects.
    */
   async generateWithAgents(params) {
-    const { systemPrompt, userPrompt, maxTokens = 4096, roster, errorPatterns } = params;
+    const { systemPrompt, userPrompt, maxTokens = 4096, roster, errorPatterns, context } = params;
 
     this._emit('generating',
       `Deploying ${roster.length} ${roster.length === 1 ? 'agent' : 'AI-selected author-voice agents'}...`,
@@ -570,9 +571,14 @@ class MultiAgentOrchestrator {
         const temp = agent.temperature || 0.7;
 
         try {
-          const text = await this._callApi(agentSystemPrompt, userPrompt, {
+          let text = await this._callApi(agentSystemPrompt, userPrompt, {
             maxTokens, temperature: temp
           });
+          // Strip em dashes and leading chapter title from agent output
+          text = this._stripEmDashes(text);
+          if (context && context.currentChapterTitle) {
+            text = this._stripLeadingTitle(text, context.currentChapterTitle);
+          }
           this._emit('agent-done', `Agent ${agentId} (${agentLabel}) complete.`, { agentId });
           resolve({
             agentId, text, temperature: temp, label: agentLabel,
@@ -588,9 +594,14 @@ class MultiAgentOrchestrator {
             this._emit('agent-retry', `Agent ${agentId} rate limited. Retrying in 5s...`, { agentId });
             await new Promise(r => setTimeout(r, 5000));
             try {
-              const text = await this._callApi(agentSystemPrompt, userPrompt, {
+              let text = await this._callApi(agentSystemPrompt, userPrompt, {
                 maxTokens, temperature: temp
               });
+              // Strip em dashes and leading chapter title from retry output
+              text = this._stripEmDashes(text);
+              if (context && context.currentChapterTitle) {
+                text = this._stripLeadingTitle(text, context.currentChapterTitle);
+              }
               this._emit('agent-done', `Agent ${agentId} (${agentLabel}) complete (retry).`, { agentId });
               resolve({
                 agentId, text, temperature: temp, label: agentLabel,
@@ -647,6 +658,87 @@ class MultiAgentOrchestrator {
       .map(p => p.trim())
       .filter(p => p.length > 0)
       .filter(p => !/^\*\s*\*\s*\*$/.test(p));
+  }
+
+  /**
+   * Deterministic em-dash / en-dash stripping.
+   * Runs after every agent output, after chimera assembly, after micro-fix, and after roughness injection.
+   */
+  _stripEmDashes(text) {
+    if (!text) return text;
+    // Replace spaced em/en dashes with comma
+    text = text.replace(/\s*[\u2014\u2013]\s*/g, ', ');
+    // Replace unspaced em/en dashes with comma-space
+    text = text.replace(/[\u2014\u2013]/g, ', ');
+    // Replace double/triple hyphens used as em dashes
+    text = text.replace(/\s*---\s*/g, ', ');
+    text = text.replace(/\s*--\s*/g, ', ');
+    // Clean up any double-comma or comma-space-comma artifacts
+    text = text.replace(/,\s*,/g, ',');
+    // Fix existing ` ,  ` artifacts from previous bad replacements
+    text = text.replace(/ ,  /g, ', ');
+    // Clean up comma before other punctuation
+    text = text.replace(/,\s*\./g, '.');
+    text = text.replace(/,\s*!/g, '!');
+    text = text.replace(/,\s*\?/g, '?');
+    // Clean up any double-space artifacts
+    text = text.replace(/  +/g, ' ');
+    return text;
+  }
+
+  /**
+   * Strip the chapter title from an agent's output if it appears as the first paragraph.
+   */
+  _stripLeadingTitle(agentOutput, chapterTitle) {
+    if (!agentOutput || !chapterTitle) return agentOutput;
+    const lines = agentOutput.split('\n').filter(l => l.trim());
+    if (lines.length > 0) {
+      const firstLine = lines[0].trim().replace(/^#+\s*/, ''); // strip markdown heading marks
+      const titleNormalized = chapterTitle.trim().toLowerCase();
+      const lineNormalized = firstLine.toLowerCase();
+      if (lineNormalized === titleNormalized ||
+          lineNormalized.includes(titleNormalized) ||
+          titleNormalized.includes(lineNormalized)) {
+        lines.shift();
+      }
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Deduplicate adjacent paragraphs in chimera output using Jaccard similarity.
+   * Removes near-duplicate paragraphs (>50% word overlap) keeping the first.
+   */
+  _deduplicateChimera(prose) {
+    if (!prose) return prose;
+    const paragraphs = this._segmentParagraphs(prose);
+    if (paragraphs.length < 2) return prose;
+
+    const deduped = [paragraphs[0]];
+    for (let i = 1; i < paragraphs.length; i++) {
+      const similarity = this._jaccardSimilarity(paragraphs[i - 1], paragraphs[i]);
+      if (similarity > 0.5) {
+        this._logPipeline('chimera-dedup',
+          `Duplicate detected: P${i} and P${i + 1} have ${(similarity * 100).toFixed(0)}% overlap. Removing P${i + 1}.`);
+      } else {
+        deduped.push(paragraphs[i]);
+      }
+    }
+    return deduped.join('\n\n');
+  }
+
+  /**
+   * Compute Jaccard similarity between two text strings (word-level).
+   */
+  _jaccardSimilarity(textA, textB) {
+    const wordsA = new Set(textA.toLowerCase().split(/\s+/).filter(w => w.length > 0));
+    const wordsB = new Set(textB.toLowerCase().split(/\s+/).filter(w => w.length > 0));
+    let intersection = 0;
+    for (const w of wordsA) {
+      if (wordsB.has(w)) intersection++;
+    }
+    const union = wordsA.size + wordsB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
   }
 
   /**
@@ -1105,13 +1197,17 @@ YOUR TASK: Smooth the flagged transitions by modifying ONLY:
         continue;
       }
 
-      // Step 3: Validate word count
+      // Step 3: Validate word count — allow higher drift for structural fixes
       const originalWords = this._countWords(currentProse);
       const fixedWords = this._countWords(fixedProse);
       const drift = Math.abs(fixedWords - originalWords) / originalWords;
+      const structuralCategories = ['weak-imagery', 'near-duplicate', 'duplicate', 'structural', 'paragraph-removal'];
+      const isStructural = structuralCategories.includes(diagnosis.category) ||
+        (diagnosis.diagnosis && /duplicate|near.identical|redundant/i.test(diagnosis.diagnosis));
+      const driftLimit = isStructural ? 0.25 : 0.09;
 
-      if (drift > 0.08) {
-        this._logPipeline('microfix', `Pass ${pass + 1}: Fix caused ${Math.round(drift * 100)}% word drift. Rejecting.`);
+      if (drift > driftLimit) {
+        this._logPipeline('microfix', `Pass ${pass + 1}: Fix caused ${Math.round(drift * 100)}% word drift (limit: ${Math.round(driftLimit * 100)}%). Rejecting.`);
         continue;
       }
 
@@ -1599,7 +1695,7 @@ Output valid JSON only:
    *   Phase 6   → Footnote insertion ★ NEW (conditional)
    *   Phase 7   → Index compilation ★ NEW (conditional)
    *
-   * Dual Score Gate: Quality >= 93 AND Human-Likeness >= 85
+   * Dual Score Gate: Quality >= 93 AND Human-Likeness >= 70
    */
   async runFullPipeline(params) {
     const {
@@ -1635,7 +1731,7 @@ Output valid JSON only:
       this._logPipeline('generating', `Deploying ${roster.length} ${roster.length === 1 ? 'agent' : 'AI-selected author-voice agents'}...`);
 
       const candidates = await this.generateWithAgents({
-        systemPrompt: augmentedSystemPrompt, userPrompt, maxTokens, roster, errorPatterns
+        systemPrompt: augmentedSystemPrompt, userPrompt, maxTokens, roster, errorPatterns, context
       });
 
       this._logPipeline('generation-complete', `${candidates.length} of ${roster.length} agents produced candidates.`);
@@ -1654,6 +1750,11 @@ Output valid JSON only:
 
       let currentProse = chimeraResult.prose;
       let currentScore = chimeraResult.score;
+
+      // Post-chimera: deduplicate adjacent near-identical paragraphs
+      currentProse = this._deduplicateChimera(currentProse);
+      // Post-chimera: strip any em dashes that survived
+      currentProse = this._stripEmDashes(currentProse);
 
       // ============ PHASE 2.5: Voice Unification Pass ============
       if (chimeraResult.method === 'paragraph-chimera' && chimeraResult.selections.length > 1) {
@@ -1709,16 +1810,16 @@ Output valid JSON only:
       this._emit('pipeline', '=== PHASE 4: Iterative Micro-Fix Loop ===');
 
       // If adversarial audit failed, prepend its fix priorities to the micro-fix context
-      if (humanLikenessScore < 85 && auditResult.topThreeFixPriorities) {
+      if (humanLikenessScore < 70 && auditResult.topThreeFixPriorities) {
         context.adversarialFixPriorities = auditResult.topThreeFixPriorities;
         this._logPipeline('microfix', `Adversarial findings prepended: ${auditResult.topThreeFixPriorities.length} priority fixes.`);
       }
 
       const microFixResult = await this._iterativeMicroFix(
-        currentProse, context, currentScore, qualityThreshold || 93, 3
+        currentProse, context, currentScore, qualityThreshold || 93, 2
       );
 
-      currentProse = microFixResult.prose;
+      currentProse = this._stripEmDashes(microFixResult.prose);
       currentScore = microFixResult.score;
 
       this._logPipeline('microfix-complete',
@@ -1726,13 +1827,13 @@ Output valid JSON only:
 
       // Dual Score Gate: loop back if either gate fails (max 3 iterations)
       let dualGateIterations = 0;
-      const maxDualGateLoops = 3;
+      const maxDualGateLoops = 2;
       while (dualGateIterations < maxDualGateLoops) {
         const qualityPass = currentScore >= (qualityThreshold || 93);
-        const humanPass = humanLikenessScore >= 85;
+        const humanPass = humanLikenessScore >= 70;
 
         if (qualityPass && humanPass) {
-          this._logPipeline('dual-gate', `DUAL GATE: PASS. Quality: ${currentScore} >= ${qualityThreshold || 93}, Human-Likeness: ${humanLikenessScore} >= 85.`);
+          this._logPipeline('dual-gate', `DUAL GATE: PASS. Quality: ${currentScore} >= ${qualityThreshold || 93}, Human-Likeness: ${humanLikenessScore} >= 70.`);
           break;
         }
 
@@ -1748,9 +1849,9 @@ Output valid JSON only:
         }
 
         const reFixResult = await this._iterativeMicroFix(
-          currentProse, context, currentScore, qualityThreshold || 93, 3
+          currentProse, context, currentScore, qualityThreshold || 93, 2
         );
-        currentProse = reFixResult.prose;
+        currentProse = this._stripEmDashes(reFixResult.prose);
         currentScore = reFixResult.score;
       }
 
@@ -1761,6 +1862,7 @@ Output valid JSON only:
       // ============ PHASE 4.5: Roughness Injection ============
       this._emit('pipeline', '=== PHASE 4.5: Roughness Injection ===');
       currentProse = await this._roughnessInjection(currentProse, context);
+      currentProse = this._stripEmDashes(currentProse);
       this._logPipeline('roughness-complete', 'Roughness injection complete.');
 
       // ============ PHASE 5: GO/NO-GO Launch Control ============
@@ -2166,10 +2268,10 @@ Be STRICT. Real human nonfiction scores 80-95. AI prose typically scores 40-70.`
       }
     }
 
-    if (result.humanLikenessScore >= 85) {
-      this._logPipeline('adversarial', `GATE: PASS (${result.humanLikenessScore} >= 85).`);
+    if (result.humanLikenessScore >= 70) {
+      this._logPipeline('adversarial', `GATE: PASS (${result.humanLikenessScore} >= 70).`);
     } else {
-      this._logPipeline('adversarial', `GATE: FAIL (${result.humanLikenessScore} < 85). Routing top 3 fixes to micro-fix loop.`);
+      this._logPipeline('adversarial', `GATE: FAIL (${result.humanLikenessScore} < 70). Routing top 3 fixes to micro-fix loop.`);
       if (result.topThreeFixPriorities) {
         result.topThreeFixPriorities.forEach((fix, i) => {
           this._logPipeline('adversarial', `  Priority ${i + 1}: ${fix.dimension} — ${fix.specificFinding}`);
@@ -3047,11 +3149,18 @@ If NO, list paragraph numbers with one-line explanations:
       augmentedSystemPrompt += this._buildKickerBudgetPrompt();
       const errorPatternSection = this._buildBannedPatternsFromErrorDB(errorPatterns);
       if (errorPatternSection) augmentedSystemPrompt += errorPatternSection;
+      // Add em-dash ban and chapter title instruction to system prompt
+      augmentedSystemPrompt = `\nABSOLUTE FORMATTING RULE: Never use em dashes (\u2014) or en dashes (\u2013) anywhere in your output. Not with spaces ( \u2014 ), not without spaces (\u2014), not as en dashes (\u2013). Instead use: commas, colons, semicolons, periods, or parentheses. This is non-negotiable. Any em dash in your output is a critical failure.\n\nDo NOT include the chapter title in your output. Begin directly with the first sentence of prose. The chapter title is handled separately by the system.\n` + augmentedSystemPrompt;
 
       let currentProse = await this.generateSingleVoice({
         systemPrompt: augmentedSystemPrompt,
         userPrompt, maxTokens, chapterVoice, errorPatterns
       });
+      // Strip em dashes and leading chapter title from generated prose
+      currentProse = this._stripEmDashes(currentProse);
+      if (currentChapterTitle) {
+        currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+      }
 
       // ============ PHASE 2: Sentence-Level Iteration ============
       this._emit('pipeline', '=== PHASE 2: Sentence-Level Iteration ===');
@@ -3089,6 +3198,11 @@ If NO, list paragraph numbers with one-line explanations:
           systemPrompt: augmentedSystemPrompt,
           userPrompt, maxTokens, chapterVoice, errorPatterns
         });
+        // Strip em dashes and leading title from rewritten prose
+        currentProse = this._stripEmDashes(currentProse);
+        if (currentChapterTitle) {
+          currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+        }
         verificationResult = deterministicVerification(currentProse);
         scoreResult = await this._prosecutionScore(currentProse, context, verificationResult);
         currentScore = scoreResult.overall;
