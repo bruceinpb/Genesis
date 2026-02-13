@@ -77,6 +77,9 @@ class App {
       this.exporter = new ExportManager(this.fs);
       this.generator = new ProseGenerator(this.localStorage);
       await this.generator.init();
+      // Wire up scholarly apparatus generator for HTML export
+      this.exporter._scholarlyGenerator = (type, allProse, chapters, indexType) =>
+        this._generateScholarlyContent(type, allProse, chapters, indexType);
       this.orchestrator = new MultiAgentOrchestrator(this.generator, this.localStorage);
       this.orchestrator.onStatus((phase, message, data) => this._onMultiAgentStatus(phase, message, data));
       this.paletteManager = new AuthorPaletteManager(this.generator);
@@ -4987,7 +4990,7 @@ class App {
           this._updateIterativeLog(`PASSED threshold (${qualityThreshold}). Score: ${beforeScore}/100`);
           await new Promise(r => setTimeout(r, 800));
           this._showIterativeOverlay(false);
-          this._showFinalFixScreen(
+          await this._showFinalFixScreen(
             this._iterativeBestText || workingText,
             bestScore,
             this._iterativeBestReview || result,
@@ -5103,7 +5106,7 @@ class App {
         this._updateIterativeLog(`PASSED threshold (${qualityThreshold}) after fix. Score: ${afterScore}/100`);
         await new Promise(r => setTimeout(r, 800));
         this._showIterativeOverlay(false);
-        this._showFinalFixScreen(
+        await this._showFinalFixScreen(
           this._iterativeBestText || workingText,
           bestScore,
           this._iterativeBestReview,
@@ -5124,7 +5127,7 @@ class App {
     const finalScore = bestScore;
     const finalReview = this._iterativeBestReview;
 
-    this._showFinalFixScreen(
+    await this._showFinalFixScreen(
       finalText,
       finalScore,
       finalReview,
@@ -5138,7 +5141,7 @@ class App {
    * Show the final fix screen after all background iterations are complete.
    * Presents the best prose with options: Fix Critical Errors, Apply All Fixes, Accept As-Is.
    */
-  _showFinalFixScreen(prose, score, review, iterationHistory, threshold, thresholdMet) {
+  async _showFinalFixScreen(prose, score, review, iterationHistory, threshold, thresholdMet) {
     const overlay = document.getElementById('iterative-accept-overlay');
     if (!overlay) return;
 
@@ -5146,6 +5149,27 @@ class App {
     this._iterativeAcceptText = prose;
     this._finalFixReview = review;
     this._finalFixIterationHistory = iterationHistory;
+
+    // Run adversarial AI-detection audit
+    let adversarialResult = null;
+    let humanScore = null;
+    try {
+      if (this.generator && typeof this.generator.runAdversarialAudit === 'function') {
+        adversarialResult = await this.generator.runAdversarialAudit(prose);
+        humanScore = adversarialResult?.humanScore ?? null;
+      }
+    } catch (err) {
+      console.error('Adversarial audit failed:', err);
+    }
+
+    // Store adversarial result for reference
+    this._lastAdversarialResult = adversarialResult;
+
+    // Both gates must pass: quality >= threshold AND human score >= 75
+    const humanPass = humanScore === null || humanScore >= 75;
+    if (humanScore !== null && !humanPass) {
+      thresholdMet = false; // Override: AI detection failed
+    }
 
     // Build the score display
     const scoreClass = score >= 88 ? 'score-excellent' : score >= 78 ? 'score-good' :
@@ -5171,6 +5195,18 @@ class App {
     const thresholdStatusHtml = thresholdMet
       ? `<div style="color:var(--success, #28a745);font-size:0.85rem;font-weight:600;text-align:center;margin-bottom:8px;">Threshold met: ${score}/${threshold}</div>`
       : `<div style="color:var(--danger, #dc3545);font-size:0.85rem;font-weight:600;text-align:center;margin-bottom:8px;">Below threshold: ${score}/${threshold} (${threshold - score} pts needed)</div>`;
+
+    // Build adversarial AI-detection score display
+    let adversarialHtml = '';
+    if (humanScore !== null) {
+      const humanScoreClass = humanScore >= 75 ? '#4ade80' : '#f87171';
+      const humanBg = humanScore >= 75 ? '#1a3a1a' : '#3a1a1a';
+      adversarialHtml = `<div style="margin-top:8px;margin-bottom:8px;padding:8px;border-radius:4px;background:${humanBg};color:${humanScoreClass};font-size:0.85rem;text-align:center;">
+        <strong>Human Detection Score:</strong> ${humanScore}/100
+        ${humanScore < 75 && adversarialResult?.flaggedPatterns?.length ? `<br><small style="color:#f8a0a0;">Flags: ${adversarialResult.flaggedPatterns.join(', ')}</small>` : ''}
+        ${adversarialResult?.verdict ? `<br><small>${adversarialResult.verdict}</small>` : ''}
+      </div>`;
+    }
 
     // Build remaining issues summary
     let issuesHtml = '';
@@ -5206,7 +5242,7 @@ class App {
 
       const infoDiv = document.createElement('div');
       infoDiv.className = 'final-fix-info';
-      infoDiv.innerHTML = thresholdStatusHtml + journeyHtml + issuesHtml;
+      infoDiv.innerHTML = thresholdStatusHtml + adversarialHtml + journeyHtml + issuesHtml;
 
       const previewContainer = document.getElementById('iterative-accept-preview');
       if (previewContainer) {
@@ -5412,7 +5448,7 @@ class App {
             this._showIterativeOverlay(false);
 
             // Show updated final fix screen with new results
-            this._showFinalFixScreen(
+            await this._showFinalFixScreen(
               rewrittenText,
               newReview.score,
               newReview,
@@ -7164,7 +7200,30 @@ class App {
     await this.renderChapterNav();
     this._updateStatusBarLocal();
 
-    // 4. If the deleted chapter was displayed, auto-switch to next remaining
+    // 4. If ALL chapters have been deleted, clear the story plot/prompt
+    if (originalChapters.length === 0) {
+      // Clear the plot textarea in the UI
+      const plotTextarea = document.getElementById('generate-plot');
+      if (plotTextarea) {
+        plotTextarea.value = '';
+      }
+
+      // Clear the in-memory chapter outline
+      this._currentChapterOutline = '';
+
+      // Clear last generation settings so old prompt isn't reused
+      if (this._lastGenSettings) {
+        this._lastGenSettings.plot = '';
+        this._lastGenSettings.chapterOutline = '';
+      }
+
+      // Reset chapter tracking
+      this.state.currentChapterId = null;
+
+      console.log('All chapters deleted — story plot/prompt cleared');
+    }
+
+    // 5. If the deleted chapter was displayed, auto-switch to next remaining
     if (wasActiveDeleted) {
       const remaining = chapters.filter(ch => !ch.isTranslation);
       if (remaining.length > 0) {
@@ -10075,45 +10134,106 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         }
       }
 
-      // ── Scholarly Apparatus: Endnotes Section ──
+      // ── Scholarly Apparatus: Generate and format ──
       const sa = project.scholarlyApparatus || {};
-      if (sa.footnotesEnabled && sa.footnoteFormat === 'endnotes') {
-        // Add endnotes as a back-matter section (Vellum-compatible)
-        // This collects any [N] markers found in the prose and adds a Notes section
-        const allContent = chaptersToExport.map(ch => (ch.content || '')).join(' ');
-        const footnoteMarkers = allContent.match(/\[(\d+)\]/g) || [];
-        if (footnoteMarkers.length > 0) {
-          children.push(new Paragraph({ children: [new PageBreak()] }));
-          children.push(new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 0, after: 200 },
-            children: [new TextRun({ text: 'Notes', bold: true, size: 32, font: 'Times New Roman' })]
-          }));
-          children.push(new Paragraph({
-            spacing: { before: 0, after: 100 },
-            children: [new TextRun({
-              text: 'Endnotes are generated during the pipeline. See the pipeline footnote output for full citation text.',
-              font: 'Times New Roman', size: 22, italics: true
-            })]
-          }));
-        }
-      }
 
-      // ── Scholarly Apparatus: Index Section ──
-      if (sa.indexEnabled) {
-        children.push(new Paragraph({ children: [new PageBreak()] }));
-        children.push(new Paragraph({
-          heading: HeadingLevel.HEADING_1,
-          spacing: { before: 0, after: 200 },
-          children: [new TextRun({ text: 'Index', bold: true, size: 32, font: 'Times New Roman' })]
-        }));
-        children.push(new Paragraph({
-          spacing: { before: 0, after: 100 },
-          children: [new TextRun({
-            text: 'Index entries are compiled during the pipeline. See the pipeline index output for full index data.',
-            font: 'Times New Roman', size: 22, italics: true
-          })]
-        }));
+      if (sa.footnotesEnabled || sa.bibliographyEnabled || sa.indexEnabled) {
+        // Collect all chapter prose for generation
+        const allProse = chaptersToExport.map((ch, idx) =>
+          `CHAPTER ${idx + 1}: ${ch.title || 'Untitled'}\n${(ch.content || '').replace(/<[^>]+>/g, '')}`
+        ).join('\n\n---\n\n');
+
+        // ENDNOTES
+        if (sa.footnotesEnabled) {
+          try {
+            const endnotesText = await this._generateScholarlyContent('endnotes', allProse, chaptersToExport);
+            if (endnotesText) {
+              children.push(new Paragraph({ children: [new PageBreak()] }));
+              children.push(new Paragraph({
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 0, after: 200 },
+                children: [new TextRun({ text: 'Notes', bold: true, size: 32, font: 'Times New Roman' })]
+              }));
+              const noteLines = endnotesText.split('\n').filter(line => line.trim());
+              for (const line of noteLines) {
+                const isChapterHeading = line.startsWith('Chapter ') && line.includes(':');
+                children.push(new Paragraph({
+                  spacing: { after: isChapterHeading ? 200 : 120 },
+                  children: [new TextRun({
+                    text: line,
+                    font: 'Times New Roman',
+                    size: isChapterHeading ? 24 : 20,
+                    bold: isChapterHeading
+                  })]
+                }));
+              }
+            }
+          } catch (err) {
+            console.error('Failed to generate endnotes:', err);
+          }
+        }
+
+        // BIBLIOGRAPHY
+        if (sa.bibliographyEnabled) {
+          try {
+            const bibText = await this._generateScholarlyContent('bibliography', allProse, chaptersToExport);
+            if (bibText) {
+              children.push(new Paragraph({ children: [new PageBreak()] }));
+              children.push(new Paragraph({
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 0, after: 200 },
+                children: [new TextRun({ text: 'Bibliography', bold: true, size: 32, font: 'Times New Roman' })]
+              }));
+              const bibLines = bibText.split('\n').filter(line => line.trim());
+              for (const line of bibLines) {
+                const isSectionHeading = /^(Primary|Secondary|Archival|Sources)/i.test(line);
+                children.push(new Paragraph({
+                  spacing: { after: isSectionHeading ? 200 : 120 },
+                  indent: isSectionHeading ? {} : { left: 720, hanging: 720 },
+                  children: [new TextRun({
+                    text: line,
+                    font: 'Times New Roman',
+                    size: isSectionHeading ? 24 : 22,
+                    bold: isSectionHeading || undefined
+                  })]
+                }));
+              }
+            }
+          } catch (err) {
+            console.error('Failed to generate bibliography:', err);
+          }
+        }
+
+        // INDEX
+        if (sa.indexEnabled) {
+          try {
+            const indexText = await this._generateScholarlyContent('index', allProse, chaptersToExport, sa.indexType);
+            if (indexText) {
+              children.push(new Paragraph({ children: [new PageBreak()] }));
+              children.push(new Paragraph({
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 0, after: 200 },
+                children: [new TextRun({ text: 'Index', bold: true, size: 32, font: 'Times New Roman' })]
+              }));
+              const indexLines = indexText.split('\n').filter(line => line.trim());
+              for (const line of indexLines) {
+                const isSubHeading = /^(Name Index|Subject Index|See also)/i.test(line)
+                  || (line.length <= 2 && /^[A-Z]$/.test(line));
+                children.push(new Paragraph({
+                  spacing: { after: isSubHeading ? 160 : 80 },
+                  children: [new TextRun({
+                    text: line,
+                    font: 'Times New Roman',
+                    size: isSubHeading ? 24 : 20,
+                    bold: isSubHeading || undefined
+                  })]
+                }));
+              }
+            }
+          } catch (err) {
+            console.error('Failed to generate index:', err);
+          }
+        }
       }
 
       // ── Metadata Hardening ──
@@ -10192,6 +10312,120 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
     } catch (err) {
       console.error('DOCX export failed:', err);
       alert('Export failed: ' + err.message);
+    }
+  }
+
+  /**
+   * Generate scholarly apparatus content (endnotes, bibliography, or index)
+   * by calling the Claude API.
+   * @param {string} type - 'endnotes', 'bibliography', or 'index'
+   * @param {string} allProse - Combined prose text from all chapters
+   * @param {Array} chapters - Chapter objects array
+   * @param {string} indexType - For index: 'combined', 'separate', 'name', or 'subject'
+   * @returns {string|null} Generated text content
+   */
+  async _generateScholarlyContent(type, allProse, chapters, indexType = 'combined') {
+    const apiKey = this.generator?.apiKey;
+    if (!apiKey) {
+      console.warn('No API key available for scholarly apparatus generation');
+      return null;
+    }
+
+    const systemPrompts = {
+      endnotes: `You are a professional research assistant preparing endnotes for a narrative nonfiction manuscript.
+
+RULES:
+- Create endnotes for claims, quotations, and specific facts mentioned in the prose.
+- Follow Chicago Manual of Style, 17th Edition (Notes-Bibliography system).
+- NEVER invent specific citations. Instead, create placeholder endnotes that indicate what TYPE of source would be needed.
+  Example: "1. For Ford Motor Company production figures in 1923, see annual reports held at the Benson Ford Research Center, Dearborn, Michigan."
+  Example: "2. Charles Sorensen's account appears in his memoir My Forty Years with Ford (New York: Norton, 1956)."
+- For well-known published sources (memoirs, biographies, company histories), you may cite them by actual title and publisher if you are confident they exist.
+- For archival sources, use the format: "[Description of document type], [Collection name if known], [Repository]." Do NOT invent specific box/folder numbers.
+- Number endnotes sequentially across the entire manuscript.
+- Group endnotes by chapter with a chapter heading.
+
+OUTPUT FORMAT:
+Return ONLY the endnotes text, formatted as:
+
+Chapter 1: [Chapter Title]
+1. [endnote text]
+2. [endnote text]
+
+Chapter 2: [Chapter Title]
+3. [endnote text]
+...`,
+
+      bibliography: `You are creating a bibliography/works cited for a narrative nonfiction manuscript.
+
+RULES:
+- Follow Chicago Manual of Style, 17th Edition (Bibliography format).
+- List entries alphabetically by author's last name.
+- Include ONLY sources that are real, published works you are confident actually exist.
+- For well-known works (published memoirs, major biographies, company histories), cite with full publication details.
+- For archival collections, list the collection name and repository without inventing specific document numbers.
+- Do NOT invent books, articles, or sources that may not exist.
+- Categorize into sections if helpful: Primary Sources, Secondary Sources, Archival Collections.
+
+OUTPUT FORMAT:
+Return the bibliography as plain text, one entry per line, in proper citation format.`,
+
+      index: `You are creating a professional book index. Index type: ${indexType}.
+
+RULES:
+- List entries alphabetically.
+- Use chapter numbers as page references (since we don't have actual page numbers).
+  Format: "Assembly line, Ch. 1, Ch. 2"
+- For a NAME INDEX: List all named individuals with their role/description.
+  Format: "Ford, Henry, Ch. 1-3" and "Sorensen, Charles, production manager, Ch. 1, Ch. 3"
+- For a SUBJECT INDEX: List key concepts, organizations, places, events, and technologies.
+- For a COMBINED INDEX: Include both names and subjects in one alphabetical list.
+- For SEPARATE: Output Name Index first, then Subject Index, each with its own heading.
+- Include "See also" cross-references where helpful.
+- Be comprehensive but not exhaustive — include terms a reader would actually look up.
+
+OUTPUT FORMAT:
+Return the index as plain text, one entry per line, alphabetically sorted.`
+    };
+
+    const userPrompts = {
+      endnotes: `Generate endnotes for this manuscript:\n\n${allProse.substring(0, 15000)}`,
+      bibliography: `Generate a bibliography based on sources referenced or implied in this manuscript:\n\n${allProse.substring(0, 15000)}`,
+      index: `Generate a ${indexType} index for this manuscript:\n\n${allProse.substring(0, 15000)}`
+    };
+
+    const maxTokens = { endnotes: 4000, bibliography: 3000, index: 4000 };
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: maxTokens[type] || 4000,
+          system: systemPrompts[type],
+          messages: [{
+            role: 'user',
+            content: userPrompts[type]
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        console.error(`Scholarly apparatus API error (${response.status})`);
+        return null;
+      }
+
+      const data = await response.json();
+      return data.content?.[0]?.text || null;
+    } catch (err) {
+      console.error(`Failed to generate ${type}:`, err);
+      return null;
     }
   }
 

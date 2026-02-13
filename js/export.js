@@ -16,7 +16,10 @@ class ExportManager {
    */
   async exportPlainText(projectId) {
     const project = await this.fs.getProject(projectId);
-    const chapters = await this.fs.getProjectChapters(projectId);
+    const allChapters = await this.fs.getProjectChapters(projectId);
+    const chapters = allChapters
+      .filter(ch => !ch.isTranslation)
+      .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
     let output = '';
 
     output += project.title.toUpperCase() + '\n';
@@ -43,7 +46,10 @@ class ExportManager {
    */
   async exportManuscriptFormat(projectId) {
     const project = await this.fs.getProject(projectId);
-    const chapters = await this.fs.getProjectChapters(projectId);
+    const allChapters = await this.fs.getProjectChapters(projectId);
+    const chapters = allChapters
+      .filter(ch => !ch.isTranslation)
+      .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
     const totalWords = chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0);
 
     let html = `<!DOCTYPE html>
@@ -165,7 +171,11 @@ ${project.coverImage ? `<div class="cover-page">
    */
   async exportStyledHtml(projectId) {
     const project = await this.fs.getProject(projectId);
-    const chapters = await this.fs.getProjectChapters(projectId);
+    const allChapters = await this.fs.getProjectChapters(projectId);
+    // Filter out translation chapters and sort by chapter number (matches DOCX export behavior)
+    const chapters = allChapters
+      .filter(ch => !ch.isTranslation)
+      .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
 
     let html = `<!DOCTYPE html>
 <html>
@@ -239,6 +249,70 @@ ${project.coverImage ? `<div class="cover-page">
     for (const chapter of chapters) {
       html += `\n<h1 class="chapter-title">${this._escapeHtml(chapter.title)}</h1>\n\n`;
       html += this._sanitizeContent(this._stripLeadingHeading(chapter.content)) + '\n';
+    }
+
+    // Scholarly apparatus sections (if generator callback is provided)
+    if (this._scholarlyGenerator && project.scholarlyApparatus) {
+      const sa = project.scholarlyApparatus;
+      const allProse = chapters.map((ch, idx) =>
+        `CHAPTER ${idx + 1}: ${ch.title || 'Untitled'}\n${(ch.content || '').replace(/<[^>]+>/g, '')}`
+      ).join('\n\n---\n\n');
+
+      if (sa.footnotesEnabled) {
+        try {
+          const endnotesText = await this._scholarlyGenerator('endnotes', allProse, chapters);
+          if (endnotesText) {
+            html += '<div style="page-break-before: always;"></div>';
+            html += '<h1 class="chapter-title">Notes</h1>';
+            const noteLines = endnotesText.split('\n').filter(l => l.trim());
+            for (const line of noteLines) {
+              const isHeading = line.startsWith('Chapter ') && line.includes(':');
+              html += isHeading
+                ? `<h3 style="margin-top: 1.5em; margin-bottom: 0.5em;">${this._escapeHtml(line)}</h3>`
+                : `<p style="font-size: 10pt; margin: 0.3em 0; padding-left: 2em; text-indent: -2em;">${this._escapeHtml(line)}</p>`;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to generate endnotes for HTML:', err);
+        }
+      }
+
+      if (sa.bibliographyEnabled) {
+        try {
+          const bibText = await this._scholarlyGenerator('bibliography', allProse, chapters);
+          if (bibText) {
+            html += '<div style="page-break-before: always;"></div>';
+            html += '<h1 class="chapter-title">Bibliography</h1>';
+            const bibLines = bibText.split('\n').filter(l => l.trim());
+            for (const line of bibLines) {
+              const isSection = /^(Primary|Secondary|Archival|Sources)/i.test(line);
+              html += isSection
+                ? `<h3 style="margin-top: 1.5em;">${this._escapeHtml(line)}</h3>`
+                : `<p style="font-size: 11pt; margin: 0.3em 0; padding-left: 3em; text-indent: -3em;">${this._escapeHtml(line)}</p>`;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to generate bibliography for HTML:', err);
+        }
+      }
+
+      if (sa.indexEnabled) {
+        try {
+          const indexText = await this._scholarlyGenerator('index', allProse, chapters, sa.indexType);
+          if (indexText) {
+            html += '<div style="page-break-before: always;"></div>';
+            html += '<h1 class="chapter-title">Index</h1>';
+            html += '<div style="column-count: 2; column-gap: 2em;">';
+            const indexLines = indexText.split('\n').filter(l => l.trim());
+            for (const line of indexLines) {
+              html += `<p style="font-size: 10pt; margin: 0.2em 0;">${this._escapeHtml(line)}</p>`;
+            }
+            html += '</div>';
+          }
+        } catch (err) {
+          console.error('Failed to generate index for HTML:', err);
+        }
+      }
     }
 
     html += '\n</body>\n</html>';
