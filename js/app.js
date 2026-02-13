@@ -13,7 +13,7 @@ import { ProseAnalyzer } from './prose.js';
 import { StructureManager } from './structure.js';
 import { ExportManager } from './export.js';
 import { Editor } from './editor.js';
-import { ProseGenerator } from './generate.js';
+import { ProseGenerator, IllustrationQueue, loadPuterSDK } from './generate.js';
 import { ErrorDatabase } from './error-database.js';
 import { CoverEditor } from './cover-editor.js';
 import { MultiAgentOrchestrator } from './multi-agent.js';
@@ -4090,6 +4090,9 @@ class App {
       }
     }
 
+    // Populate Illustrations tab
+    await this._populateIllustrationsTab(project);
+
     // Switch to requested tab and show modal
     this._switchSetupTab(tab);
     this._showSetupBookModal();
@@ -4426,6 +4429,1210 @@ class App {
     const guidance = this.structure.getPacingGuidance(templateId, targetWords, totalWords);
     const beats = this.structure.mapBeatsToManuscript(templateId, targetWords, totalWords);
     container.innerHTML = this._renderStructureInSettings(guidance, beats, project, templateId);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ILLUSTRATION SYSTEM
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Default illustration config for a new project.
+   */
+  _defaultIllustrationConfig() {
+    return {
+      enabled: false,
+      globalStyle: 'photorealistic',
+      globalColorMode: 'full_color',
+      globalStylePrompt: '',
+      defaultResolution: 300,
+      defaultSize: 'inline_full',
+      defaultFormat: 'png',
+      variantsPerImage: 3,
+      variantMode: 'multi_model',
+      parallelWorkers: 5,
+      outputWorkflow: ['vellum', 'embedded_docx'],
+      providers: {
+        'huggingface-flux': { enabled: true, concurrent: 2 },
+        'huggingface-sdxl': { enabled: true, concurrent: 1 },
+        'puter-sd3': { enabled: true, concurrent: 1 },
+        'puter-dalle3': { enabled: true, concurrent: 1 },
+      },
+      characterDescriptions: {},
+      settingDescriptions: {},
+      styleLock: null,
+      chapters: {},
+    };
+  }
+
+  /**
+   * Build provider pool config for IllustrationQueue from illustration config.
+   */
+  _buildProviderPools(config) {
+    const provs = config.providers || {};
+    return [
+      {
+        name: 'huggingface-flux',
+        enabled: provs['huggingface-flux']?.enabled !== false,
+        concurrent: provs['huggingface-flux']?.concurrent || 2,
+        model: 'black-forest-labs/FLUX.1-schnell',
+        generateFn: 'generateHF',
+        priority: 1,
+      },
+      {
+        name: 'huggingface-sdxl',
+        enabled: provs['huggingface-sdxl']?.enabled !== false,
+        concurrent: provs['huggingface-sdxl']?.concurrent || 1,
+        model: 'stabilityai/stable-diffusion-xl-base-1.0',
+        generateFn: 'generateHF',
+        priority: 2,
+      },
+      {
+        name: 'puter-sd3',
+        enabled: provs['puter-sd3']?.enabled !== false,
+        concurrent: provs['puter-sd3']?.concurrent || 1,
+        model: 'stabilityai/stable-diffusion-3-medium',
+        generateFn: 'generatePuterSD',
+        priority: 3,
+      },
+      {
+        name: 'puter-dalle3',
+        enabled: provs['puter-dalle3']?.enabled !== false,
+        concurrent: provs['puter-dalle3']?.concurrent || 1,
+        model: 'dall-e-3',
+        generateFn: 'generatePuterDalle',
+        priority: 4,
+      },
+    ];
+  }
+
+  /**
+   * Populate the Illustrations tab in the Book Setup modal.
+   */
+  async _populateIllustrationsTab(project) {
+    const config = project.illustrationConfig || this._defaultIllustrationConfig();
+
+    // Master enable checkbox
+    const enabledEl = document.getElementById('bs-ill-enabled');
+    if (enabledEl) enabledEl.checked = config.enabled;
+
+    const container = document.getElementById('ill-settings-container');
+    if (container) container.style.display = config.enabled ? '' : 'none';
+
+    // Global settings
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    setVal('bs-ill-style', config.globalStyle || 'photorealistic');
+    setVal('bs-ill-color-mode', config.globalColorMode || 'full_color');
+    setVal('bs-ill-format', config.defaultFormat || 'png');
+    setVal('bs-ill-resolution', config.defaultResolution || 300);
+    setVal('bs-ill-size', config.defaultSize || 'inline_full');
+    setVal('bs-ill-variants', config.variantsPerImage || 3);
+    setVal('bs-ill-workers', config.parallelWorkers || 5);
+
+    // Workflow checkboxes
+    const wf = config.outputWorkflow || ['vellum', 'embedded_docx'];
+    const vellumCb = document.getElementById('bs-ill-wf-vellum');
+    if (vellumCb) vellumCb.checked = wf.includes('vellum');
+    const docxCb = document.getElementById('bs-ill-wf-docx');
+    if (docxCb) docxCb.checked = wf.includes('embedded_docx');
+
+    // Provider checkboxes
+    const provs = config.providers || {};
+    const setCb = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = provs[key]?.enabled !== false;
+    };
+    setCb('bs-ill-prov-hf-flux', 'huggingface-flux');
+    setCb('bs-ill-prov-hf-sdxl', 'huggingface-sdxl');
+    setCb('bs-ill-prov-puter-sd3', 'puter-sd3');
+    setCb('bs-ill-prov-puter-dalle', 'puter-dalle3');
+
+    // Variant mode
+    const vmRadio = document.querySelector(`input[name="bs-ill-variant-mode"][value="${config.variantMode || 'multi_model'}"]`);
+    if (vmRadio) vmRadio.checked = true;
+
+    // Style prompt
+    const spEl = document.getElementById('bs-ill-style-prompt');
+    if (spEl) spEl.value = config.globalStylePrompt || '';
+
+    // Style lock
+    const slSection = document.getElementById('ill-style-lock-section');
+    const slDesc = document.getElementById('ill-style-lock-desc');
+    if (config.styleLock?.enabled) {
+      if (slSection) slSection.style.display = '';
+      if (slDesc) slDesc.textContent = config.styleLock.styleDescription || '';
+    } else {
+      if (slSection) slSection.style.display = 'none';
+    }
+
+    // Chapter list
+    await this._populateIllustrationChapterList(project, config);
+
+    // Character descriptions
+    this._renderIllustrationDescriptions('ill-character-list', config.characterDescriptions || {}, 'character');
+
+    // Setting descriptions
+    this._renderIllustrationDescriptions('ill-setting-list', config.settingDescriptions || {}, 'setting');
+
+    // Reset review containers
+    const promptReview = document.getElementById('ill-prompt-review-container');
+    if (promptReview) promptReview.style.display = 'none';
+    const imageReview = document.getElementById('ill-image-review-container');
+    if (imageReview) imageReview.style.display = 'none';
+    const progressPanel = document.getElementById('ill-progress-panel');
+    if (progressPanel) progressPanel.style.display = 'none';
+  }
+
+  /**
+   * Populate chapter list with checkboxes and illustration counts.
+   */
+  async _populateIllustrationChapterList(project, config) {
+    const listEl = document.getElementById('ill-chapter-list');
+    if (!listEl) return;
+
+    const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+    const chConfig = config.chapters || {};
+
+    let html = '';
+    for (const ch of chapters) {
+      if (ch.isTranslation) continue;
+      const chKey = ch.id;
+      const chEnabled = chConfig[chKey]?.enabled || false;
+      const chCount = chConfig[chKey]?.count || 1;
+
+      html += `<div class="ill-chapter-row" data-chapter-id="${chKey}">
+        <input type="checkbox" class="ill-ch-check" ${chEnabled ? 'checked' : ''} data-ch-id="${chKey}">
+        <span class="ill-ch-label">Chapter ${ch.chapterNumber}: ${ch.title || 'Untitled'}</span>
+        <span class="ill-ch-count">
+          <input type="number" class="form-input ill-ch-count-input" value="${chCount}" min="0" max="20" data-ch-id="${chKey}" style="width:50px;padding:2px 4px;font-size:0.85rem;">
+        </span>
+      </div>
+      <div class="ill-chapter-expand" id="ill-expand-${chKey}" style="display:${chEnabled && chCount > 0 ? '' : 'none'};">
+        ${this._renderChapterIllustrationCards(chKey, chCount, config)}
+      </div>`;
+    }
+
+    listEl.innerHTML = html;
+
+    // Select All checkbox
+    const selectAllEl = document.getElementById('bs-ill-select-all');
+    if (selectAllEl) {
+      selectAllEl.checked = chapters.filter(c => !c.isTranslation).every(c => chConfig[c.id]?.enabled);
+    }
+  }
+
+  /**
+   * Render per-illustration config cards within a chapter expansion panel.
+   */
+  _renderChapterIllustrationCards(chapterId, count, config) {
+    let html = '';
+    const illConfig = this._illustrationChapterData?.[chapterId] || [];
+
+    for (let i = 0; i < count; i++) {
+      const illData = illConfig[i] || {};
+      const source = illData.source || 'auto';
+
+      html += `<div class="ill-card" data-ch-id="${chapterId}" data-ill-index="${i}">
+        <h4>Illustration ${i + 1} of ${count}</h4>
+        <div class="form-group">
+          <label>Source</label>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <label class="radio-option" style="font-size:0.85rem;"><input type="radio" name="ill-source-${chapterId}-${i}" value="auto" ${source === 'auto' ? 'checked' : ''}> Auto (from prose)</label>
+            <label class="radio-option" style="font-size:0.85rem;"><input type="radio" name="ill-source-${chapterId}-${i}" value="user_prompt" ${source === 'user_prompt' ? 'checked' : ''}> User Prompt</label>
+            <label class="radio-option" style="font-size:0.85rem;"><input type="radio" name="ill-source-${chapterId}-${i}" value="specific_location" ${source === 'specific_location' ? 'checked' : ''}> Specific Location</label>
+          </div>
+        </div>
+        <div class="ill-user-prompt-area" style="display:${source === 'user_prompt' ? '' : 'none'};">
+          <div class="form-group">
+            <label>Prompt</label>
+            <textarea class="form-input ill-user-prompt" rows="2" data-ch-id="${chapterId}" data-ill-index="${i}" placeholder="Describe what the illustration should show...">${illData.userPrompt || ''}</textarea>
+          </div>
+        </div>
+        <div class="ill-location-area" style="display:${source === 'specific_location' ? '' : 'none'};">
+          <div class="form-group">
+            <label>Location Type</label>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <label class="radio-option" style="font-size:0.85rem;"><input type="radio" name="ill-loc-${chapterId}-${i}" value="after_paragraph" ${(illData.locationType || 'after_paragraph') === 'after_paragraph' ? 'checked' : ''}> After paragraph # <input type="number" class="form-input ill-loc-value" value="${illData.locationValue || 1}" min="1" style="width:50px;display:inline;padding:2px 4px;font-size:0.85rem;"></label>
+              <label class="radio-option" style="font-size:0.85rem;"><input type="radio" name="ill-loc-${chapterId}-${i}" value="chapter_opener" ${illData.locationType === 'chapter_opener' ? 'checked' : ''}> Chapter opener</label>
+              <label class="radio-option" style="font-size:0.85rem;"><input type="radio" name="ill-loc-${chapterId}-${i}" value="chapter_closer" ${illData.locationType === 'chapter_closer' ? 'checked' : ''}> Chapter closer</label>
+            </div>
+          </div>
+        </div>
+        <div class="setup-form-row" style="margin-top:8px;">
+          <div class="form-group">
+            <label>Override Style</label>
+            <select class="form-input ill-override-style" data-ch-id="${chapterId}" data-ill-index="${i}">
+              <option value="">Use Global</option>
+              <option value="photorealistic" ${illData.overrideStyle === 'photorealistic' ? 'selected' : ''}>Photorealistic</option>
+              <option value="watercolor" ${illData.overrideStyle === 'watercolor' ? 'selected' : ''}>Watercolor</option>
+              <option value="pencil_sketch" ${illData.overrideStyle === 'pencil_sketch' ? 'selected' : ''}>Pencil Sketch</option>
+              <option value="oil_painting" ${illData.overrideStyle === 'oil_painting' ? 'selected' : ''}>Oil Painting</option>
+              <option value="storybook" ${illData.overrideStyle === 'storybook' ? 'selected' : ''}>Storybook</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Override Size</label>
+            <select class="form-input ill-override-size" data-ch-id="${chapterId}" data-ill-index="${i}">
+              <option value="">Use Global</option>
+              <option value="inline_small" ${illData.overrideSize === 'inline_small' ? 'selected' : ''}>Inline Small</option>
+              <option value="inline_full" ${illData.overrideSize === 'inline_full' ? 'selected' : ''}>Inline Full</option>
+              <option value="full_page" ${illData.overrideSize === 'full_page' ? 'selected' : ''}>Full Page</option>
+              <option value="chapter_header" ${illData.overrideSize === 'chapter_header' ? 'selected' : ''}>Chapter Header</option>
+              <option value="vignette" ${illData.overrideSize === 'vignette' ? 'selected' : ''}>Vignette</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <button class="btn btn-secondary btn-sm ill-ref-search-btn" data-ch-id="${chapterId}" data-ill-index="${i}">Search Reference Images</button>
+          <span class="ill-ref-count" style="font-size:0.8rem;color:var(--text-muted);margin-left:8px;">${(illData.referenceImages || []).length > 0 ? (illData.referenceImages.length + ' reference(s)') : ''}</span>
+        </div>
+      </div>`;
+    }
+
+    if (count > 0) {
+      html += `<div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn btn-secondary btn-sm ill-add-ill-btn" data-ch-id="${chapterId}">+ Add Illustration</button>
+        <button class="btn btn-secondary btn-sm ill-remove-ill-btn" data-ch-id="${chapterId}">Remove Last</button>
+      </div>`;
+    }
+
+    return html;
+  }
+
+  /**
+   * Render character or setting description entries.
+   */
+  _renderIllustrationDescriptions(containerId, descriptions, type) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    let html = '';
+    for (const [name, desc] of Object.entries(descriptions)) {
+      html += `<div class="ill-desc-entry" data-desc-type="${type}" data-desc-name="${name}">
+        <div class="ill-desc-fields">
+          <input type="text" class="form-input ill-desc-name" value="${this._escapeHtml(name)}" placeholder="${type === 'character' ? 'Character Name' : 'Setting Name'}" style="font-weight:600;font-size:0.85rem;">
+          <textarea class="form-input ill-desc-text" rows="2" placeholder="Visual description..." style="font-size:0.85rem;">${this._escapeHtml(desc)}</textarea>
+        </div>
+        <div class="ill-desc-actions">
+          <button class="btn btn-sm ill-desc-delete" data-desc-type="${type}" data-desc-name="${name}">Delete</button>
+        </div>
+      </div>`;
+    }
+
+    container.innerHTML = html;
+  }
+
+  /**
+   * Read the current illustrations config from the UI and return it.
+   */
+  _readIllustrationConfig() {
+    const getVal = (id) => document.getElementById(id)?.value || '';
+    const getCb = (id) => document.getElementById(id)?.checked || false;
+
+    const config = {
+      enabled: getCb('bs-ill-enabled'),
+      globalStyle: getVal('bs-ill-style') || 'photorealistic',
+      globalColorMode: getVal('bs-ill-color-mode') || 'full_color',
+      globalStylePrompt: getVal('bs-ill-style-prompt'),
+      defaultResolution: parseInt(getVal('bs-ill-resolution')) || 300,
+      defaultSize: getVal('bs-ill-size') || 'inline_full',
+      defaultFormat: getVal('bs-ill-format') || 'png',
+      variantsPerImage: parseInt(getVal('bs-ill-variants')) || 3,
+      variantMode: document.querySelector('input[name="bs-ill-variant-mode"]:checked')?.value || 'multi_model',
+      parallelWorkers: parseInt(getVal('bs-ill-workers')) || 5,
+      outputWorkflow: [],
+      providers: {
+        'huggingface-flux': { enabled: getCb('bs-ill-prov-hf-flux'), concurrent: 2 },
+        'huggingface-sdxl': { enabled: getCb('bs-ill-prov-hf-sdxl'), concurrent: 1 },
+        'puter-sd3': { enabled: getCb('bs-ill-prov-puter-sd3'), concurrent: 1 },
+        'puter-dalle3': { enabled: getCb('bs-ill-prov-puter-dalle'), concurrent: 1 },
+      },
+      characterDescriptions: {},
+      settingDescriptions: {},
+      styleLock: this._currentProject?.illustrationConfig?.styleLock || null,
+      chapters: {},
+    };
+
+    // Workflow
+    if (getCb('bs-ill-wf-vellum')) config.outputWorkflow.push('vellum');
+    if (getCb('bs-ill-wf-docx')) config.outputWorkflow.push('embedded_docx');
+
+    // Character descriptions
+    document.querySelectorAll('#ill-character-list .ill-desc-entry').forEach(entry => {
+      const name = entry.querySelector('.ill-desc-name')?.value?.trim();
+      const desc = entry.querySelector('.ill-desc-text')?.value?.trim();
+      if (name && desc) config.characterDescriptions[name] = desc;
+    });
+
+    // Setting descriptions
+    document.querySelectorAll('#ill-setting-list .ill-desc-entry').forEach(entry => {
+      const name = entry.querySelector('.ill-desc-name')?.value?.trim();
+      const desc = entry.querySelector('.ill-desc-text')?.value?.trim();
+      if (name && desc) config.settingDescriptions[name] = desc;
+    });
+
+    // Chapters
+    document.querySelectorAll('.ill-ch-check').forEach(cb => {
+      const chId = cb.dataset.chId;
+      const countInput = document.querySelector(`.ill-ch-count-input[data-ch-id="${chId}"]`);
+      config.chapters[chId] = {
+        enabled: cb.checked,
+        count: parseInt(countInput?.value) || 1,
+      };
+    });
+
+    return config;
+  }
+
+  /**
+   * Save current illustration config to Firestore.
+   */
+  async _saveIllustrationConfig() {
+    if (!this.state.currentProjectId) return;
+    const config = this._readIllustrationConfig();
+    await this.fs.updateProject(this.state.currentProjectId, { illustrationConfig: config });
+    if (this._currentProject) this._currentProject.illustrationConfig = config;
+  }
+
+  /**
+   * Main entry point: Generate Illustrations button.
+   */
+  async _startIllustrationGeneration() {
+    const config = this._readIllustrationConfig();
+    await this._saveIllustrationConfig();
+
+    if (!this.generator.hasApiKey()) {
+      this._showIllustrationError('No API key set. Go to Settings to add your Anthropic API key.');
+      return;
+    }
+
+    // Collect chapters to illustrate
+    const enabledChapters = Object.entries(config.chapters)
+      .filter(([_, v]) => v.enabled && v.count > 0);
+
+    if (enabledChapters.length === 0) {
+      this._showIllustrationError('No chapters selected for illustration.');
+      return;
+    }
+
+    // Detect genre-specific modes
+    const genre = (this._currentProject?.genre || '').toLowerCase();
+    const isChildrens = genre.includes('children') || genre.includes('picture');
+    const isHistorical = genre.includes('histor') || genre.includes('biograph') || genre.includes('nonfiction') || genre.includes('memoir');
+
+    // Children's book mode: increase variants, auto-generate character sheets
+    if (isChildrens) {
+      config.variantsPerImage = Math.max(config.variantsPerImage, 4);
+      this._showIllustrationStatus('Children\'s book mode: generating character sheets first...');
+
+      // Generate character reference sheets for each character
+      const charDescs = config.characterDescriptions || {};
+      for (const [name, desc] of Object.entries(charDescs)) {
+        try {
+          const sheet = await this.generator.generateCharacterSheet(desc, config);
+          if (sheet?.imageData) {
+            if (!this._characterSheets) this._characterSheets = {};
+            this._characterSheets[name] = sheet.imageData;
+          }
+        } catch (e) {
+          console.warn('Character sheet generation failed for', name, e.message);
+        }
+      }
+    }
+
+    // Historical mode: detect period for post-processing
+    if (isHistorical) {
+      this._historicalPeriod = this._detectHistoricalPeriod(this._currentProject);
+    }
+
+    this._showIllustrationStatus('Extracting scenes from prose...');
+
+    try {
+      // Store working data
+      this._illustrationData = [];
+      this._illustrationChapterData = this._illustrationChapterData || {};
+
+      // Phase I-1: Scene Extraction
+      const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+      const chapterMap = {};
+      for (const ch of chapters) { chapterMap[ch.id] = ch; }
+
+      const EXTRACT_BATCH = 5;
+      for (let i = 0; i < enabledChapters.length; i += EXTRACT_BATCH) {
+        const batch = enabledChapters.slice(i, i + EXTRACT_BATCH);
+
+        const extractPromises = batch.map(async ([chId, chConfig]) => {
+          const chapter = chapterMap[chId];
+          if (!chapter || !chapter.content) return [];
+
+          const prose = chapter.content.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
+          if (!prose) return [];
+
+          // Check per-illustration config for user prompts
+          const illChapterData = this._illustrationChapterData[chId] || [];
+          const illustrations = [];
+
+          for (let idx = 0; idx < chConfig.count; idx++) {
+            const illData = illChapterData[idx] || {};
+            const source = illData.source || 'auto';
+
+            if (source === 'user_prompt' && illData.userPrompt) {
+              illustrations.push({
+                id: `ill_${chId}_${idx}`,
+                chapterId: chId,
+                chapterNumber: chapter.chapterNumber,
+                chapterTitle: chapter.title,
+                illustrationIndex: idx,
+                source: 'user_prompt',
+                scene: {
+                  sourceText: illData.userPrompt,
+                  characters: [],
+                  setting: '',
+                  action: illData.userPrompt,
+                  mood: '',
+                  lighting: '',
+                  keyObjects: [],
+                  compositionHint: '',
+                  paragraphIndex: 0,
+                  insertAfter: illData.locationValue || idx * 3,
+                },
+                overrideStyle: illData.overrideStyle || '',
+                overrideSize: illData.overrideSize || '',
+                referenceImages: illData.referenceImages || [],
+              });
+            } else if (source === 'auto') {
+              // Will be extracted from prose
+              illustrations.push({ chapterId: chId, chapterNumber: chapter.chapterNumber, chapterTitle: chapter.title, illustrationIndex: idx, source: 'auto', _needsExtraction: true });
+            } else {
+              illustrations.push({
+                id: `ill_${chId}_${idx}`,
+                chapterId: chId,
+                chapterNumber: chapter.chapterNumber,
+                chapterTitle: chapter.title,
+                illustrationIndex: idx,
+                source: 'specific_location',
+                scene: {
+                  sourceText: prose.slice(0, 2000),
+                  characters: [],
+                  setting: '',
+                  action: '',
+                  mood: '',
+                  lighting: '',
+                  keyObjects: [],
+                  compositionHint: '',
+                  paragraphIndex: illData.locationValue || 0,
+                  insertAfter: illData.locationValue || 0,
+                },
+                overrideStyle: illData.overrideStyle || '',
+                overrideSize: illData.overrideSize || '',
+                referenceImages: illData.referenceImages || [],
+              });
+            }
+          }
+
+          // Extract scenes for auto illustrations
+          const autoIlls = illustrations.filter(il => il._needsExtraction);
+          if (autoIlls.length > 0) {
+            try {
+              const scenes = await this.generator.extractScenesFromProse(prose, autoIlls.length, config);
+              for (let s = 0; s < autoIlls.length; s++) {
+                const scene = scenes[s] || {
+                  paragraphIndex: s * 3,
+                  insertAfter: s * 3,
+                  characters: [],
+                  setting: '',
+                  action: '',
+                  mood: '',
+                  lighting: '',
+                  keyObjects: [],
+                  compositionHint: '',
+                  sourceText: prose.slice(0, 500),
+                };
+                autoIlls[s].id = `ill_${chId}_${autoIlls[s].illustrationIndex}`;
+                autoIlls[s].scene = scene;
+                delete autoIlls[s]._needsExtraction;
+              }
+            } catch (e) {
+              console.warn('Scene extraction failed for chapter', chId, e);
+              for (const ill of autoIlls) {
+                ill.id = `ill_${chId}_${ill.illustrationIndex}`;
+                ill.scene = { sourceText: prose.slice(0, 500), characters: [], setting: '', action: '', mood: '', lighting: '', keyObjects: [], compositionHint: '', paragraphIndex: 0, insertAfter: 0 };
+                delete ill._needsExtraction;
+              }
+            }
+          }
+
+          return illustrations;
+        });
+
+        const batchResults = await Promise.all(extractPromises);
+        for (const ills of batchResults) {
+          this._illustrationData.push(...ills);
+        }
+
+        this._showIllustrationStatus(`Extracted scenes: ${this._illustrationData.length} illustrations from ${Math.min(i + EXTRACT_BATCH, enabledChapters.length)} chapters...`);
+      }
+
+      if (this._illustrationData.length === 0) {
+        this._showIllustrationError('No illustrations to generate. Check that chapters have content.');
+        return;
+      }
+
+      // Phase I-3: Prompt Generation
+      this._showIllustrationStatus('Generating illustration prompts...');
+
+      const promptConfig = {
+        ...config,
+        illustrationStyle: config.globalStyle,
+        colorMode: config.globalColorMode,
+      };
+
+      const promptResults = await this.generator.generateAllIllustrationPrompts(
+        this._illustrationData, promptConfig,
+        (done, total) => this._showIllustrationStatus(`Generating prompts: ${done} of ${total}...`)
+      );
+
+      this._illustrationData = promptResults;
+
+      // Save to Firestore
+      for (const ill of this._illustrationData) {
+        await this.fs.saveIllustration(this.state.currentProjectId, {
+          id: ill.id,
+          chapterId: ill.chapterId,
+          chapterNumber: ill.chapterNumber,
+          illustrationIndex: ill.illustrationIndex,
+          source: ill.source,
+          scene: ill.scene,
+          prompt: ill.prompt,
+          negativePrompt: ill.negativePrompt,
+          altText: ill.altText,
+          caption: ill.caption,
+          compositionNotes: ill.compositionNotes,
+          state: 'prompt_ready',
+          style: ill.overrideStyle || config.globalStyle,
+          colorMode: config.globalColorMode,
+          size: ill.overrideSize || config.defaultSize,
+          resolution: config.defaultResolution,
+        });
+      }
+
+      this._hideIllustrationStatus();
+
+      // Phase I-4: Show Prompt Review UI
+      this._showPromptReview();
+
+    } catch (err) {
+      console.error('Illustration generation error:', err);
+      this._showIllustrationError('Error: ' + err.message);
+    }
+  }
+
+  /**
+   * Show the prompt review UI.
+   */
+  _showPromptReview() {
+    const container = document.getElementById('ill-prompt-review-container');
+    const list = document.getElementById('ill-prompt-review-list');
+    if (!container || !list) return;
+
+    container.style.display = '';
+
+    let html = '';
+    for (const ill of (this._illustrationData || [])) {
+      html += `<div class="ill-prompt-card" data-ill-id="${ill.id}">
+        <h4>Chapter ${ill.chapterNumber}: Illustration ${ill.illustrationIndex + 1}</h4>
+        <div class="form-group">
+          <label>Prompt</label>
+          <textarea class="form-input ill-prompt-text" rows="4" data-ill-id="${ill.id}">${this._escapeHtml(ill.prompt)}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Negative Prompt</label>
+          <textarea class="form-input ill-neg-prompt-text" rows="2" data-ill-id="${ill.id}">${this._escapeHtml(ill.negativePrompt)}</textarea>
+        </div>
+        ${ill.compositionNotes ? `<p style="font-size:0.8rem;color:var(--text-muted);"><strong>Composition:</strong> ${this._escapeHtml(ill.compositionNotes)}</p>` : ''}
+        ${ill.altText ? `<p style="font-size:0.8rem;color:var(--text-muted);"><strong>Alt text:</strong> ${this._escapeHtml(ill.altText)}</p>` : ''}
+        <div class="ill-source-prose">${this._escapeHtml((ill.scene?.sourceText || '').slice(0, 300))}${(ill.scene?.sourceText || '').length > 300 ? '...' : ''}</div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-sm btn-primary ill-approve-prompt" data-ill-id="${ill.id}">Approve</button>
+          <button class="btn btn-sm btn-secondary ill-regen-prompt" data-ill-id="${ill.id}">Regenerate</button>
+          <button class="btn btn-sm ill-skip-prompt" data-ill-id="${ill.id}">Skip</button>
+        </div>
+      </div>`;
+    }
+
+    list.innerHTML = html;
+  }
+
+  /**
+   * Approve all prompts and move to image generation.
+   */
+  async _approveAllPrompts() {
+    // Update prompts from textareas
+    for (const ill of (this._illustrationData || [])) {
+      const promptEl = document.querySelector(`.ill-prompt-text[data-ill-id="${ill.id}"]`);
+      const negEl = document.querySelector(`.ill-neg-prompt-text[data-ill-id="${ill.id}"]`);
+      if (promptEl) ill.prompt = promptEl.value;
+      if (negEl) ill.negativePrompt = negEl.value;
+      ill.state = 'prompt_approved';
+    }
+
+    // Hide prompt review
+    const container = document.getElementById('ill-prompt-review-container');
+    if (container) container.style.display = 'none';
+  }
+
+  /**
+   * Start image generation using parallel queue.
+   */
+  async _startImageGeneration() {
+    await this._approveAllPrompts();
+
+    const config = this._readIllustrationConfig();
+    const pools = this._buildProviderPools(config);
+
+    this._illustrationQueue = new IllustrationQueue(this.generator, pools);
+
+    // Show progress panel
+    const progressPanel = document.getElementById('ill-progress-panel');
+    if (progressPanel) progressPanel.style.display = '';
+
+    // Prepare illustrations for queue
+    const queueItems = (this._illustrationData || [])
+      .filter(ill => ill.state === 'prompt_approved' || ill.state === 'prompt_ready')
+      .map(ill => ({
+        id: ill.id,
+        prompt: ill.prompt,
+        negativePrompt: ill.negativePrompt,
+        variantsRequested: config.variantsPerImage || 3,
+        config: {
+          size: ill.overrideSize || config.defaultSize,
+          style: ill.overrideStyle || config.globalStyle,
+        },
+      }));
+
+    if (queueItems.length === 0) {
+      this._showIllustrationError('No approved prompts to generate.');
+      return;
+    }
+
+    // Set up progress callbacks
+    this._illustrationVariants = {};
+
+    this._illustrationQueue.onProgress = (done, total) => {
+      const bar = document.getElementById('ill-progress-bar');
+      const text = document.getElementById('ill-progress-text');
+      if (bar) bar.style.width = `${Math.round(done / total * 100)}%`;
+      if (text) text.textContent = `${done} of ${total} images`;
+    };
+
+    this._illustrationQueue.onImageReady = async (illId, result, providerName, variantIndex) => {
+      // Apply historical post-processing if applicable
+      let imageData = result.imageData;
+      if (this._historicalPeriod && this._historicalPeriod !== 'post-2000') {
+        try {
+          imageData = await this._applyHistoricalPostProcessing(imageData);
+        } catch (e) {
+          console.warn('Historical filter failed:', e);
+        }
+      }
+
+      if (!this._illustrationVariants[illId]) this._illustrationVariants[illId] = [];
+      this._illustrationVariants[illId].push({
+        index: variantIndex,
+        imageData: imageData,
+        model: result.model,
+        provider: result.provider,
+        providerName: providerName,
+      });
+    };
+
+    this._illustrationQueue.onError = (illId, err, providerName) => {
+      console.warn(`Illustration ${illId} failed on ${providerName}:`, err.message);
+    };
+
+    this._illustrationQueue.onWorkerUpdate = (pools, job, providerName, status) => {
+      const workersEl = document.getElementById('ill-active-workers');
+      const statsEl = document.getElementById('ill-provider-stats');
+      if (workersEl) {
+        let wHtml = '';
+        for (const p of pools) {
+          const icon = p.active > 0 ? '&#9203;' : '&#10003;';
+          wHtml += `<div>${p.name}: ${p.active}/${p.concurrent} active</div>`;
+        }
+        workersEl.innerHTML = wHtml;
+      }
+      if (statsEl) {
+        statsEl.innerHTML = pools.map(p =>
+          `${p.name}: ${p.totalGenerated} done, ${p.totalFailed} failed`
+        ).join(' | ');
+      }
+    };
+
+    this._showIllustrationStatus('Generating images...');
+
+    try {
+      await this._illustrationQueue.processQueue(queueItems, config.variantMode);
+
+      // Save variants to Firestore
+      for (const [illId, variants] of Object.entries(this._illustrationVariants)) {
+        await this.fs.saveIllustration(this.state.currentProjectId, {
+          id: illId,
+          variants: variants.map(v => ({
+            index: v.index,
+            imageData: v.imageData.slice(0, 100) + '...', // Don't store full data in Firestore
+            model: v.model,
+            provider: v.provider,
+          })),
+          state: 'review',
+        });
+      }
+
+      this._hideIllustrationStatus();
+      if (progressPanel) progressPanel.style.display = 'none';
+
+      // Show image review
+      this._showImageReview();
+
+    } catch (err) {
+      console.error('Image generation error:', err);
+      this._showIllustrationError('Image generation error: ' + err.message);
+    }
+  }
+
+  /**
+   * Show the image review UI.
+   */
+  _showImageReview() {
+    const container = document.getElementById('ill-image-review-container');
+    const list = document.getElementById('ill-image-review-list');
+    if (!container || !list) return;
+
+    container.style.display = '';
+
+    let html = '';
+    let approvedCount = 0;
+    let totalCount = 0;
+
+    for (const ill of (this._illustrationData || [])) {
+      const variants = this._illustrationVariants?.[ill.id] || [];
+      if (variants.length === 0) continue;
+      totalCount++;
+
+      html += `<div class="ill-review-card" data-ill-id="${ill.id}">
+        <h4>Chapter ${ill.chapterNumber}: Illustration ${ill.illustrationIndex + 1}</h4>
+        <div class="ill-variant-grid">`;
+
+      for (let v = 0; v < variants.length; v++) {
+        const variant = variants[v];
+        html += `<div class="ill-variant-card ${v === 0 ? 'selected' : ''}" data-ill-id="${ill.id}" data-variant-index="${v}">
+          <img src="${variant.imageData}" alt="Variant ${v + 1}" loading="lazy">
+          <div class="ill-variant-label">via ${variant.providerName || variant.provider}</div>
+        </div>`;
+      }
+
+      html += `</div>
+        <div class="ill-review-actions">
+          <button class="btn btn-sm btn-primary ill-approve-img" data-ill-id="${ill.id}">Approve Selected</button>
+          <button class="btn btn-sm btn-secondary ill-regen-img" data-ill-id="${ill.id}">Regenerate All</button>
+          <button class="btn btn-sm ill-download-img" data-ill-id="${ill.id}">Download Selected</button>
+          <button class="btn btn-sm ill-lock-style-btn" data-ill-id="${ill.id}">Lock Style</button>
+          <button class="btn btn-sm btn-danger ill-delete-img" data-ill-id="${ill.id}">Delete</button>
+        </div>
+      </div>`;
+    }
+
+    list.innerHTML = html;
+
+    const summary = document.getElementById('ill-review-summary');
+    if (summary) {
+      summary.textContent = `${totalCount} illustrations, ${approvedCount} approved. Total cost: $0.00`;
+    }
+  }
+
+  /**
+   * Handle variant selection click.
+   */
+  _selectVariant(illId, variantIndex) {
+    const cards = document.querySelectorAll(`.ill-variant-card[data-ill-id="${illId}"]`);
+    cards.forEach(c => c.classList.toggle('selected', parseInt(c.dataset.variantIndex) === variantIndex));
+  }
+
+  /**
+   * Get selected variant index for an illustration.
+   */
+  _getSelectedVariant(illId) {
+    const sel = document.querySelector(`.ill-variant-card.selected[data-ill-id="${illId}"]`);
+    return sel ? parseInt(sel.dataset.variantIndex) : 0;
+  }
+
+  /**
+   * Download a single illustration image.
+   */
+  _downloadIllustrationImage(illId) {
+    const ill = (this._illustrationData || []).find(i => i.id === illId);
+    if (!ill) return;
+
+    const variantIdx = this._getSelectedVariant(illId);
+    const variants = this._illustrationVariants?.[illId] || [];
+    const variant = variants[variantIdx];
+    if (!variant) return;
+
+    const shortDesc = (ill.scene?.action || 'illustration').slice(0, 30).replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = `ch${String(ill.chapterNumber).padStart(2, '0')}_img${String(ill.illustrationIndex + 1).padStart(2, '0')}_${shortDesc}.png`;
+
+    const a = document.createElement('a');
+    a.href = variant.imageData;
+    a.download = fileName;
+    a.click();
+  }
+
+  /**
+   * Download all illustrations as ZIP.
+   */
+  async _downloadAllAsZip() {
+    // Check for JSZip
+    if (typeof JSZip === 'undefined') {
+      // Try to load it
+      try {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        document.head.appendChild(script);
+        await new Promise((resolve, reject) => {
+          script.onload = resolve;
+          script.onerror = reject;
+        });
+      } catch (e) {
+        this._showIllustrationError('Failed to load JSZip library for ZIP creation.');
+        return;
+      }
+    }
+
+    const zip = new JSZip();
+    const project = this._currentProject;
+    const title = project?.title || 'Book';
+
+    for (const ill of (this._illustrationData || [])) {
+      const variantIdx = this._getSelectedVariant(ill.id);
+      const variants = this._illustrationVariants?.[ill.id] || [];
+      const variant = variants[variantIdx] || variants[0];
+      if (!variant) continue;
+
+      const folder = zip.folder(`chapter_${String(ill.chapterNumber).padStart(2, '0')}`);
+      const shortDesc = (ill.scene?.action || 'illustration').slice(0, 30).replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `ch${String(ill.chapterNumber).padStart(2, '0')}_img${String(ill.illustrationIndex + 1).padStart(2, '0')}_${shortDesc}.png`;
+
+      const base64Data = variant.imageData.split(',')[1];
+      if (base64Data) folder.file(fileName, base64Data, { base64: true });
+    }
+
+    // Add placement guide
+    const guide = this._generatePlacementGuide();
+    zip.file('VELLUM_PLACEMENT_GUIDE.md', guide);
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${title.replace(/[^a-zA-Z0-9]/g, '_')}_Illustrations.zip`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /**
+   * Generate the Vellum placement guide markdown.
+   */
+  _generatePlacementGuide() {
+    const project = this._currentProject;
+    let guide = `# Vellum Image Placement Guide\n## Book: ${project?.title || 'Untitled'}\n\n`;
+    guide += `### How to Use\n1. Import the DOCX into Vellum\n2. Find the placeholder markers in each chapter\n3. Delete the placeholder text\n4. Drag the corresponding image from the companion folder\n5. Set to "Inline" or "Full Page" as indicated\n\n`;
+
+    let currentChapter = -1;
+    for (const ill of (this._illustrationData || [])) {
+      if (ill.chapterNumber !== currentChapter) {
+        currentChapter = ill.chapterNumber;
+        guide += `### Chapter ${currentChapter}: ${ill.chapterTitle || 'Untitled'}\n\n`;
+      }
+      const shortDesc = (ill.scene?.action || 'illustration').slice(0, 30).replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `ch${String(ill.chapterNumber).padStart(2, '0')}_img${String(ill.illustrationIndex + 1).padStart(2, '0')}_${shortDesc}.png`;
+      const size = ill.overrideSize || this._currentProject?.illustrationConfig?.defaultSize || 'inline_full';
+
+      guide += `**Image ${ill.illustrationIndex + 1}:** ${fileName}\n`;
+      guide += `- Insert after paragraph ${ill.scene?.insertAfter || 0}\n`;
+      guide += `- Type: ${size.replace(/_/g, ' ')}\n`;
+      if (ill.caption) guide += `- Caption: ${ill.caption}\n`;
+      guide += `\n`;
+    }
+
+    return guide;
+  }
+
+  /**
+   * Lock style from selected variant.
+   */
+  async _lockStyleFromIllustration(illId) {
+    const variantIdx = this._getSelectedVariant(illId);
+    const variants = this._illustrationVariants?.[illId] || [];
+    const variant = variants[variantIdx];
+    if (!variant) return;
+
+    this._showIllustrationStatus('Analyzing image style...');
+
+    try {
+      const styleLock = await this.generator.lockStyleFromImage(variant.imageData);
+      const config = this._readIllustrationConfig();
+      config.styleLock = styleLock;
+      await this.fs.updateProject(this.state.currentProjectId, { illustrationConfig: config });
+      if (this._currentProject) this._currentProject.illustrationConfig = config;
+
+      const slSection = document.getElementById('ill-style-lock-section');
+      const slDesc = document.getElementById('ill-style-lock-desc');
+      if (slSection) slSection.style.display = '';
+      if (slDesc) slDesc.textContent = styleLock.styleDescription;
+
+      this._hideIllustrationStatus();
+    } catch (err) {
+      this._showIllustrationError('Style lock failed: ' + err.message);
+    }
+  }
+
+  /**
+   * Unlock style.
+   */
+  async _unlockStyle() {
+    const config = this._readIllustrationConfig();
+    config.styleLock = null;
+    await this.fs.updateProject(this.state.currentProjectId, { illustrationConfig: config });
+    if (this._currentProject) this._currentProject.illustrationConfig = config;
+
+    const slSection = document.getElementById('ill-style-lock-section');
+    if (slSection) slSection.style.display = 'none';
+  }
+
+  /**
+   * Open image lightbox.
+   */
+  _openLightbox(imageSrc) {
+    const overlay = document.getElementById('ill-lightbox-overlay');
+    const img = document.getElementById('ill-lightbox-img');
+    if (overlay && img) {
+      img.src = imageSrc;
+      overlay.style.display = 'flex';
+    }
+  }
+
+  _closeLightbox() {
+    const overlay = document.getElementById('ill-lightbox-overlay');
+    if (overlay) overlay.style.display = 'none';
+  }
+
+  _showIllustrationStatus(msg) {
+    const statusEl = document.getElementById('ill-generate-status');
+    const textEl = document.getElementById('ill-generate-status-text');
+    if (statusEl) statusEl.style.display = '';
+    if (textEl) textEl.textContent = msg;
+
+    const errEl = document.getElementById('ill-generate-error');
+    if (errEl) errEl.style.display = 'none';
+  }
+
+  _hideIllustrationStatus() {
+    const statusEl = document.getElementById('ill-generate-status');
+    if (statusEl) statusEl.style.display = 'none';
+  }
+
+  _showIllustrationError(msg) {
+    const errEl = document.getElementById('ill-generate-error');
+    if (errEl) {
+      errEl.style.display = '';
+      errEl.textContent = msg;
+    }
+    this._hideIllustrationStatus();
+  }
+
+  /**
+   * Prepare illustration data for the export system.
+   * Passes selected variants to ExportManager for DOCX/HTML embedding.
+   */
+  _prepareIllustrationsForExport() {
+    if (!this.exporter) return;
+
+    const exportIlls = [];
+    for (const ill of (this._illustrationData || [])) {
+      const variantIdx = this._getSelectedVariant(ill.id);
+      const variants = this._illustrationVariants?.[ill.id] || [];
+      const variant = variants[variantIdx] || variants[0];
+      if (!variant) continue;
+
+      exportIlls.push({
+        chapterId: ill.chapterId,
+        chapterNumber: ill.chapterNumber,
+        illustrationIndex: ill.illustrationIndex,
+        imageData: variant.imageData,
+        prompt: ill.prompt,
+        altText: ill.altText || '',
+        caption: ill.caption || '',
+        size: ill.overrideSize || (this._currentProject?.illustrationConfig?.defaultSize) || 'inline_full',
+        resolution: this._currentProject?.illustrationConfig?.defaultResolution || 300,
+        insertAfter: ill.scene?.insertAfter || 0,
+        action: ill.scene?.action || '',
+      });
+    }
+
+    this.exporter.setIllustrationData(exportIlls);
+  }
+
+  /**
+   * Detect historical period from project metadata for post-processing filters.
+   */
+  _detectHistoricalPeriod(project) {
+    const text = ((project?.title || '') + ' ' + (project?.aiInstructions || '') + ' ' + (project?.genre || '')).toLowerCase();
+
+    if (/\b(ancient|medieval|1[0-7]\d\d|180\d|181\d|182\d|183\d|184\d|185\d)\b/.test(text)) return 'pre-1860';
+    if (/\b(186\d|187\d|188\d|189\d|civil war|victorian|gilded age)\b/.test(text)) return '1860-1900';
+    if (/\b(19[0-3]\d|world war i|wwi|prohibition|great depression|roaring twenties|1920s|1930s)\b/.test(text)) return '1900-1940';
+    if (/\b(19[4-6]\d|world war ii|wwii|cold war|1940s|1950s|1960s)\b/.test(text)) return '1940-1970';
+    if (/\b(19[7-9]\d|197\d|198\d|199\d|vietnam|watergate)\b/.test(text)) return '1970-2000';
+    return 'post-2000';
+  }
+
+  /**
+   * Apply historical period filter to generated illustration.
+   */
+  async _applyHistoricalPostProcessing(imageDataUrl) {
+    if (!this._historicalPeriod || this._historicalPeriod === 'post-2000') return imageDataUrl;
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        this.generator.applyHistoricalFilter(canvas, this._historicalPeriod);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => resolve(imageDataUrl);
+      img.src = imageDataUrl;
+    });
+  }
+
+  /**
+   * Search for reference images using Pexels API (free, generous limits).
+   */
+  async _searchReferenceImages() {
+    const query = document.getElementById('ill-ref-search-query')?.value?.trim();
+    if (!query) return;
+
+    const statusEl = document.getElementById('ill-ref-search-status');
+    const resultsEl = document.getElementById('ill-ref-search-results');
+    if (statusEl) statusEl.textContent = 'Searching...';
+    if (resultsEl) resultsEl.innerHTML = '';
+
+    try {
+      // Use Pexels via puter.net.fetch for CORS-free access
+      await loadPuterSDK();
+      if (typeof puter !== 'undefined' && puter.net?.fetch) {
+        const response = await puter.net.fetch(
+          `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=12`,
+          { headers: { 'Authorization': 'nYJwMNwVirjQhlMBxaqcuDfubyD3PkGmH8pLLi5EGvLJaY8wrqgVhbhR' } }
+        );
+        const data = await response.json();
+        const photos = data.photos || [];
+
+        if (photos.length === 0) {
+          if (statusEl) statusEl.textContent = 'No results found. Try different search terms.';
+          return;
+        }
+
+        let html = '';
+        for (const photo of photos) {
+          html += `<div class="ill-ref-thumb" data-url="${photo.src.large}">
+            <img src="${photo.src.small}" alt="${photo.alt || ''}" loading="lazy">
+            <div class="ill-ref-check">&#10003;</div>
+          </div>`;
+        }
+        if (resultsEl) resultsEl.innerHTML = html;
+        if (statusEl) statusEl.textContent = `${photos.length} results. Click to select.`;
+      } else {
+        if (statusEl) statusEl.textContent = 'Image search requires Puter.js (loads automatically). Try again.';
+      }
+    } catch (err) {
+      if (statusEl) statusEl.textContent = 'Search failed: ' + err.message;
+    }
+  }
+
+  /**
+   * Apply selected reference images to the current illustration.
+   */
+  async _applyReferenceImages() {
+    const selected = document.querySelectorAll('#ill-ref-search-results .ill-ref-thumb.selected');
+    if (selected.length === 0) return;
+
+    const urls = Array.from(selected).map(el => el.dataset.url);
+
+    // Store reference URLs in illustration data
+    if (!this._illustrationChapterData) this._illustrationChapterData = {};
+    const chId = this._currentRefSearchChId;
+    const idx = parseInt(this._currentRefSearchIdx);
+    if (!this._illustrationChapterData[chId]) this._illustrationChapterData[chId] = [];
+    if (!this._illustrationChapterData[chId][idx]) this._illustrationChapterData[chId][idx] = {};
+    this._illustrationChapterData[chId][idx].referenceImages = urls;
+
+    // Analyze references with Claude if available
+    if (this.generator.hasApiKey()) {
+      this._showIllustrationStatus('Analyzing reference images...');
+      try {
+        const analyses = await Promise.all(
+          urls.slice(0, 3).map(url => this.generator.analyzeReferenceImage(url, {}))
+        );
+        this._illustrationChapterData[chId][idx].referenceAnalysis = analyses.join('; ');
+      } catch (e) {
+        console.warn('Reference analysis failed:', e);
+      }
+      this._hideIllustrationStatus();
+    }
+
+    // Update ref count display
+    const refCountEl = document.querySelector(`.ill-ref-search-btn[data-ch-id="${chId}"][data-ill-index="${idx}"]`)?.nextElementSibling;
+    if (refCountEl) refCountEl.textContent = `${urls.length} reference(s)`;
+
+    // Close modal
+    document.getElementById('ill-ref-search-overlay').style.display = 'none';
+  }
+
+  /**
+   * Regenerate a single illustration prompt.
+   */
+  async _regeneratePrompt(illId) {
+    const ill = (this._illustrationData || []).find(i => i.id === illId);
+    if (!ill) return;
+
+    const config = this._readIllustrationConfig();
+    const promptConfig = {
+      ...config,
+      illustrationStyle: ill.overrideStyle || config.globalStyle,
+      colorMode: config.globalColorMode,
+    };
+
+    this._showIllustrationStatus('Regenerating prompt...');
+
+    try {
+      const result = await this.generator.generateIllustrationPrompt(ill.scene, promptConfig);
+      ill.prompt = result.prompt;
+      ill.negativePrompt = result.negativePrompt;
+      ill.altText = result.altText;
+      ill.caption = result.caption;
+      ill.compositionNotes = result.compositionNotes;
+
+      // Update textarea
+      const promptEl = document.querySelector(`.ill-prompt-text[data-ill-id="${illId}"]`);
+      if (promptEl) promptEl.value = ill.prompt;
+      const negEl = document.querySelector(`.ill-neg-prompt-text[data-ill-id="${illId}"]`);
+      if (negEl) negEl.value = ill.negativePrompt;
+
+      this._hideIllustrationStatus();
+    } catch (err) {
+      this._showIllustrationError('Prompt regeneration failed: ' + err.message);
+    }
   }
 
   // Legacy aliases for backward compatibility
@@ -6860,6 +8067,284 @@ class App {
     // --- Agent Log Download (from Settings tab) ---
     document.getElementById('btn-download-agent-log')?.addEventListener('click', () => {
       this._downloadAgentLog();
+    });
+
+    // ═══ Illustrations Tab Event Listeners ═══
+
+    // Enable toggle
+    document.getElementById('bs-ill-enabled')?.addEventListener('change', (e) => {
+      const container = document.getElementById('ill-settings-container');
+      if (container) container.style.display = e.target.checked ? '' : 'none';
+      this._saveIllustrationConfig();
+    });
+
+    // Select All chapters
+    document.getElementById('bs-ill-select-all')?.addEventListener('change', (e) => {
+      document.querySelectorAll('.ill-ch-check').forEach(cb => {
+        cb.checked = e.target.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      this._saveIllustrationConfig();
+    });
+
+    // Chapter checkbox and count changes (delegated)
+    document.getElementById('ill-chapter-list')?.addEventListener('change', (e) => {
+      if (e.target.classList.contains('ill-ch-check')) {
+        const chId = e.target.dataset.chId;
+        const expand = document.getElementById(`ill-expand-${chId}`);
+        const countInput = document.querySelector(`.ill-ch-count-input[data-ch-id="${chId}"]`);
+        const count = parseInt(countInput?.value) || 1;
+        if (expand) expand.style.display = (e.target.checked && count > 0) ? '' : 'none';
+        this._saveIllustrationConfig();
+      }
+      if (e.target.classList.contains('ill-ch-count-input')) {
+        const chId = e.target.dataset.chId;
+        const cb = document.querySelector(`.ill-ch-check[data-ch-id="${chId}"]`);
+        const count = parseInt(e.target.value) || 0;
+        const expand = document.getElementById(`ill-expand-${chId}`);
+        if (expand && cb?.checked && count > 0) {
+          const config = this._readIllustrationConfig();
+          expand.innerHTML = this._renderChapterIllustrationCards(chId, count, config);
+          expand.style.display = '';
+        } else if (expand) {
+          expand.style.display = 'none';
+        }
+        this._saveIllustrationConfig();
+      }
+    });
+
+    // Illustration source radio changes (delegated)
+    document.getElementById('ill-chapter-list')?.addEventListener('click', (e) => {
+      // Source radio
+      const radio = e.target.closest('input[type="radio"][name^="ill-source-"]');
+      if (radio) {
+        const card = radio.closest('.ill-card');
+        if (card) {
+          const upArea = card.querySelector('.ill-user-prompt-area');
+          const locArea = card.querySelector('.ill-location-area');
+          if (upArea) upArea.style.display = radio.value === 'user_prompt' ? '' : 'none';
+          if (locArea) locArea.style.display = radio.value === 'specific_location' ? '' : 'none';
+        }
+      }
+
+      // Add/Remove illustration buttons
+      if (e.target.classList.contains('ill-add-ill-btn')) {
+        const chId = e.target.dataset.chId;
+        const countInput = document.querySelector(`.ill-ch-count-input[data-ch-id="${chId}"]`);
+        if (countInput) {
+          countInput.value = parseInt(countInput.value) + 1;
+          countInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+      if (e.target.classList.contains('ill-remove-ill-btn')) {
+        const chId = e.target.dataset.chId;
+        const countInput = document.querySelector(`.ill-ch-count-input[data-ch-id="${chId}"]`);
+        if (countInput && parseInt(countInput.value) > 0) {
+          countInput.value = parseInt(countInput.value) - 1;
+          countInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+
+      // Reference search button
+      if (e.target.classList.contains('ill-ref-search-btn')) {
+        this._currentRefSearchChId = e.target.dataset.chId;
+        this._currentRefSearchIdx = e.target.dataset.illIndex;
+        const overlay = document.getElementById('ill-ref-search-overlay');
+        if (overlay) overlay.style.display = '';
+      }
+    });
+
+    // Add character/setting description buttons
+    document.getElementById('btn-ill-add-character')?.addEventListener('click', () => {
+      const container = document.getElementById('ill-character-list');
+      if (!container) return;
+      const entry = document.createElement('div');
+      entry.className = 'ill-desc-entry';
+      entry.dataset.descType = 'character';
+      entry.innerHTML = `<div class="ill-desc-fields">
+        <input type="text" class="form-input ill-desc-name" placeholder="Character Name" style="font-weight:600;font-size:0.85rem;">
+        <textarea class="form-input ill-desc-text" rows="2" placeholder="Visual description: appearance, clothing, distinguishing features..." style="font-size:0.85rem;"></textarea>
+      </div>
+      <div class="ill-desc-actions">
+        <button class="btn btn-sm ill-desc-delete" data-desc-type="character">Delete</button>
+      </div>`;
+      container.appendChild(entry);
+    });
+
+    document.getElementById('btn-ill-add-setting')?.addEventListener('click', () => {
+      const container = document.getElementById('ill-setting-list');
+      if (!container) return;
+      const entry = document.createElement('div');
+      entry.className = 'ill-desc-entry';
+      entry.dataset.descType = 'setting';
+      entry.innerHTML = `<div class="ill-desc-fields">
+        <input type="text" class="form-input ill-desc-name" placeholder="Setting Name" style="font-weight:600;font-size:0.85rem;">
+        <textarea class="form-input ill-desc-text" rows="2" placeholder="Visual description: architecture, atmosphere, time period..." style="font-size:0.85rem;"></textarea>
+      </div>
+      <div class="ill-desc-actions">
+        <button class="btn btn-sm ill-desc-delete" data-desc-type="setting">Delete</button>
+      </div>`;
+      container.appendChild(entry);
+    });
+
+    // Delete description (delegated)
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('ill-desc-delete')) {
+        e.target.closest('.ill-desc-entry')?.remove();
+        this._saveIllustrationConfig();
+      }
+    });
+
+    // Generate Illustrations button
+    document.getElementById('btn-generate-illustrations')?.addEventListener('click', () => {
+      this._startIllustrationGeneration();
+    });
+
+    // Prompt review buttons
+    document.getElementById('btn-ill-approve-all-prompts')?.addEventListener('click', () => {
+      this._approveAllPrompts();
+    });
+
+    document.getElementById('btn-ill-generate-images')?.addEventListener('click', () => {
+      this._startImageGeneration();
+    });
+
+    // Prompt review delegated clicks
+    document.getElementById('ill-prompt-review-list')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('ill-approve-prompt')) {
+        const card = e.target.closest('.ill-prompt-card');
+        if (card) card.style.opacity = '0.5';
+        const ill = (this._illustrationData || []).find(i => i.id === e.target.dataset.illId);
+        if (ill) ill.state = 'prompt_approved';
+      }
+      if (e.target.classList.contains('ill-skip-prompt')) {
+        const card = e.target.closest('.ill-prompt-card');
+        if (card) card.style.display = 'none';
+        this._illustrationData = (this._illustrationData || []).filter(i => i.id !== e.target.dataset.illId);
+      }
+      if (e.target.classList.contains('ill-regen-prompt')) {
+        this._regeneratePrompt(e.target.dataset.illId);
+      }
+    });
+
+    // Image review delegated clicks
+    document.getElementById('ill-image-review-list')?.addEventListener('click', (e) => {
+      // Variant selection
+      const variantCard = e.target.closest('.ill-variant-card');
+      if (variantCard) {
+        const illId = variantCard.dataset.illId;
+        const varIdx = parseInt(variantCard.dataset.variantIndex);
+        this._selectVariant(illId, varIdx);
+        return;
+      }
+
+      // Double-click on variant image opens lightbox
+      if (e.target.tagName === 'IMG' && e.target.closest('.ill-variant-card')) {
+        this._openLightbox(e.target.src);
+        return;
+      }
+
+      if (e.target.classList.contains('ill-approve-img')) {
+        const card = e.target.closest('.ill-review-card');
+        if (card) card.style.borderColor = '#34C759';
+      }
+      if (e.target.classList.contains('ill-download-img')) {
+        this._downloadIllustrationImage(e.target.dataset.illId);
+      }
+      if (e.target.classList.contains('ill-lock-style-btn')) {
+        this._lockStyleFromIllustration(e.target.dataset.illId);
+      }
+      if (e.target.classList.contains('ill-delete-img')) {
+        const card = e.target.closest('.ill-review-card');
+        if (card) card.remove();
+        this._illustrationData = (this._illustrationData || []).filter(i => i.id !== e.target.dataset.illId);
+      }
+    });
+
+    // Download ZIP button
+    document.getElementById('btn-ill-download-zip')?.addEventListener('click', () => {
+      this._downloadAllAsZip();
+    });
+
+    // Continue to Export button — passes illustration data to export system
+    document.getElementById('btn-ill-continue-export')?.addEventListener('click', () => {
+      this._prepareIllustrationsForExport();
+      this._switchSetupTab('export');
+    });
+
+    // Pause/Cancel buttons
+    document.getElementById('btn-ill-pause')?.addEventListener('click', () => {
+      if (this._illustrationQueue) {
+        if (this._illustrationQueue.paused) {
+          this._illustrationQueue.resume();
+          document.getElementById('btn-ill-pause').textContent = 'Pause';
+        } else {
+          this._illustrationQueue.pause();
+          document.getElementById('btn-ill-pause').textContent = 'Resume';
+        }
+      }
+    });
+
+    document.getElementById('btn-ill-cancel')?.addEventListener('click', () => {
+      if (this._illustrationQueue) this._illustrationQueue.cancel();
+    });
+
+    // Style lock/unlock
+    document.getElementById('btn-ill-unlock-style')?.addEventListener('click', () => {
+      this._unlockStyle();
+    });
+
+    // Lightbox close
+    document.getElementById('ill-lightbox-close')?.addEventListener('click', () => {
+      this._closeLightbox();
+    });
+    document.getElementById('ill-lightbox-overlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'ill-lightbox-overlay') this._closeLightbox();
+    });
+
+    // Reference search modal
+    document.getElementById('ill-ref-search-close')?.addEventListener('click', () => {
+      document.getElementById('ill-ref-search-overlay').style.display = 'none';
+    });
+
+    document.getElementById('ill-ref-search-go')?.addEventListener('click', () => {
+      this._searchReferenceImages();
+    });
+
+    document.getElementById('ill-ref-search-query')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._searchReferenceImages();
+    });
+
+    document.getElementById('ill-ref-apply')?.addEventListener('click', () => {
+      this._applyReferenceImages();
+    });
+
+    // Reference search results click (delegated)
+    document.getElementById('ill-ref-search-results')?.addEventListener('click', (e) => {
+      const thumb = e.target.closest('.ill-ref-thumb');
+      if (thumb) thumb.classList.toggle('selected');
+    });
+
+    // Keyboard shortcuts in review mode
+    document.addEventListener('keydown', (e) => {
+      const promptReview = document.getElementById('ill-prompt-review-container');
+      if (promptReview && promptReview.style.display !== 'none') {
+        if (e.key === 'Enter' && !e.target.matches('textarea, input')) {
+          document.querySelector('.ill-approve-prompt')?.click();
+        }
+      }
+    });
+
+    // Auto-save illustration config on settings changes
+    const illAutoSaveIds = ['bs-ill-style', 'bs-ill-color-mode', 'bs-ill-format', 'bs-ill-resolution', 'bs-ill-size', 'bs-ill-variants', 'bs-ill-workers', 'bs-ill-style-prompt'];
+    for (const id of illAutoSaveIds) {
+      document.getElementById(id)?.addEventListener('change', () => this._saveIllustrationConfig());
+    }
+    document.querySelectorAll('input[name="bs-ill-variant-mode"]').forEach(r => {
+      r.addEventListener('change', () => this._saveIllustrationConfig());
+    });
+    ['bs-ill-wf-vellum', 'bs-ill-wf-docx', 'bs-ill-prov-hf-flux', 'bs-ill-prov-hf-sdxl', 'bs-ill-prov-puter-sd3', 'bs-ill-prov-puter-dalle'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', () => this._saveIllustrationConfig());
     });
 
     // Translation language selection — SINGLE SELECT (radio behavior with checkboxes)

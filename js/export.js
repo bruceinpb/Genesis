@@ -250,9 +250,22 @@ ${project.coverImage ? `<div class="cover-page">
       const chapter = chapters[ci];
       const displayTitle = chapter.title || `Chapter ${ci + 1}`;
       html += `\n<h1 class="chapter-title">${this._escapeHtml(displayTitle)}</h1>\n\n`;
+
       const chapterContent = this._sanitizeContent(this._stripLeadingHeading(chapter.content));
       if (chapterContent && chapterContent.trim()) {
-        html += chapterContent + '\n';
+        // If illustrations are available, embed them
+        const illInsertMap = this._getEmbeddedIllustrationHtml(chapter.id);
+        if (Object.keys(illInsertMap).length > 0) {
+          const paragraphs = this._contentToParagraphs(chapterContent);
+          for (let pi = 0; pi < paragraphs.length; pi++) {
+            html += `<p>${this._escapeHtml(paragraphs[pi])}</p>\n`;
+            if (illInsertMap[pi]) {
+              html += illInsertMap[pi] + '\n';
+            }
+          }
+        } else {
+          html += chapterContent + '\n';
+        }
       }
     }
 
@@ -354,6 +367,69 @@ ${project.coverImage ? `<div class="cover-page">
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Set illustration data for export. Called by app.js before export.
+   * @param {Array} illustrations - Array of { chapterId, illustrationIndex, imageData, prompt, altText, caption, size, insertAfter }
+   */
+  setIllustrationData(illustrations) {
+    this._illustrations = illustrations || [];
+  }
+
+  /**
+   * Get illustration placeholders for a chapter (Vellum workflow).
+   * Returns HTML with visible placeholder markers.
+   */
+  _getIllustrationPlaceholders(chapterId, paragraphs) {
+    if (!this._illustrations || this._illustrations.length === 0) return paragraphs;
+
+    const chapterIlls = this._illustrations
+      .filter(ill => ill.chapterId === chapterId)
+      .sort((a, b) => (a.insertAfter || 0) - (b.insertAfter || 0));
+
+    if (chapterIlls.length === 0) return paragraphs;
+
+    const result = [...paragraphs];
+
+    // Insert placeholders in reverse order to preserve indices
+    for (let i = chapterIlls.length - 1; i >= 0; i--) {
+      const ill = chapterIlls[i];
+      const shortDesc = (ill.action || 'illustration').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '_');
+      const fileName = `ch${String(ill.chapterNumber || 0).padStart(2, '0')}_img${String((ill.illustrationIndex || 0) + 1).padStart(2, '0')}_${shortDesc.replace(/ /g, '_')}.png`;
+      const sizeLabel = (ill.size || 'inline_full').replace(/_/g, ' ');
+      const dpi = ill.resolution || 300;
+
+      const placeholder = `\n${'='.repeat(50)}\n[IMAGE: ${fileName}]\nType: ${sizeLabel} | ${dpi} DPI${ill.caption ? '\nCaption: ' + ill.caption : ''}\n${'='.repeat(50)}\n`;
+
+      const insertIdx = Math.min(ill.insertAfter || 0, result.length);
+      result.splice(insertIdx + 1, 0, placeholder);
+    }
+
+    return result;
+  }
+
+  /**
+   * Get embedded illustration HTML for a chapter (direct DOCX/HTML workflow).
+   * Returns modified paragraph array with embedded images.
+   */
+  _getEmbeddedIllustrationHtml(chapterId) {
+    if (!this._illustrations || this._illustrations.length === 0) return {};
+
+    const chapterIlls = this._illustrations
+      .filter(ill => ill.chapterId === chapterId && ill.imageData)
+      .sort((a, b) => (a.insertAfter || 0) - (b.insertAfter || 0));
+
+    // Map: insertAfterIndex -> illustration HTML
+    const insertMap = {};
+    for (const ill of chapterIlls) {
+      const idx = ill.insertAfter || 0;
+      const imgHtml = `<div style="text-align:center;margin:1.5em 0;"><img src="${ill.imageData}" alt="${this._escapeHtml(ill.altText || '')}" style="max-width:100%;height:auto;">${ill.caption ? `<p style="font-size:0.85em;color:#666;font-style:italic;margin-top:0.5em;">${this._escapeHtml(ill.caption)}</p>` : ''}</div>`;
+      if (!insertMap[idx]) insertMap[idx] = '';
+      insertMap[idx] += imgHtml;
+    }
+
+    return insertMap;
   }
 
   // --- Helpers ---

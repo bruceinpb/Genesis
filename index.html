@@ -332,6 +332,7 @@
       <button class="setup-tab active" data-setup-tab="book"><span class="tab-icon">&#128214;</span> Book Setup</button>
       <button class="setup-tab" data-setup-tab="ai-writer"><span class="tab-icon">&#9998;</span> AI Writer</button>
       <button class="setup-tab" data-setup-tab="translation"><span class="tab-icon">&#127760;</span> Translation</button>
+      <button class="setup-tab" data-setup-tab="illustrations"><span class="tab-icon">&#128444;</span> Illustrations</button>
       <button class="setup-tab" data-setup-tab="export"><span class="tab-icon">&#128230;</span> Export</button>
       <button class="setup-tab" data-setup-tab="settings"><span class="tab-icon">&#9881;</span> Settings</button>
     </div>
@@ -784,6 +785,305 @@
           <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
             Select at least one language, then click to translate the current chapter's prose. Translation uses Claude AI and preserves narrative voice.
           </p>
+        </div>
+      </div>
+
+      <!-- ═══ Tab: Illustrations ═══ -->
+      <div class="setup-tab-content" id="setup-tab-illustrations">
+
+        <div class="analysis-section">
+          <label class="matter-option" style="font-size:1rem;font-weight:600;">
+            <input type="checkbox" id="bs-ill-enabled" value="enabled">
+            <div class="matter-info">
+              <span class="matter-name">Enable Chapter Illustrations</span>
+              <span class="matter-desc">Generate AI illustrations for your book chapters</span>
+            </div>
+          </label>
+        </div>
+
+        <div id="ill-settings-container" style="display:none;">
+
+          <div class="analysis-section">
+            <h3>Global Settings</h3>
+            <div class="setup-form-row">
+              <div class="form-group">
+                <label>Illustration Style</label>
+                <select class="form-input" id="bs-ill-style">
+                  <optgroup label="Realistic">
+                    <option value="photorealistic">Photorealistic</option>
+                    <option value="documentary">Documentary Photography</option>
+                    <option value="portrait">Portrait Photography</option>
+                    <option value="cinematic">Cinematic / Film Still</option>
+                  </optgroup>
+                  <optgroup label="Traditional Art">
+                    <option value="watercolor">Watercolor</option>
+                    <option value="oil_painting">Oil Painting</option>
+                    <option value="pencil_sketch">Pencil Sketch / Drawing</option>
+                    <option value="charcoal">Charcoal Drawing</option>
+                    <option value="ink_wash">Ink Wash / Sumi-e</option>
+                    <option value="pastel">Pastel</option>
+                    <option value="gouache">Gouache</option>
+                    <option value="woodcut">Woodcut / Linocut Print</option>
+                    <option value="engraving">Engraving / Etching</option>
+                  </optgroup>
+                  <optgroup label="Digital &amp; Modern">
+                    <option value="digital_painting">Digital Painting</option>
+                    <option value="concept_art">Concept Art</option>
+                    <option value="comic_book">Comic Book / Graphic Novel</option>
+                    <option value="manga">Manga Style</option>
+                    <option value="pixel_art">Pixel Art</option>
+                    <option value="vector">Vector / Flat Illustration</option>
+                  </optgroup>
+                  <optgroup label="Children's Book">
+                    <option value="storybook">Classic Storybook Illustration</option>
+                    <option value="whimsical">Whimsical / Fantasy Illustration</option>
+                    <option value="cartoon">Cartoon</option>
+                    <option value="cutout">Paper Cutout / Collage</option>
+                    <option value="crayon">Crayon / Child-like</option>
+                  </optgroup>
+                  <optgroup label="Historical / Period">
+                    <option value="vintage_photo">Vintage Photograph</option>
+                    <option value="daguerreotype">Daguerreotype</option>
+                    <option value="sepia_style">Sepia Toned</option>
+                    <option value="art_deco">Art Deco</option>
+                    <option value="art_nouveau">Art Nouveau</option>
+                    <option value="impressionist">Impressionist</option>
+                  </optgroup>
+                  <optgroup label="Special">
+                    <option value="architectural">Architectural Rendering</option>
+                    <option value="technical">Technical Illustration</option>
+                    <option value="botanical">Botanical Illustration</option>
+                    <option value="map">Map / Cartographic</option>
+                    <option value="custom">Custom (describe in style prompt)</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Color Mode</label>
+                <select class="form-input" id="bs-ill-color-mode">
+                  <option value="full_color">Full Color</option>
+                  <option value="black_white">Black &amp; White</option>
+                  <option value="grayscale">Grayscale</option>
+                  <option value="sepia">Sepia Toned</option>
+                  <option value="duotone">Duotone</option>
+                  <option value="limited_palette">Limited Palette</option>
+                </select>
+              </div>
+            </div>
+            <div class="setup-form-row">
+              <div class="form-group">
+                <label>Output Format</label>
+                <select class="form-input" id="bs-ill-format">
+                  <option value="png">PNG (lossless)</option>
+                  <option value="jpeg">JPEG (smaller files)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Default Resolution</label>
+                <select class="form-input" id="bs-ill-resolution">
+                  <option value="300">300 DPI — Print Quality (KDP min.)</option>
+                  <option value="600">600 DPI — High Print Quality</option>
+                  <option value="72">72 DPI — Screen / eBook Only</option>
+                  <option value="96">96 DPI — Screen / eBook Enhanced</option>
+                  <option value="150">150 DPI — Draft / Preview</option>
+                </select>
+              </div>
+            </div>
+            <div class="setup-form-row">
+              <div class="form-group">
+                <label>Default Size</label>
+                <select class="form-input" id="bs-ill-size">
+                  <option value="inline_small">Inline Small (3" wide)</option>
+                  <option value="inline_medium">Inline Medium (4.5" wide)</option>
+                  <option value="inline_full">Inline Full Width</option>
+                  <option value="full_page">Full Page</option>
+                  <option value="full_bleed">Full Bleed (edge to edge)</option>
+                  <option value="half_page">Half Page</option>
+                  <option value="quarter_page">Quarter Page / Spot</option>
+                  <option value="chapter_header">Chapter Header Banner</option>
+                  <option value="vignette">Vignette (small decorative)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Variants per Image</label>
+                <select class="form-input" id="bs-ill-variants">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+            </div>
+            <div class="setup-form-row">
+              <div class="form-group">
+                <label>Parallel Workers</label>
+                <select class="form-input" id="bs-ill-workers">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="5" selected>5 (default)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Output Workflow</label>
+                <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
+                  <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+                    <input type="checkbox" id="bs-ill-wf-vellum" checked> Vellum (placeholders + folder)
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+                    <input type="checkbox" id="bs-ill-wf-docx" checked> Embedded DOCX
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="analysis-section">
+            <h3>Image Provider Priority</h3>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label class="matter-option">
+                <input type="checkbox" id="bs-ill-prov-hf-flux" checked>
+                <div class="matter-info">
+                  <span class="matter-name">HuggingFace FLUX.1-schnell (2 parallel slots)</span>
+                  <span class="matter-desc">Free, fast, good quality</span>
+                </div>
+              </label>
+              <label class="matter-option">
+                <input type="checkbox" id="bs-ill-prov-hf-sdxl" checked>
+                <div class="matter-info">
+                  <span class="matter-name">HuggingFace SDXL (1 parallel slot)</span>
+                  <span class="matter-desc">Free, slightly painterly style</span>
+                </div>
+              </label>
+              <label class="matter-option">
+                <input type="checkbox" id="bs-ill-prov-puter-sd3" checked>
+                <div class="matter-info">
+                  <span class="matter-name">Puter.js SD3 (1 parallel slot)</span>
+                  <span class="matter-desc">Free, no API key needed</span>
+                </div>
+              </label>
+              <label class="matter-option">
+                <input type="checkbox" id="bs-ill-prov-puter-dalle" checked>
+                <div class="matter-info">
+                  <span class="matter-name">Puter.js DALL-E 3 (1 parallel slot)</span>
+                  <span class="matter-desc">Free, strong prompt adherence</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="analysis-section">
+            <h3>Multi-Model Variants</h3>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;">
+              <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="same_model"> Same model, different seeds (faster)</label>
+              <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="multi_model" checked> Different models per variant (more diverse)</label>
+            </div>
+          </div>
+
+          <div class="analysis-section">
+            <h3>Global Style Prompt <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted);">(optional)</span></h3>
+            <textarea class="form-input" id="bs-ill-style-prompt" rows="3" placeholder='e.g., "warm palette, soft edges, visible brushstrokes, classic storybook feel"'></textarea>
+          </div>
+
+          <div class="analysis-section">
+            <h3>Chapter Selection</h3>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-weight:600;font-size:0.9rem;">
+              <input type="checkbox" id="bs-ill-select-all"> Select All Chapters
+            </label>
+            <div id="ill-chapter-list" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <div class="analysis-section">
+            <h3>Character Descriptions</h3>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">
+              Describe key characters for consistent illustration. These descriptions are injected into every image prompt.
+            </p>
+            <div id="ill-character-list" style="display:flex;flex-direction:column;gap:8px;">
+              <!-- Populated dynamically -->
+            </div>
+            <button class="btn btn-secondary" id="btn-ill-add-character" style="margin-top:8px;">+ Add Character</button>
+          </div>
+
+          <div class="analysis-section">
+            <h3>Setting Descriptions</h3>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">
+              Describe key settings/locations for consistent illustration.
+            </p>
+            <div id="ill-setting-list" style="display:flex;flex-direction:column;gap:8px;">
+              <!-- Populated dynamically -->
+            </div>
+            <button class="btn btn-secondary" id="btn-ill-add-setting" style="margin-top:8px;">+ Add Setting</button>
+          </div>
+
+          <div class="analysis-section" id="ill-style-lock-section" style="display:none;">
+            <h3>Style Lock</h3>
+            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:8px;">
+              Style is locked to maintain visual consistency across all illustrations.
+            </p>
+            <div id="ill-style-lock-desc" style="font-size:0.85rem;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-bottom:8px;"></div>
+            <button class="btn btn-secondary" id="btn-ill-unlock-style">Unlock Style</button>
+          </div>
+
+          <div id="ill-generate-status" style="display:none;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="generate-spinner"></div>
+              <span id="ill-generate-status-text" style="font-size:0.85rem;color:#007AFF;">Generating illustrations...</span>
+            </div>
+          </div>
+
+          <div id="ill-generate-error" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,59,48,0.1);border-radius:var(--radius-sm);color:var(--danger);font-size:0.85rem;"></div>
+
+          <div id="ill-progress-panel" style="display:none;" class="analysis-section">
+            <h3>Generation Progress</h3>
+            <div style="margin-bottom:8px;">
+              <div style="background:var(--bg-tertiary);border-radius:8px;height:20px;overflow:hidden;">
+                <div id="ill-progress-bar" style="background:#007AFF;height:100%;width:0%;transition:width 0.3s;border-radius:8px;"></div>
+              </div>
+              <div id="ill-progress-text" style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;">0 of 0 images</div>
+            </div>
+            <div id="ill-active-workers" style="font-size:0.8rem;margin-bottom:8px;"></div>
+            <div id="ill-provider-stats" style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;"></div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary" id="btn-ill-pause">Pause</button>
+              <button class="btn btn-secondary" id="btn-ill-cancel">Cancel</button>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" id="btn-generate-illustrations" style="width:100%;margin-top:12px;">Generate Illustrations</button>
+          <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+            Illustrations are generated after prose is approved. Cost: $0.00 for images (free providers). ~$2-3 for Claude prompts.
+          </p>
+
+        </div>
+      </div>
+
+      <!-- ═══ Illustration Prompt Review Modal ═══ -->
+      <div id="ill-prompt-review-container" style="display:none;">
+        <div class="analysis-section">
+          <h3 id="ill-prompt-review-title">Illustration Prompts — Review &amp; Edit</h3>
+          <div id="ill-prompt-review-list"></div>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" id="btn-ill-approve-all-prompts">Approve All</button>
+            <button class="btn btn-primary" id="btn-ill-generate-images">Generate Images</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Illustration Image Review Container ═══ -->
+      <div id="ill-image-review-container" style="display:none;">
+        <div class="analysis-section">
+          <h3>Image Review</h3>
+          <div id="ill-image-review-list"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+            <div id="ill-review-summary" style="font-size:0.85rem;color:var(--text-muted);"></div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary" id="btn-ill-download-zip">Download All (ZIP)</button>
+              <button class="btn btn-primary" id="btn-ill-continue-export">Continue to Export</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1805,6 +2105,44 @@
     </div>
     <div class="modal-footer" style="justify-content:center;">
       <button class="btn btn-primary" id="btn-help-close" style="padding:12px 48px;">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Illustration Lightbox ===== -->
+<div class="modal-overlay" id="ill-lightbox-overlay" style="display:none;z-index:10000;">
+  <div style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:32px;">
+    <button class="panel-close" id="ill-lightbox-close" style="position:absolute;top:16px;right:16px;z-index:10001;color:#fff;font-size:2rem;">&times;</button>
+    <img id="ill-lightbox-img" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);" alt="Illustration preview">
+  </div>
+</div>
+
+<!-- ===== Illustration Reference Search Modal ===== -->
+<div class="modal-overlay" id="ill-ref-search-overlay" style="display:none;">
+  <div class="modal" style="max-width:700px;">
+    <div class="modal-header">
+      <h2>Search Reference Images</h2>
+      <button class="panel-close" id="ill-ref-search-close">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <input type="text" class="form-input" id="ill-ref-search-query" placeholder="e.g., 1920s industrial factory interior" style="flex:1;">
+        <button class="btn btn-primary" id="ill-ref-search-go">Search</button>
+      </div>
+      <div id="ill-ref-search-results" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+      <div id="ill-ref-search-status" style="font-size:0.85rem;color:var(--text-muted);margin-top:8px;"></div>
+      <div style="margin-top:12px;">
+        <label style="font-size:0.85rem;font-weight:600;margin-bottom:4px;display:block;">Use references for:</label>
+        <div style="display:flex;gap:12px;">
+          <label style="font-size:0.85rem;"><input type="checkbox" id="ill-ref-use-composition" checked> Composition</label>
+          <label style="font-size:0.85rem;"><input type="checkbox" id="ill-ref-use-color" checked> Color</label>
+          <label style="font-size:0.85rem;"><input type="checkbox" id="ill-ref-use-mood" checked> Mood</label>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="ill-ref-apply" style="width:100%;margin-top:12px;">Apply References</button>
+      <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+        References provide style guidance only. Generated illustrations will be wholly original.
+      </p>
     </div>
   </div>
 </div>

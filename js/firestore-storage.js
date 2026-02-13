@@ -175,6 +175,49 @@ class FirestoreStorage {
     await setDoc(ref, { ...data, updatedAt: new Date() });
   }
 
+  // --- Illustrations ---
+
+  async saveIllustration(projectId, illustrationData) {
+    const id = illustrationData.id || this._id('ill');
+    const ref = doc(db, 'projects', projectId, 'illustrations', id);
+    await setDoc(ref, { ...illustrationData, id, updatedAt: new Date() }, { merge: true });
+    return { ...illustrationData, id };
+  }
+
+  async getIllustration(projectId, illustrationId) {
+    const snap = await getDoc(doc(db, 'projects', projectId, 'illustrations', illustrationId));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() };
+  }
+
+  async getProjectIllustrations(projectId) {
+    const snap = await getDocs(collection(db, 'projects', projectId, 'illustrations'));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0) || (a.illustrationIndex || 0) - (b.illustrationIndex || 0));
+  }
+
+  async getChapterIllustrations(projectId, chapterId) {
+    const snap = await getDocs(query(
+      collection(db, 'projects', projectId, 'illustrations'),
+      where('chapterId', '==', chapterId)
+    ));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.illustrationIndex || 0) - (b.illustrationIndex || 0));
+  }
+
+  async deleteIllustration(projectId, illustrationId) {
+    await deleteDoc(doc(db, 'projects', projectId, 'illustrations', illustrationId));
+  }
+
+  async deleteChapterIllustrations(projectId, chapterId) {
+    const ills = await this.getChapterIllustrations(projectId, chapterId);
+    const batch = writeBatch(db);
+    for (const ill of ills) {
+      batch.delete(doc(db, 'projects', projectId, 'illustrations', ill.id));
+    }
+    if (ills.length > 0) await batch.commit();
+  }
+
   // --- Helpers ---
 
   async getProjectWordCount(projectId) {
