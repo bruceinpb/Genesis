@@ -246,9 +246,14 @@ ${project.coverImage ? `<div class="cover-page">
 </div>\n` : ''}<h1>${this._escapeHtml(project.title)}</h1>
 `;
 
-    for (const chapter of chapters) {
-      html += `\n<h1 class="chapter-title">${this._escapeHtml(chapter.title)}</h1>\n\n`;
-      html += this._sanitizeContent(this._stripLeadingHeading(chapter.content)) + '\n';
+    for (let ci = 0; ci < chapters.length; ci++) {
+      const chapter = chapters[ci];
+      const displayTitle = chapter.title || `Chapter ${ci + 1}`;
+      html += `\n<h1 class="chapter-title">${this._escapeHtml(displayTitle)}</h1>\n\n`;
+      const chapterContent = this._sanitizeContent(this._stripLeadingHeading(chapter.content));
+      if (chapterContent && chapterContent.trim()) {
+        html += chapterContent + '\n';
+      }
     }
 
     // Scholarly apparatus sections (if generator callback is provided)
@@ -399,8 +404,11 @@ ${project.coverImage ? `<div class="cover-page">
     // Remove the first H1-H6 element from the content to avoid duplication
     // since export formats add their own chapter heading
     let cleaned = html.replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');
-    // Strip any strategy markers left by the micro-fix pipeline
+    // Strip any strategy/log markers left by the pipeline
     cleaned = cleaned.replace(/---STRATEGY---[\s\S]*?(?=(<p>|<\/p>|\n\n|$))/g, '');
+    cleaned = cleaned.replace(/---STRATEGY---[\s\S]*/g, '');
+    cleaned = cleaned.replace(/---SMOOTHING_LOG---[\s\S]*/g, '');
+    cleaned = cleaned.replace(/---ROUGHNESS_LOG---[\s\S]*/g, '');
     // Strip markdown-style headings that leaked into prose (e.g. "# Chapter Title")
     cleaned = cleaned.replace(/<p>\s*#+\s+[^<]*<\/p>/g, '');
     return cleaned;

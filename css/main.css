@@ -4400,6 +4400,32 @@ select.form-input {
 }
 
 /* ============================================
+   Genesis 3.0 Pipeline Progress Styles
+   ============================================ */
+
+.g3-phase {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s;
+}
+.g3-phase.active {
+  background: var(--accent-primary-alpha, rgba(59, 130, 246, 0.1));
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+.g3-phase.completed {
+  color: var(--success, #28a745);
+}
+.g3-icon {
+  font-size: 0.9rem;
+  width: 18px;
+  text-align: center;
+}
+
+/* ============================================
    GO/NO-GO Mission Control Styles
    ============================================ */
 
