@@ -4561,9 +4561,11 @@ class App {
 
         // Rebuild _illustrationVariants entries (image data)
         if (ill.variants && ill.variants.length > 0) {
-          // Only include variants that have actual image data (not truncated)
+          // Only include variants that have actual base64 data URLs (not blob URLs or truncated)
           const validVariants = ill.variants.filter(v =>
-            v.imageData && v.imageData.length > 200 && !v.imageData.endsWith('...')
+            v.imageData &&
+            v.imageData.startsWith('data:') &&
+            v.imageData.length > 200
           );
           if (validVariants.length > 0) {
             this._illustrationVariants[ill.id] = validVariants;
@@ -4725,8 +4727,9 @@ class App {
       html += `<div class="ill-chapter-row" data-chapter-id="${chKey}">
         <input type="checkbox" class="ill-ch-check" ${chEnabled ? 'checked' : ''} data-ch-id="${chKey}">
         <span class="ill-ch-label">Chapter ${ch.chapterNumber}: ${ch.title || 'Untitled'}</span>
-        <span class="ill-ch-count">
-          <input type="number" class="form-input ill-ch-count-input" value="${chCount}" min="0" max="20" data-ch-id="${chKey}" style="width:50px;padding:2px 4px;font-size:0.85rem;">
+        <span class="ill-ch-count" style="display:flex;align-items:center;gap:4px;">
+          <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;" title="Number of illustrations to generate for this chapter">Images:</label>
+          <input type="number" class="form-input ill-ch-count-input" value="${chCount}" min="0" max="20" data-ch-id="${chKey}" style="width:50px;padding:2px 4px;font-size:0.85rem;" title="Number of illustrations to generate for this chapter">
         </span>
       </div>
       <div class="ill-chapter-expand" id="ill-expand-${chKey}" style="display:${chEnabled && chCount > 0 ? '' : 'none'};">
@@ -5296,27 +5299,57 @@ class App {
       await this._illustrationQueue.processQueue(queueItems, config.variantMode);
 
       // Save variants to Firestore (one doc per illustration to stay within size limits)
+      // Compress images to JPEG if they're too large to fit in Firestore's 1MB doc limit
       for (const [illId, variants] of Object.entries(this._illustrationVariants)) {
         // Find the matching illustration metadata
         const illMeta = (this._illustrationData || []).find(i => i.id === illId);
-        await this.fs.saveIllustration(this.state.currentProjectId, {
-          id: illId,
-          chapterId: illMeta?.chapterId || '',
-          chapterNumber: illMeta?.chapterNumber || 0,
-          illustrationIndex: illMeta?.illustrationIndex || 0,
-          prompt: illMeta?.prompt || '',
-          altText: illMeta?.altText || '',
-          caption: illMeta?.caption || '',
-          scene: illMeta?.scene || null,
-          variants: variants.map(v => ({
+        const compressedVariants = [];
+        for (const v of variants) {
+          let imgData = v.imageData;
+          // Ensure we have a valid data URL (not a blob URL)
+          if (imgData && !imgData.startsWith('data:')) {
+            try {
+              imgData = await this._convertToDataUrl(imgData);
+            } catch (_) {
+              console.warn(`Failed to convert blob URL for illustration ${illId}`);
+              continue;
+            }
+          }
+          // Compress if the image data is too large (>250KB per variant)
+          if (imgData && imgData.length > 250000) {
+            try {
+              imgData = await this._compressImageDataUrl(imgData, 0.6);
+            } catch (_) {
+              // Keep original if compression fails
+            }
+          }
+          compressedVariants.push({
             index: v.index,
-            imageData: v.imageData,
+            imageData: imgData,
             model: v.model,
             provider: v.provider,
             providerName: v.providerName || v.provider,
-          })),
-          state: 'review',
-        });
+          });
+        }
+        // Update in-memory variants with compressed data
+        this._illustrationVariants[illId] = compressedVariants;
+        try {
+          await this.fs.saveIllustration(this.state.currentProjectId, {
+            id: illId,
+            chapterId: illMeta?.chapterId || '',
+            chapterNumber: illMeta?.chapterNumber || 0,
+            illustrationIndex: illMeta?.illustrationIndex || 0,
+            prompt: illMeta?.prompt || '',
+            altText: illMeta?.altText || '',
+            caption: illMeta?.caption || '',
+            scene: illMeta?.scene || null,
+            variants: compressedVariants,
+            state: 'review',
+          });
+        } catch (saveErr) {
+          console.warn(`Failed to save illustration ${illId} to Firestore:`, saveErr.message);
+          // Images still available in memory for this session
+        }
       }
 
       this._hideIllustrationStatus();
@@ -5324,6 +5357,11 @@ class App {
 
       // Show image review
       this._showImageReview();
+
+      // Refresh chapter gallery if a chapter is currently loaded
+      if (this.state.currentChapterId) {
+        this._renderChapterIllustrations(this.state.currentChapterId);
+      }
 
     } catch (err) {
       console.error('Image generation error:', err);
@@ -5610,6 +5648,62 @@ class App {
     }
 
     this.exporter.setIllustrationData(exportIlls);
+  }
+
+  /**
+   * Convert a blob URL or non-data-URL image source to a base64 data URL.
+   */
+  _convertToDataUrl(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = src;
+    });
+  }
+
+  /**
+   * Compress a base64 data URL image to reduce size for Firestore storage.
+   */
+  _compressImageDataUrl(dataUrl, quality = 0.6) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          // Scale down if very large
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          const maxDim = 1024;
+          if (w > maxDim || h > maxDim) {
+            const scale = maxDim / Math.max(w, h);
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to compress image'));
+      img.src = dataUrl;
+    });
   }
 
   /**
@@ -8561,6 +8655,7 @@ class App {
     });
 
     // --- Export panel actions ---
+    // Prepare illustrations for export before each export format
     document.getElementById('export-plain')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
       const result = await this.exporter.exportPlainText(this.state.currentProjectId);
@@ -8568,11 +8663,13 @@ class App {
     });
     document.getElementById('export-manuscript')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
+      this._prepareIllustrationsForExport();
       const result = await this.exporter.exportManuscriptFormat(this.state.currentProjectId);
       this.exporter.download(result);
     });
     document.getElementById('export-html')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
+      this._prepareIllustrationsForExport();
       const result = await this.exporter.exportStyledHtml(this.state.currentProjectId);
       this.exporter.download(result);
     });
