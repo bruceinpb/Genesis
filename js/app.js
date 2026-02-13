@@ -1880,6 +1880,9 @@ class App {
     prose = prose.replace(/---ROUGHNESS_LOG---[\s\S]*/g, '').trim();
     // Strip markdown headings from the prose body (they'll be replaced by proper HTML heading)
     prose = prose.replace(/^#+\s+.*$/gm, '').trim();
+    // Strip word count annotations/metadata the AI may output (e.g. "(2,500 words)", "Word count: 2500")
+    prose = prose.replace(/^\s*[\(\[~]?\s*[\d,]+\s*words?\s*[\)\]]?\s*$/gm, '').trim();
+    prose = prose.replace(/^\s*(?:Word count|Words?):\s*[\d,]+\s*$/gim, '').trim();
     // Strip em dashes and en dashes before display
     prose = this._stripEmDashes(prose);
     // Strip leading chapter title if present as plain text in body
@@ -5754,34 +5757,62 @@ class App {
     if (statusEl) statusEl.textContent = 'Searching...';
     if (resultsEl) resultsEl.innerHTML = '';
 
+    const pexelsKey = 'nYJwMNwVirjQhlMBxaqcuDfubyD3PkGmH8pLLi5EGvLJaY8wrqgVhbhR';
+    const pexelsUrl = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=12`;
+
     try {
-      // Use Pexels via puter.net.fetch for CORS-free access
-      await loadPuterSDK();
-      if (typeof puter !== 'undefined' && puter.net?.fetch) {
-        const response = await puter.net.fetch(
-          `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=12`,
-          { headers: { 'Authorization': 'nYJwMNwVirjQhlMBxaqcuDfubyD3PkGmH8pLLi5EGvLJaY8wrqgVhbhR' } }
-        );
-        const data = await response.json();
-        const photos = data.photos || [];
+      let data;
 
-        if (photos.length === 0) {
-          if (statusEl) statusEl.textContent = 'No results found. Try different search terms.';
-          return;
+      // Try Puter.js proxy first (CORS-free), then fall back to direct fetch
+      let usedPuter = false;
+      try {
+        await loadPuterSDK();
+        if (typeof puter !== 'undefined' && puter.net?.fetch) {
+          const response = await puter.net.fetch(pexelsUrl, {
+            headers: { 'Authorization': pexelsKey }
+          });
+          data = await response.json();
+          usedPuter = true;
         }
-
-        let html = '';
-        for (const photo of photos) {
-          html += `<div class="ill-ref-thumb" data-url="${photo.src.large}">
-            <img src="${photo.src.small}" alt="${photo.alt || ''}" loading="lazy">
-            <div class="ill-ref-check">&#10003;</div>
-          </div>`;
-        }
-        if (resultsEl) resultsEl.innerHTML = html;
-        if (statusEl) statusEl.textContent = `${photos.length} results. Click to select.`;
-      } else {
-        if (statusEl) statusEl.textContent = 'Image search requires Puter.js (loads automatically). Try again.';
+      } catch (puterErr) {
+        console.warn('Puter.js reference search failed, trying direct fetch:', puterErr.message);
       }
+
+      // Fallback: direct fetch (works when CORS headers are present or same-origin)
+      if (!data) {
+        try {
+          const response = await fetch(pexelsUrl, {
+            headers: { 'Authorization': pexelsKey }
+          });
+          if (response.ok) {
+            data = await response.json();
+          }
+        } catch (fetchErr) {
+          console.warn('Direct fetch reference search also failed:', fetchErr.message);
+        }
+      }
+
+      if (!data) {
+        if (statusEl) statusEl.textContent = 'Image search unavailable. Check your network connection and try again.';
+        return;
+      }
+
+      const photos = data.photos || [];
+
+      if (photos.length === 0) {
+        if (statusEl) statusEl.textContent = 'No results found. Try different search terms.';
+        return;
+      }
+
+      let html = '';
+      for (const photo of photos) {
+        html += `<div class="ill-ref-thumb" data-url="${photo.src.large}">
+          <img src="${photo.src.small}" alt="${photo.alt || ''}" loading="lazy">
+          <div class="ill-ref-check">&#10003;</div>
+        </div>`;
+      }
+      if (resultsEl) resultsEl.innerHTML = html;
+      if (statusEl) statusEl.textContent = `${photos.length} results. Click to select.`;
     } catch (err) {
       if (statusEl) statusEl.textContent = 'Search failed: ' + err.message;
     }
@@ -9890,6 +9921,12 @@ class App {
     if (!html) return html;
     // Convert scene break paragraphs (e.g. "* * *") to centered format
     html = html.replace(/<p>\s*\*\s*\*\s*\*\s*<\/p>/gi, '<p style="text-align:center;text-indent:0">* * *</p>');
+
+    // Strip word count annotations from H1 headings (e.g. "Chapter 1: Title (2,500 words)")
+    html = html.replace(/(<h1[^>]*>)(.*?)\s*[\(\[]\s*[\d,]+\s*words?\s*[\)\]]\s*(<\/h1>)/gi, '$1$2$3');
+    // Strip standalone word-count paragraphs that AI sometimes generates as metadata
+    html = html.replace(/<p>\s*[\(\[~]?\s*[\d,]+\s*words?\s*[\)\]]?\s*<\/p>/gi, '');
+    html = html.replace(/<p>\s*(?:Word count|Words?):\s*[\d,]+\s*<\/p>/gi, '');
 
     // If the first paragraph matches the chapter title, remove it to avoid duplication
     // (the chapter title is rendered separately as a heading by the UI)
