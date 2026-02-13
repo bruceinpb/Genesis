@@ -3368,13 +3368,13 @@ Generate an image prompt for this scene.`;
     }
 
     // Filter out failed prompts and warn
-    const valid = results.filter(r => r.prompt !== null);
+    const valid = results.filter(r => r.prompt !== null && r.prompt !== '');
     const failedCount = results.length - valid.length;
     if (failedCount > 0) {
       console.warn(`[Illustration] ${failedCount} prompt(s) failed — proceeding with ${valid.length} valid prompts`);
     }
 
-    return results;
+    return valid;
   }
 
   /**
