@@ -1883,6 +1883,8 @@ class App {
     // Strip word count annotations/metadata the AI may output (e.g. "(2,500 words)", "Word count: 2500")
     prose = prose.replace(/^\s*[\(\[~]?\s*[\d,]+\s*words?\s*[\)\]]?\s*$/gm, '').trim();
     prose = prose.replace(/^\s*(?:Word count|Words?):\s*[\d,]+\s*$/gim, '').trim();
+    // Strip echoed prompt labels like "PROSE (517 words):" or "PASSAGE (250 words):"
+    prose = prose.replace(/^\s*(?:PROSE|PASSAGE|TEXT|CONTENT)\s*[\(\[]\s*[\d,]+\s*words?\s*[\)\]]\s*:?\s*$/gim, '').trim();
     // Strip em dashes and en dashes before display
     prose = this._stripEmDashes(prose);
     // Strip leading chapter title if present as plain text in body
@@ -9927,6 +9929,8 @@ class App {
     // Strip standalone word-count paragraphs that AI sometimes generates as metadata
     html = html.replace(/<p>\s*[\(\[~]?\s*[\d,]+\s*words?\s*[\)\]]?\s*<\/p>/gi, '');
     html = html.replace(/<p>\s*(?:Word count|Words?):\s*[\d,]+\s*<\/p>/gi, '');
+    // Strip echoed prompt labels like "PROSE (517 words):" or "PASSAGE (250 words):"
+    html = html.replace(/<p>\s*(?:PROSE|PASSAGE|TEXT|CONTENT)\s*[\(\[]\s*[\d,]+\s*words?\s*[\)\]]\s*:?\s*<\/p>/gi, '');
 
     // If the first paragraph matches the chapter title, remove it to avoid duplication
     // (the chapter title is rendered separately as a heading by the UI)
