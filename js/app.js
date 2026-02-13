@@ -5240,7 +5240,8 @@ class App {
   }
 
   /**
-   * Approve all prompts and move to image generation.
+   * Approve all prompts (update data from textareas and mark approved).
+   * Does NOT hide the prompt review container — that happens when generation starts.
    */
   async _approveAllPrompts() {
     // Update prompts from textareas
@@ -5252,9 +5253,10 @@ class App {
       ill.state = 'prompt_approved';
     }
 
-    // Hide prompt review
-    const container = document.getElementById('ill-prompt-review-container');
-    if (container) container.style.display = 'none';
+    // Visually mark all prompt cards as approved
+    document.querySelectorAll('.ill-prompt-card').forEach(card => {
+      card.style.opacity = '0.5';
+    });
   }
 
   /**
@@ -5263,8 +5265,17 @@ class App {
   async _startImageGeneration() {
     await this._approveAllPrompts();
 
+    // Now hide prompt review since generation is starting
+    const promptContainer = document.getElementById('ill-prompt-review-container');
+    if (promptContainer) promptContainer.style.display = 'none';
+
     const config = this._readIllustrationConfig();
     const pools = this._buildProviderPools(config);
+
+    if (pools.length === 0) {
+      this._showIllustrationError('No image providers available. Configure a HuggingFace token in Settings, or enable at least one Puter.js provider.');
+      return;
+    }
 
     this._illustrationQueue = new IllustrationQueue(this.generator, pools);
 
@@ -5272,22 +5283,25 @@ class App {
     const progressPanel = document.getElementById('ill-progress-panel');
     if (progressPanel) progressPanel.style.display = '';
 
-    // Prepare illustrations for queue
+    // Prepare illustrations for queue — exclude items with missing/empty prompts
     const queueItems = (this._illustrationData || [])
-      .filter(ill => ill.state === 'prompt_approved' || ill.state === 'prompt_ready')
+      .filter(ill => (ill.state === 'prompt_approved' || ill.state === 'prompt_ready') && ill.prompt)
       .map(ill => ({
         id: ill.id,
         prompt: ill.prompt,
-        negativePrompt: ill.negativePrompt,
+        negativePrompt: ill.negativePrompt || '',
         variantsRequested: config.variantsPerImage || 3,
         config: {
-          size: ill.overrideSize || config.defaultSize,
-          style: ill.overrideStyle || config.globalStyle,
+          size: ill.overrideSize || config.defaultSize || 'inline_full',
+          style: ill.overrideStyle || config.globalStyle || 'photorealistic',
         },
       }));
 
     if (queueItems.length === 0) {
-      this._showIllustrationError('No approved prompts to generate.');
+      this._showIllustrationError('No approved prompts to generate. Check that prompt generation succeeded.');
+      // Re-show prompt review so user can try again
+      const promptContainer2 = document.getElementById('ill-prompt-review-container');
+      if (promptContainer2) promptContainer2.style.display = '';
       return;
     }
 
@@ -5301,21 +5315,13 @@ class App {
       if (text) text.textContent = `${done} of ${total} images`;
     };
 
-    this._illustrationQueue.onImageReady = async (illId, result, providerName, variantIndex) => {
-      // Apply historical post-processing if applicable
-      let imageData = result.imageData;
-      if (this._historicalPeriod && this._historicalPeriod !== 'post-2000') {
-        try {
-          imageData = await this._applyHistoricalPostProcessing(imageData);
-        } catch (e) {
-          console.warn('Historical filter failed:', e);
-        }
-      }
-
+    this._illustrationQueue.onImageReady = (illId, result, providerName, variantIndex) => {
+      // Store variant immediately (synchronous) to avoid race conditions.
+      // Historical post-processing is deferred to the compression phase below.
       if (!this._illustrationVariants[illId]) this._illustrationVariants[illId] = [];
       this._illustrationVariants[illId].push({
         index: variantIndex,
-        imageData: imageData,
+        imageData: result.imageData,
         model: result.model,
         provider: result.provider,
         providerName: providerName,
@@ -5324,6 +5330,11 @@ class App {
 
     this._illustrationQueue.onError = (illId, err, providerName) => {
       console.warn(`Illustration ${illId} failed on ${providerName}:`, err.message);
+      // Show real-time error feedback to the user
+      const progressText = document.getElementById('ill-progress-text');
+      if (progressText) {
+        progressText.textContent += ` (${providerName} error: ${err.message.slice(0, 60)})`;
+      }
     };
 
     this._illustrationQueue.onWorkerUpdate = (pools, job, providerName, status) => {
@@ -5349,21 +5360,32 @@ class App {
     try {
       await this._illustrationQueue.processQueue(queueItems, config.variantMode);
 
-      // Save variants to Firestore (one doc per illustration to stay within size limits)
-      // Compress images to JPEG if they're too large to fit in Firestore's 1MB doc limit
+      // Post-process, compress, and save images to Firestore
       for (const [illId, variants] of Object.entries(this._illustrationVariants)) {
         // Find the matching illustration metadata
         const illMeta = (this._illustrationData || []).find(i => i.id === illId);
         const compressedVariants = [];
         for (const v of variants) {
           let imgData = v.imageData;
+          if (!imgData) {
+            console.warn(`No image data for illustration ${illId}, variant ${v.index}`);
+            continue;
+          }
           // Ensure we have a valid data URL (not a blob URL)
-          if (imgData && !imgData.startsWith('data:')) {
+          if (!imgData.startsWith('data:')) {
             try {
               imgData = await this._convertToDataUrl(imgData);
             } catch (_) {
               console.warn(`Failed to convert blob URL for illustration ${illId}`);
               continue;
+            }
+          }
+          // Apply historical post-processing if applicable (deferred from onImageReady)
+          if (this._historicalPeriod && this._historicalPeriod !== 'post-2000') {
+            try {
+              imgData = await this._applyHistoricalPostProcessing(imgData);
+            } catch (e) {
+              console.warn('Historical filter failed:', e);
             }
           }
           // Compress if the image data is too large (>250KB per variant)
@@ -5430,6 +5452,19 @@ class App {
         }
       }
 
+      // Check if we got any images at all
+      const totalVariants = Object.values(this._illustrationVariants).reduce((sum, v) => sum + v.length, 0);
+      if (totalVariants === 0) {
+        const errorSummary = this._illustrationQueue ? this._illustrationQueue.getErrorSummary() : null;
+        let errorMsg = 'No images were generated. All providers failed.';
+        if (errorSummary && errorSummary.errors.length > 0) {
+          const firstErr = errorSummary.errors[0];
+          errorMsg += ` First error: ${firstErr.error} (${firstErr.provider})`;
+        }
+        this._showIllustrationError(errorMsg);
+        return;
+      }
+
       // Show image review
       this._showImageReview();
 
@@ -5441,6 +5476,9 @@ class App {
     } catch (err) {
       console.error('Image generation error:', err);
       this._showIllustrationError('Image generation error: ' + err.message);
+      // Re-show prompt review so user can try again
+      const promptContainer = document.getElementById('ill-prompt-review-container');
+      if (promptContainer) promptContainer.style.display = '';
     }
   }
 
@@ -5691,6 +5729,8 @@ class App {
       errEl.textContent = msg;
     }
     this._hideIllustrationStatus();
+    const progressPanel = document.getElementById('ill-progress-panel');
+    if (progressPanel) progressPanel.style.display = 'none';
   }
 
   /**
@@ -8530,9 +8570,9 @@ class App {
       this._startIllustrationGeneration();
     });
 
-    // Prompt review buttons
+    // Prompt review buttons — both buttons now start image generation
     document.getElementById('btn-ill-approve-all-prompts')?.addEventListener('click', () => {
-      this._approveAllPrompts();
+      this._startImageGeneration();
     });
 
     document.getElementById('btn-ill-generate-images')?.addEventListener('click', () => {
