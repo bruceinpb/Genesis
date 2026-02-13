@@ -640,6 +640,49 @@ body.no-bounce {
   caret-color: var(--accent-primary);
 }
 
+/* Multi-Chapter Read-Only View */
+.editor.multi-chapter-view {
+  cursor: default;
+}
+
+.multi-chapter-separator {
+  text-align: center;
+  padding: 32px 0 16px;
+  user-select: none;
+}
+
+.multi-chapter-separator:first-child {
+  padding-top: 0;
+}
+
+.multi-chapter-divider {
+  border-top: 2px solid var(--border-color, #444);
+  margin-bottom: 12px;
+}
+
+.multi-chapter-separator:first-child .multi-chapter-divider {
+  display: none;
+}
+
+.multi-chapter-label {
+  font-family: var(--font-sans);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent-primary);
+  letter-spacing: 0.5px;
+}
+
+.multi-chapter-wordcount {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.multi-chapter-content {
+  padding-bottom: 24px;
+}
+
 .editor:empty::before {
   content: attr(data-placeholder);
   color: var(--text-muted);
@@ -2933,6 +2976,14 @@ select.form-input {
   color: var(--text-muted);
 }
 
+.nav-item-num {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 3px;
+  flex-shrink: 0;
+}
+
 .nav-item-name {
   flex: 1;
   white-space: nowrap;
@@ -4346,6 +4397,24 @@ select.form-input {
   border-color: #FFD700;
   background: rgba(255, 215, 0, 0.12);
   box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+  position: relative;
+}
+
+.ma-winner-badge {
+  position: absolute;
+  top: -8px;
+  right: -6px;
+  background: #FFD700;
+  color: #1a1a2e;
+  font-size: 0.55rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  z-index: 1;
 }
 
 .ma-agent-label {
