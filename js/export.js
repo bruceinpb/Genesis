@@ -147,12 +147,18 @@ ${project.coverImage ? `<div class="cover-page">
 </div>\n\n`;
 
       const paragraphs = this._contentToParagraphs(this._stripLeadingHeading(chapter.content));
-      paragraphs.forEach(p => {
+      const illInsertMap = this._getEmbeddedIllustrationHtml(chapter.id);
+      const hasIllustrations = Object.keys(illInsertMap).length > 0;
+
+      paragraphs.forEach((p, pi) => {
         const trimmed = p.trim();
         if (trimmed === '* * *' || trimmed === '***' || trimmed === '---') {
           html += `<div class="scene-break">* * *</div>\n`;
         } else {
           html += `<p>${this._escapeHtml(p)}</p>\n`;
+        }
+        if (hasIllustrations && illInsertMap[pi]) {
+          html += illInsertMap[pi] + '\n';
         }
       });
     }
