@@ -12182,6 +12182,11 @@ class App {
       document.getElementById('btn-nav-delete-selected')?.click();
     });
 
+    // --- Toolbar: Unselect All (None) ---
+    document.getElementById('nav-toolbar-select-none')?.addEventListener('click', () => {
+      this._toggleSelectAll(false);
+    });
+
     // --- Toolbar: Accept Outline ---
     document.getElementById('btn-nav-accept-outline')?.addEventListener('click', () => {
       this._showAcceptOutlineConfirmation();
