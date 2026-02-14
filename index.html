@@ -628,6 +628,14 @@
               </select>
               <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Continuity guardians that check for conflicts across chapters before accepting new prose.</p>
             </div>
+            <div class="form-group">
+              <label data-tooltip="Cadence Disruption — Uses GPT to rewrite select transitional sentences, breaking the uniformly polished cadence that makes AI prose detectable. Requires an OpenAI API key.">Cadence Disruption</label>
+              <select class="form-input" id="bs-cadence-disruption">
+                <option value="enabled" selected>Enabled (recommended)</option>
+                <option value="disabled">Disabled</option>
+              </select>
+              <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">GPT rewrites every 7th transitional sentence to break AI cadence uniformity. Requires OpenAI key. Max 3 per chunk.</p>
+            </div>
           </div>
         </div>
 

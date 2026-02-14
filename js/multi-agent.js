@@ -139,10 +139,10 @@ const GENESIS_3_CONFIG = {
 // ═══════════════════════════════════════════════════════════
 const GENESIS_4_CONFIG = {
   pipeline: {
-    phases: ['generate', 'verify', 'polish', 'roughen'],
-    disabled: [
-      'sentence_iteration', 'prosecution_score',
-      'micro_fix', 'adversarial_audit', 'voice_check'
+    phases: [
+      'outline_analysis', 'single_voice_generation', 'sentence_iteration',
+      'cadence_disruption', 'deterministic_verification', 'parallel_scoring',
+      'micro_fix', 'rescore', 'audit', 'export'
     ]
   },
   generation: {
@@ -158,20 +158,78 @@ const GENESIS_4_CONFIG = {
     selectWhole: true       // pick best whole output, not paragraph chimera
   },
   polish: {
-    maxPasses: 1,           // ONE pass, not three
+    maxPasses: 1,
     onlyFixVerificationFailures: true,
     allowQualityImprovement: true
   },
   roughness: {
     enabled: true,
-    mundaneParagraphRate: 0.15,   // 15% of paragraphs left slightly mundane
+    mundaneParagraphRate: 0.15,
     authorTicEnabled: true,
-    maxDowngrades: 2              // max 2 sentences get roughened
+    maxDowngrades: 2
   },
+
+  // ── Exit Gate Thresholds (Score-Based Early Exit) ──
+  exitGates: {
+    alpha: {
+      description: 'Fast pass — skip all remaining phases',
+      claudeQualityMin: 95,
+      gptDetectionMax: 30,
+      skips: ['micro_fix', 'rescore', 'audit']
+    },
+    beta: {
+      description: 'Good pass — skip micro-fix',
+      claudeQualityMin: 90,
+      gptDetectionMax: 40,
+      skips: ['micro_fix', 'rescore']
+    },
+    gamma: {
+      description: 'Targeted fix exit — trust single correction',
+      claudeQualityMin: 92,
+      requiresFixSource: 'gpt_detection',
+      maxFixesBeforeExit: 1,
+      skips: ['rescore']
+    },
+    delta: {
+      description: 'Post-fix gate',
+      claudeQualityMin: 90,
+      gptDetectionMax: 40,
+      humanReviewThreshold: 55
+    }
+  },
+
+  // ── Cadence Disruption ──
+  cadenceDisruption: {
+    enabled: true,
+    frequency: 7,              // every Nth sentence
+    maxPerChunk: 3,
+    skipTypes: ['chapter_opener', 'chapter_closer', 'emotional_beat', 'revelation'],
+    targetTypes: ['transitional', 'functional', 'expository'],
+    qualityFloor: true
+  },
+
+  // ── Micro-Fix ──
+  microFix: {
+    maxPasses: 3,
+    prioritizeGptFlags: true,
+    revertOnBannedPattern: true
+  },
+
+  // ── Scoring ──
   scoring: {
-    method: 'on_demand',    // only when user clicks Score
-    crossModel: true        // use different model for scoring when available
+    parallelExecution: true,
+    claudeRubric: 'prosecution_first',
+    gptRubric: 'detection_7_dimension',
+    method: 'on_demand',
+    crossModel: true
   },
+
+  // ── Human Review ──
+  humanReview: {
+    autoTriggerDetectionAbove: 55,
+    alwaysApproveMode: false
+  },
+
   docxExport: {
     deduplicateHeadings: true,
     emDashScrub: true,
@@ -198,6 +256,8 @@ class MultiAgentOrchestrator {
     this.genesis4DeepMode = false;
     // Genesis 3.0: Human review gate (default ON)
     this.humanReviewEnabled = true;
+    // Genesis 4.0: Cadence disruption (default ON)
+    this.cadenceDisruptionEnabled = true;
 
     // Chapter digests cache: chapterId → { contentHash, digest }
     this._chapterDigests = new Map();
@@ -218,13 +278,14 @@ class MultiAgentOrchestrator {
   /**
    * Configure orchestrator settings.
    */
-  configure({ agentCount, chapterAgentsEnabled, genesis3Enabled, genesis4Enabled, genesis4DeepMode, humanReviewEnabled }) {
+  configure({ agentCount, chapterAgentsEnabled, genesis3Enabled, genesis4Enabled, genesis4DeepMode, humanReviewEnabled, cadenceDisruptionEnabled }) {
     if (agentCount !== undefined) this.agentCount = Math.max(1, Math.min(10, agentCount));
     if (chapterAgentsEnabled !== undefined) this.chapterAgentsEnabled = chapterAgentsEnabled;
     if (genesis3Enabled !== undefined) this.genesis3Enabled = genesis3Enabled;
     if (genesis4Enabled !== undefined) this.genesis4Enabled = genesis4Enabled;
     if (genesis4DeepMode !== undefined) this.genesis4DeepMode = genesis4DeepMode;
     if (humanReviewEnabled !== undefined) this.humanReviewEnabled = humanReviewEnabled;
+    if (cadenceDisruptionEnabled !== undefined) this.cadenceDisruptionEnabled = cadenceDisruptionEnabled;
   }
 
   /**
@@ -3767,6 +3828,8 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
     } = params;
 
     this._abortController = new AbortController();
+    const startTime = Date.now();
+    const metrics = { path: null, phases_run: [], total_time: 0 };
 
     const context = {
       genre, genreRules, voice, authorPalette, qualityThreshold,
@@ -3776,6 +3839,8 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
       scholarlyApparatus: scholarlyApparatus || {}
     };
 
+    const gates = GENESIS_4_CONFIG.exitGates;
+
     try {
       // ============ SELECT CHAPTER VOICE ============
       const chapterVoice = this._selectChapterVoice(authorPalette, preferredVoice);
@@ -3783,15 +3848,13 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
 
       // ============ PHASE 1: GENERATE ============
       this._emit('pipeline', '=== PHASE 1: Generate (Ghost Author) ===');
+      metrics.phases_run.push('generate');
 
       let currentProse;
 
       if (this.genesis4DeepMode) {
-        // ── Deep Mode: 3 candidates in parallel, pick best whole output ──
         this._logPipeline('gen-v4', 'Deep mode: generating 3 candidates in parallel...');
-
         const voices = this._selectDeepModeVoices(authorPalette, chapterVoice);
-
         const candidates = await Promise.all(
           voices.map(v => this._generateGenesis4Chunk({
             userPrompt, maxTokens, chapterVoice: v,
@@ -3799,12 +3862,9 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
             errorPatterns, currentChapterTitle
           }))
         );
-
-        // Judge: pick the best whole candidate
         currentProse = await this._judgeGenesis4Candidates(candidates, chapterVoice);
         this._logPipeline('gen-v4', `Deep mode: selected best of ${candidates.length} candidates. ${this._countWords(currentProse)} words.`);
       } else {
-        // ── Standard Mode: single generation ──
         currentProse = await this._generateGenesis4Chunk({
           userPrompt, maxTokens, chapterVoice,
           genre, genreRules, voice, poetryLevel, tone, style,
@@ -3813,70 +3873,299 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
         this._logPipeline('gen-v4', `Standard generation complete. ${this._countWords(currentProse)} words.`);
       }
 
-      // ============ PHASE 2: VERIFY + AUTO-FIX ============
-      this._emit('pipeline', '=== PHASE 2: Verify + Auto-Fix ===');
+      // ============ PHASE 2: SENTENCE ITERATION ============
+      this._emit('pipeline', '=== PHASE 2: Sentence Iteration ===');
+      metrics.phases_run.push('iterate');
 
-      // Step 2a: Auto-fix deterministic patterns (0 API calls)
+      if (this.agentCount > 1) {
+        currentProse = await this.iterateSentences(currentProse, chapterVoice, this.agentCount);
+        this._logPipeline('sentence-iter-v4', 'Sentence iteration complete.');
+      } else {
+        this._logPipeline('sentence-iter-v4', 'Skipped (agentCount = 1).');
+      }
+
+      // ============ PHASE 2b: CADENCE DISRUPTION (GPT) ============
+      this._emit('pipeline', '=== PHASE 2b: Cadence Disruption ===');
+      metrics.phases_run.push('cadence_disrupt');
+
+      const cadenceConfig = GENESIS_4_CONFIG.cadenceDisruption;
+      if (cadenceConfig.enabled && this.cadenceDisruptionEnabled && this.openaiClient && this.openaiClient.isConfigured()) {
+        currentProse = await this._applyCadenceDisruption(currentProse, cadenceConfig);
+      } else {
+        this._logPipeline('cadence-v4', 'Cadence disruption skipped (OpenAI not configured or disabled).');
+      }
+
+      // ============ PHASE 2c: VERIFY + AUTO-FIX ============
+      this._emit('pipeline', '=== PHASE 3: Deterministic Verification ===');
+
+      // Auto-fix deterministic patterns (0 API calls)
       const autoFixed = autoFixBannedPatterns(currentProse);
       currentProse = autoFixed.prose;
-
       if (autoFixed.fixes.length > 0) {
         for (const fix of autoFixed.fixes) {
           this._logPipeline('autofix-v4', `Auto-fixed: ${fix}`);
         }
       }
 
-      // Step 2b: Run deterministic verification
       let verificationResult = deterministicVerification(currentProse);
+      metrics.phases_run.push('code_verify');
       this._logPipeline('verify-v4', `Checks: ${verificationResult.allPassed ? 'ALL PASSED' : `${verificationResult.failCount} FAILURES`}`);
       for (const f of verificationResult.failures) {
         this._logPipeline('verify-v4', `  FAIL: ${f}`);
       }
 
-      // ============ PHASE 3: SINGLE-PASS POLISH ============
-      this._emit('pipeline', '=== PHASE 3: Single-Pass Polish ===');
-
+      // If banned pattern found, polish to fix then re-verify
       if (!verificationResult.allPassed || autoFixed.flaggedForPolish.length > 0) {
         currentProse = await this._singlePassPolish(
           currentProse, verificationResult, autoFixed.flaggedForPolish, context
         );
-
-        // Strip em dashes after polish (safety)
         currentProse = this._stripEmDashes(currentProse);
-
-        // Re-verify after polish
         verificationResult = deterministicVerification(currentProse);
         this._logPipeline('verify-v4', `Post-polish: ${verificationResult.allPassed ? 'ALL PASSED' : `${verificationResult.failCount} failures remain`}`);
-      } else {
-        this._logPipeline('polish-v4', 'Verification passed. No polish needed.');
       }
 
-      // ============ PHASE 4: ROUGHNESS INJECTION ============
-      this._emit('pipeline', '=== PHASE 4: Roughness Injection ===');
-
-      currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
-      this._logPipeline('roughness-v4', 'Roughness injection complete.');
-
-      // Final em-dash scrub
-      currentProse = this._stripEmDashes(currentProse);
-      if (currentChapterTitle) {
-        currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+      // Check for hard fail — banned pattern after polish means regenerate
+      const bannedCount = verificationResult.bannedPatterns
+        ? verificationResult.bannedPatterns.reduce((sum, bp) => sum + bp.count, 0)
+        : 0;
+      if (bannedCount > 0) {
+        this._logPipeline('verify-v4', `HARD FAIL: Banned patterns still present after polish. Regenerating chunk.`);
+        return this.runGenesis4Pipeline(params);
       }
 
-      // Final verification (for reporting)
-      verificationResult = deterministicVerification(currentProse);
+      // ============ PHASE 4 + 4b: PARALLEL SCORING ============
+      this._emit('pipeline', '=== PHASE 4: Parallel Scoring (Claude + GPT) ===');
+      metrics.phases_run.push('parallel_score');
+
+      const [claudeScore, gptDetection] = await Promise.all([
+        this._prosecutionScore(currentProse, context, verificationResult),
+        (this.openaiClient && this.openaiClient.isConfigured())
+          ? this.openaiClient.gptDetectionScore(currentProse)
+          : Promise.resolve(null)
+      ]);
+
+      const quality = claudeScore.overall;
+      const detection = gptDetection ? gptDetection.overall_confidence : 0;
+
+      this._logPipeline('parallel-score-v4', `Quality: ${quality}/100 | Detection: ${detection}%`);
+      this._emit('parallel-score-complete', `Quality: ${quality}/100 | Detection: ${detection}%`, {
+        claudeScore, gptDetection, quality, detection
+      });
+
+      // ═══ EXIT GATE ALPHA ═══
+      if (quality >= gates.alpha.claudeQualityMin && detection <= gates.alpha.gptDetectionMax) {
+        metrics.path = 'FAST_ALPHA';
+        metrics.total_time = Date.now() - startTime;
+        this._logPipeline('exit-gate', `EXIT GATE ALPHA: Quality ${quality} >= ${gates.alpha.claudeQualityMin}, Detection ${detection}% <= ${gates.alpha.gptDetectionMax}%. Fast path — skipping all remaining phases.`);
+        this._emit('exit-gate', `Fast path — excellent on first try`, { gate: 'ALPHA', quality, detection });
+
+        // Apply roughness and finalize
+        currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+        currentProse = this._stripEmDashes(currentProse);
+        if (currentChapterTitle) currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+
+        return this._buildGenesis4Result(currentProse, {
+          metrics, quality, detection, claudeScore, gptDetection,
+          chapterVoice, verificationResult, autoFixed, context,
+          currentChapterId, currentChapterTitle, chapters,
+          scholarlyApparatus
+        });
+      }
+
+      // ═══ EXIT GATE BETA ═══
+      if (quality >= gates.beta.claudeQualityMin && detection <= gates.beta.gptDetectionMax) {
+        metrics.path = 'GOOD_BETA';
+        metrics.total_time = Date.now() - startTime;
+        this._logPipeline('exit-gate', `EXIT GATE BETA: Quality ${quality} >= ${gates.beta.claudeQualityMin}, Detection ${detection}% <= ${gates.beta.gptDetectionMax}%. Good pass — skipping micro-fix.`);
+        this._emit('exit-gate', `Good pass — clean enough to ship`, { gate: 'BETA', quality, detection });
+
+        currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+        currentProse = this._stripEmDashes(currentProse);
+        if (currentChapterTitle) currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+
+        return this._buildGenesis4Result(currentProse, {
+          metrics, quality, detection, claudeScore, gptDetection,
+          chapterVoice, verificationResult, autoFixed, context,
+          currentChapterId, currentChapterTitle, chapters,
+          scholarlyApparatus
+        });
+      }
+
+      // ============ PHASE 5: SURGICAL MICRO-FIX ============
+      this._emit('pipeline', '=== PHASE 5: Surgical Micro-Fix ===');
+
+      // Build unified fix list from both scorers
+      const fixTargets = this._buildUnifiedFixList(claudeScore, gptDetection);
+      let fixCount = 0;
+      const maxFixes = GENESIS_4_CONFIG.microFix.maxPasses;
+      const fixesApplied = [];
+
+      for (const target of fixTargets) {
+        if (fixCount >= maxFixes) break;
+
+        const diagnosis = {
+          text: target.passage || target.issue,
+          category: target.source === 'gpt_detection' ? 'ai-detection' : target.issue,
+          severity: 'high',
+          diagnosis: `${target.source}: ${target.issue}`,
+          suggestedApproach: `Fix the ${target.issue} issue identified by ${target.source}`
+        };
+
+        const fixedProse = await this._fixSingleElement(currentProse, diagnosis, context);
+        fixCount++;
+        metrics.phases_run.push(`micro_fix_${fixCount}`);
+
+        if (!fixedProse || fixedProse === currentProse) {
+          this._logPipeline('microfix-v4', `Fix ${fixCount}: No change produced. Skipping.`);
+          continue;
+        }
+
+        // Validate word drift
+        const drift = Math.abs(this._countWords(fixedProse) - this._countWords(currentProse)) / this._countWords(currentProse);
+        if (drift > 0.08) {
+          this._logPipeline('microfix-v4', `Fix ${fixCount}: Word drift ${(drift * 100).toFixed(0)}% too high. Rejecting.`);
+          continue;
+        }
+
+        // Re-verify deterministically after each fix
+        const reVerify = deterministicVerification(fixedProse);
+        const reVerifyBanned = reVerify.bannedPatterns
+          ? reVerify.bannedPatterns.reduce((sum, bp) => sum + bp.count, 0)
+          : 0;
+
+        if (reVerifyBanned > 0 && GENESIS_4_CONFIG.microFix.revertOnBannedPattern) {
+          this._logPipeline('microfix-v4', `Fix ${fixCount}: Introduced banned pattern. Reverting.`);
+          continue;
+        }
+
+        currentProse = fixedProse;
+        verificationResult = reVerify;
+        fixesApplied.push({
+          pass: fixCount,
+          category: target.source,
+          text: (target.issue || '').substring(0, 80),
+          scoreBefore: quality,
+          scoreAfter: null
+        });
+        this._logPipeline('microfix-v4', `Fix ${fixCount}: Applied (${target.source}: ${target.issue}).`);
+
+        // ═══ EXIT GATE GAMMA ═══
+        if (quality >= gates.gamma.claudeQualityMin &&
+            target.source === 'gpt_detection' &&
+            fixCount <= gates.gamma.maxFixesBeforeExit) {
+          metrics.path = 'TARGETED_GAMMA';
+          metrics.total_time = Date.now() - startTime;
+          this._logPipeline('exit-gate', `EXIT GATE GAMMA: Quality ${quality} >= ${gates.gamma.claudeQualityMin}, targeted GPT fix applied. Exiting on confidence.`);
+          this._emit('exit-gate', `Quick fix — one targeted correction`, { gate: 'GAMMA', quality, detection });
+
+          currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+          currentProse = this._stripEmDashes(currentProse);
+          if (currentChapterTitle) currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+
+          return this._buildGenesis4Result(currentProse, {
+            metrics, quality, detection: 'estimated_improved', claudeScore, gptDetection,
+            chapterVoice, verificationResult, autoFixed, context,
+            currentChapterId, currentChapterTitle, chapters,
+            scholarlyApparatus, fixesApplied
+          });
+        }
+      }
+
+      // ============ PHASE 4/4b RESCORE (Parallel) ============
+      this._emit('pipeline', '=== PHASE 4b: Rescore (Parallel) ===');
+      metrics.phases_run.push('rescore');
+
+      const [rescoreResult, rescoreDetection] = await Promise.all([
+        this._prosecutionScore(currentProse, context, verificationResult),
+        (this.openaiClient && this.openaiClient.isConfigured())
+          ? this.openaiClient.gptDetectionScore(currentProse)
+          : Promise.resolve(null)
+      ]);
+
+      const rQ = rescoreResult.overall;
+      const rD = rescoreDetection ? rescoreDetection.overall_confidence : 0;
+
+      this._logPipeline('rescore-v4', `Rescore: Quality ${rQ}/100 | Detection ${rD}%`);
+      this._emit('rescore-complete', `Rescore: Quality ${rQ}/100 | Detection ${rD}%`, {
+        claudeScore: rescoreResult, gptDetection: rescoreDetection, quality: rQ, detection: rD
+      });
+
+      // ═══ EXIT GATE DELTA ═══
+      if (rQ >= gates.delta.claudeQualityMin && rD <= gates.delta.gptDetectionMax) {
+        metrics.path = 'FIXED_DELTA';
+        metrics.total_time = Date.now() - startTime;
+        this._logPipeline('exit-gate', `EXIT GATE DELTA: Quality ${rQ} >= ${gates.delta.claudeQualityMin}, Detection ${rD}% <= ${gates.delta.gptDetectionMax}%. Passed after fixes.`);
+        this._emit('exit-gate', `Fixed — passed after micro-fixes`, { gate: 'DELTA', quality: rQ, detection: rD });
+
+        currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+        currentProse = this._stripEmDashes(currentProse);
+        if (currentChapterTitle) currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+
+        return this._buildGenesis4Result(currentProse, {
+          metrics, quality: rQ, detection: rD,
+          claudeScore: rescoreResult, gptDetection: rescoreDetection,
+          chapterVoice, verificationResult, autoFixed, context,
+          currentChapterId, currentChapterTitle, chapters,
+          scholarlyApparatus, fixesApplied
+        });
+      }
+
+      if (rQ >= gates.delta.claudeQualityMin && rD <= gates.delta.humanReviewThreshold) {
+        // One more targeted fix on GPT's top remaining flag
+        metrics.path = 'LAST_EFFORT_DELTA';
+        this._logPipeline('exit-gate', `DELTA: Detection ${rD}% marginal (41-55%). Applying one more targeted fix.`);
+
+        if (rescoreDetection && rescoreDetection.dimensions && rescoreDetection.dimensions.length > 0) {
+          const topFlag = [...rescoreDetection.dimensions].sort((a, b) => b.score - a.score)[0];
+          const lastDiagnosis = {
+            text: topFlag.quoted_passage || topFlag.name,
+            category: 'ai-detection',
+            severity: 'high',
+            diagnosis: `GPT detection: ${topFlag.name}`,
+            suggestedApproach: `Fix the ${topFlag.name} pattern flagged by GPT detection`
+          };
+          const lastFix = await this._fixSingleElement(currentProse, lastDiagnosis, context);
+          if (lastFix && lastFix !== currentProse) {
+            currentProse = lastFix;
+            metrics.phases_run.push('final_targeted_fix');
+          }
+        }
+
+        metrics.total_time = Date.now() - startTime;
+        this._emit('exit-gate', `Marginal — one extra fix applied`, { gate: 'DELTA_LAST', quality: rQ, detection: rD });
+
+        currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+        currentProse = this._stripEmDashes(currentProse);
+        if (currentChapterTitle) currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
+
+        return this._buildGenesis4Result(currentProse, {
+          metrics, quality: rQ, detection: 'estimated_improved',
+          claudeScore: rescoreResult, gptDetection: rescoreDetection,
+          chapterVoice, verificationResult, autoFixed, context,
+          currentChapterId, currentChapterTitle, chapters,
+          scholarlyApparatus, fixesApplied
+        });
+      }
+
+      // Detection still too high — flag for human review
+      metrics.path = 'HUMAN_REVIEW';
+      metrics.total_time = Date.now() - startTime;
+      this._logPipeline('exit-gate', `HUMAN REVIEW: Detection ${rD}% > ${gates.delta.humanReviewThreshold}% after ${fixCount} fixes. Needs human review.`);
+      this._emit('exit-gate', `Needs review — detection too high`, { gate: 'HUMAN_REVIEW', quality: rQ, detection: rD });
 
       // ============ HUMAN REVIEW GATE ============
       let humanDecision = 'accept';
       if (this.humanReviewEnabled) {
         this._emit('pipeline', '=== Human Review Gate ===');
-        this._emit('human-gate', 'Awaiting human review...', {
+        this._emit('human-gate', 'Awaiting human review — detection score too high...', {
           prose: currentProse,
           verificationResult,
-          scoreResult: { overall: null, rawResponse: 'Genesis 4: scoring on demand only' },
-          auditResult: { anyYes: false, findings: [], rawResponse: 'Genesis 4: adversarial audit removed' },
-          voiceCheck: { isConsistent: true, flaggedParagraphs: [], rawResponse: 'Genesis 4: voice check removed' },
-          chapterVoice: chapterVoice.name
+          scoreResult: rescoreResult,
+          auditResult: { anyYes: true, findings: rescoreDetection ? rescoreDetection.dimensions.filter(d => d.score >= 6) : [] },
+          voiceCheck: { isConsistent: true },
+          chapterVoice: chapterVoice.name,
+          needsHumanReview: true,
+          reviewReason: `Detection confidence ${rD}% after ${fixCount} fixes`
         });
 
         humanDecision = await new Promise((resolve) => {
@@ -3898,75 +4187,227 @@ ${issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
 
       this._logPipeline('human-gate', humanDecision === 'accept' ? 'Chunk accepted.' : 'Auto-accepted.');
 
-      // ============ Cross-Model Scoring (GPT-5.2) — optional ============
-      let crossModelScore = null;
-      if (this.openaiClient && this.openaiClient.isConfigured() && this.openaiClient.crossModelScoring) {
-        this._emit('cross-model-scoring', 'Running cross-model scoring via GPT-5.2...');
-        try {
-          crossModelScore = await this.openaiClient.scorePassage(
-            currentProse, context.genre || '', context.subgenre || '', context.pov || context.voice || ''
-          );
-          if (crossModelScore) {
-            this._logPipeline('cross-model', `GPT-5.2 score: ${crossModelScore.total}/90. AI patterns: ${(crossModelScore.ai_patterns_found || []).length}.`);
-            this._emit('cross-model-complete', `Cross-model: ${crossModelScore.total}/90`, { gptScore: crossModelScore });
-          }
-        } catch (err) {
-          this._logPipeline('cross-model', `GPT-5.2 scoring failed: ${err.message}. Continuing.`);
-        }
-      }
+      // Finalize
+      currentProse = this._injectRoughness(currentProse, GENESIS_4_CONFIG.roughness);
+      currentProse = this._stripEmDashes(currentProse);
+      if (currentChapterTitle) currentProse = this._stripLeadingTitle(currentProse, currentChapterTitle);
 
-      // ============ GO/NO-GO (cross-chapter check) ============
-      let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
-      if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
-        this._emit('pipeline', '=== GO/NO-GO Launch Control ===');
-        goNoGoResult = await this.runGoNoGo(
-          currentProse, currentChapterId, chapters, currentChapterTitle
-        );
-      }
-
-      // Footnotes (conditional)
-      let footnoteResult = { prose: currentProse, footnotes: [], endnotes: [] };
-      if (scholarlyApparatus && scholarlyApparatus.footnotesEnabled) {
-        footnoteResult = await this._generateFootnotes(currentProse, context);
-        currentProse = footnoteResult.prose;
-      }
-
-      // Index (conditional)
-      let indexResult = { entries: [], type: null };
-      if (scholarlyApparatus && scholarlyApparatus.indexEnabled) {
-        indexResult = await this._compileIndex(currentProse, context);
-      }
-
-      this._abortController = null;
-
-      return {
-        prose: currentProse,
-        score: null, // Genesis 4: scoring is on-demand only
-        humanLikenessScore: null,
-        crossModelScore,
-        candidates: [],
-        chimeraMethod: this.genesis4DeepMode ? 'ghost-author-deep-v4' : 'ghost-author-v4',
-        chimeraRationale: `Genesis 4: Ghost Author generation in ${chapterVoice.name} style with reference-passage prompting`,
-        fixesApplied: autoFixed.fixes.map(f => ({ pass: 0, category: 'autofix', text: f, scoreBefore: null, scoreAfter: null })),
-        goNoGoResult,
-        auditResult: { anyYes: false, findings: [], rawResponse: 'Genesis 4: adversarial audit replaced by roughness injection' },
-        verificationResult,
-        scoreResult: { overall: null, rawResponse: 'Genesis 4: scoring on demand' },
-        voiceCheck: { isConsistent: true, flaggedParagraphs: [], rawResponse: 'Genesis 4: voice consistency via reference passage' },
-        chapterVoice: chapterVoice.name,
-        footnoteResult,
-        indexResult,
-        wordCount: this._countWords(currentProse),
-        dualGateIterations: 0,
-        humanDecision,
-        judgeReport: null,
-        fixPlan: null,
-        winner: null
-      };
+      return this._buildGenesis4Result(currentProse, {
+        metrics, quality: rQ, detection: rD,
+        claudeScore: rescoreResult, gptDetection: rescoreDetection,
+        chapterVoice, verificationResult, autoFixed, context,
+        currentChapterId, currentChapterTitle, chapters,
+        scholarlyApparatus, fixesApplied,
+        needsHumanReview: true,
+        reviewReason: `Detection confidence ${rD}% after ${fixCount} fixes`,
+        humanDecision
+      });
     } catch (err) {
       this._abortController = null;
       throw err;
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GENESIS 4.0 — HELPERS: Unified Fix List, Cadence Disruption, Result Builder
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Build a unified fix list from Claude prosecution + GPT detection scores.
+   * GPT detection flags come first (these are the patterns Claude can't see),
+   * followed by Claude prosecution weaknesses.
+   */
+  _buildUnifiedFixList(claudeScore, gptDetection) {
+    const fixes = [];
+
+    // GPT detection flags first
+    if (gptDetection && gptDetection.dimensions) {
+      const gptFlags = gptDetection.dimensions
+        .filter(d => d.score >= 6)
+        .sort((a, b) => b.score - a.score);
+
+      for (const flag of gptFlags) {
+        fixes.push({
+          source: 'gpt_detection',
+          issue: flag.name,
+          passage: flag.quoted_passage || '',
+          priority: flag.score
+        });
+      }
+    }
+
+    // Claude prosecution weaknesses second
+    if (claudeScore && claudeScore.rawResponse) {
+      // Extract weaknesses from the raw prosecution response
+      const weaknessMatches = claudeScore.rawResponse.matchAll(/\d+\.\s+(.+?)(?=\n\d+\.|\nSTRENGTHS|\nSCORES|$)/gs);
+      let weaknessIdx = 0;
+      for (const m of weaknessMatches) {
+        if (weaknessIdx >= 5) break; // cap at 5 weaknesses parsed
+        const text = m[1].trim();
+        if (text.length > 10) {
+          fixes.push({
+            source: 'claude_prosecution',
+            issue: text.substring(0, 120),
+            passage: '',
+            priority: 5 - weaknessIdx
+          });
+        }
+        weaknessIdx++;
+      }
+    }
+
+    // Sort by priority descending, cap at maxFixes
+    return fixes.sort((a, b) => b.priority - a.priority).slice(0, GENESIS_4_CONFIG.microFix.maxPasses);
+  }
+
+  /**
+   * Apply cadence disruption: select transitional/functional sentences
+   * and rewrite them via GPT to break cadence uniformity.
+   */
+  async _applyCadenceDisruption(prose, config) {
+    const allSentences = this.parseSentences(prose);
+    if (allSentences.length < 5) {
+      this._logPipeline('cadence-v4', 'Too few sentences for cadence disruption.');
+      return prose;
+    }
+
+    // Classify sentences by type (heuristic, no API call)
+    const classified = allSentences.map((sent, idx) => {
+      let type = 'other';
+      if (idx === 0) type = 'chapter_opener';
+      else if (idx === allSentences.length - 1) type = 'chapter_closer';
+      else if (/\b(felt|heart|tears|grief|joy|anger|fear|love|hope|despair|ache)\b/i.test(sent)) type = 'emotional_beat';
+      else if (/\b(realized|discovered|revealed|understood|truth|secret)\b/i.test(sent)) type = 'revelation';
+      else if (/^(And |But |So |Then |Meanwhile|However|Instead|Still|Yet)/i.test(sent) ||
+               /^(After |Before |When |While |As |Once )/i.test(sent)) type = 'transitional';
+      else if (sent.split(/\s+/).length < 20 && !/[!?]$/.test(sent)) type = 'functional';
+      return { text: sent, type, idx };
+    });
+
+    // Select candidates: every Nth sentence that's transitional or functional
+    const candidates = [];
+    for (let i = 0; i < classified.length; i++) {
+      if (i % config.frequency === 0 && config.targetTypes.includes(classified[i].type)) {
+        candidates.push(classified[i]);
+      }
+    }
+
+    const selected = candidates.slice(0, config.maxPerChunk);
+    if (selected.length === 0) {
+      this._logPipeline('cadence-v4', 'No suitable sentences for cadence disruption.');
+      return prose;
+    }
+
+    this._logPipeline('cadence-v4', `Selected ${selected.length} sentence(s) for cadence disruption.`);
+
+    let result = prose;
+    let disruptionCount = 0;
+    for (const target of selected) {
+      const prev = target.idx > 0 ? allSentences[target.idx - 1] : '';
+      const next = target.idx < allSentences.length - 1 ? allSentences[target.idx + 1] : '';
+
+      const rewritten = await this.openaiClient.rewriteForCadenceDisruption(target.text, prev, next);
+
+      if (rewritten) {
+        // Quality floor: check for banned patterns
+        const bannedCheck = deterministicVerification(rewritten);
+        const rewrittenBanned = bannedCheck.bannedPatterns
+          ? bannedCheck.bannedPatterns.reduce((sum, bp) => sum + bp.count, 0)
+          : 0;
+
+        if (rewrittenBanned === 0) {
+          result = result.replace(target.text, rewritten);
+          disruptionCount++;
+          this._logPipeline('cadence-v4', `Disrupted sentence ${target.idx}: "${target.text.substring(0, 40)}..." → "${rewritten.substring(0, 40)}..."`);
+        } else {
+          this._logPipeline('cadence-v4', `Skipped: GPT rewrite introduced banned pattern.`);
+        }
+      } else {
+        this._logPipeline('cadence-v4', `Skipped: GPT rewrite failed quality floor for sentence ${target.idx}.`);
+      }
+    }
+
+    this._logPipeline('cadence-v4', `Cadence disruption complete: ${disruptionCount} sentence(s) disrupted.`);
+    return result;
+  }
+
+  /**
+   * Build the standardized result object for Genesis 4.0 pipeline.
+   * Handles GO/NO-GO, footnotes, index, and metric tracking.
+   */
+  async _buildGenesis4Result(currentProse, opts) {
+    const {
+      metrics, quality, detection, claudeScore, gptDetection,
+      chapterVoice, verificationResult, autoFixed, context,
+      currentChapterId, currentChapterTitle, chapters,
+      scholarlyApparatus, fixesApplied = [],
+      needsHumanReview = false, reviewReason = '',
+      humanDecision = 'accept'
+    } = opts;
+
+    // Final verification
+    const finalVerification = deterministicVerification(currentProse);
+
+    // GO/NO-GO (cross-chapter check)
+    let goNoGoResult = { overallStatus: 'GO', results: [], skipped: true };
+    if (this.chapterAgentsEnabled && chapters && chapters.length > 1) {
+      this._emit('pipeline', '=== GO/NO-GO Launch Control ===');
+      goNoGoResult = await this.runGoNoGo(
+        currentProse, currentChapterId, chapters, currentChapterTitle
+      );
+    }
+
+    // Footnotes (conditional)
+    let footnoteResult = { prose: currentProse, footnotes: [], endnotes: [] };
+    if (scholarlyApparatus && scholarlyApparatus.footnotesEnabled) {
+      footnoteResult = await this._generateFootnotes(currentProse, context);
+      currentProse = footnoteResult.prose;
+    }
+
+    // Index (conditional)
+    let indexResult = { entries: [], type: null };
+    if (scholarlyApparatus && scholarlyApparatus.indexEnabled) {
+      indexResult = await this._compileIndex(currentProse, context);
+    }
+
+    this._abortController = null;
+
+    // Log final metrics
+    this._logPipeline('pipeline-v4', `Pipeline complete: ${metrics.path} | Quality: ${quality} | Detection: ${detection}% | Phases: ${metrics.phases_run.length} | Time: ${(metrics.total_time / 1000).toFixed(1)}s`);
+
+    const allAutoFixes = autoFixed ? autoFixed.fixes.map(f => ({ pass: 0, category: 'autofix', text: f, scoreBefore: null, scoreAfter: null })) : [];
+
+    return {
+      prose: currentProse,
+      score: quality,
+      humanLikenessScore: detection !== 'estimated_improved' ? (100 - (detection || 0)) : null,
+      crossModelScore: gptDetection,
+      candidates: [],
+      chimeraMethod: this.genesis4DeepMode ? 'ghost-author-deep-v4-earlyexit' : 'ghost-author-v4-earlyexit',
+      chimeraRationale: `Genesis 4 (score-based early exit): ${metrics.path} path in ${chapterVoice.name} style`,
+      fixesApplied: [...allAutoFixes, ...fixesApplied],
+      goNoGoResult,
+      auditResult: { anyYes: needsHumanReview, findings: gptDetection ? gptDetection.dimensions.filter(d => d.score >= 6) : [] },
+      verificationResult: finalVerification,
+      scoreResult: claudeScore,
+      voiceCheck: { isConsistent: true, flaggedParagraphs: [] },
+      chapterVoice: chapterVoice.name,
+      footnoteResult,
+      indexResult,
+      wordCount: this._countWords(currentProse),
+      dualGateIterations: 0,
+      humanDecision,
+      judgeReport: null,
+      fixPlan: null,
+      winner: null,
+      // Genesis 4.0 early exit metadata
+      exitPath: metrics.path,
+      exitMetrics: metrics,
+      qualityScore: quality,
+      detectionScore: detection,
+      needsHumanReview,
+      reviewReason
+    };
   }
 
   /**

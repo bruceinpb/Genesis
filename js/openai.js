@@ -157,6 +157,146 @@ class OpenAIClient {
     }
   }
 
+  // === GPT DETECTION SCORING (Genesis 4.0 — Score-Based Early Exit) ===
+
+  /**
+   * Score prose for AI detection confidence using GPT's 7-dimension rubric.
+   * Returns { overall_confidence: 0-100, dimensions: [...], parse_error: boolean }
+   */
+  async gptDetectionScore(proseChunk) {
+    if (!this.isConfigured()) return null;
+
+    const systemPrompt = `You are an AI detection analyst. Score this prose on how likely it is to be identified as AI-generated.
+
+Score each dimension 1-10 (1 = clearly human, 10 = clearly AI):
+
+1. CADENCE_UNIFORMITY: Does every sentence have similar polish level?
+2. KICKER_DENSITY: Do paragraphs consistently end on dramatic notes?
+3. STRUCTURAL_REPETITION: Do sections follow the same arc pattern?
+4. FABRICATED_AUTHORITY: Unverifiable specific citations or statistics?
+5. TRANSITION_MECHANICS: Do paragraph transitions feel formulaic?
+6. VOCABULARY_DISTRIBUTION: Is word choice uniformly "literary"?
+7. IMPERFECTION_ABSENCE: Is the prose suspiciously free of rough patches?
+
+For each dimension scoring 6+, quote the specific triggering passage.
+
+OVERALL_DETECTION_CONFIDENCE: [0-100]%
+
+Respond as JSON only. No markdown, no backticks, no preamble.
+
+Example format:
+{
+  "dimensions": [
+    {"name": "CADENCE_UNIFORMITY", "score": 5, "quoted_passage": ""},
+    {"name": "KICKER_DENSITY", "score": 7, "quoted_passage": "Every paragraph ended with..."}
+  ],
+  "overall_confidence": 42
+}`;
+
+    const maxRetries = 2;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const response = await fetch(`${OPENAI_API_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: proseChunk }
+            ],
+            max_tokens: 1000,
+            temperature: 0.2
+          })
+        });
+
+        if (!response.ok) {
+          console.warn('GPT detection scoring failed:', response.status);
+          return { overall_confidence: 50, dimensions: [], parse_error: true };
+        }
+
+        const data = await response.json();
+        const text = data.choices[0].message.content;
+        const clean = text.replace(/```json\n?|```\n?/g, '').trim();
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : clean);
+
+        return {
+          overall_confidence: parsed.overall_confidence ?? 50,
+          dimensions: parsed.dimensions || [],
+          parse_error: false
+        };
+      } catch (err) {
+        if (attempt < maxRetries - 1) continue;
+        console.warn('GPT detection scoring error:', err.message);
+        return { overall_confidence: 50, dimensions: [], parse_error: true };
+      }
+    }
+  }
+
+  // === CADENCE DISRUPTION (Genesis 4.0 — Score-Based Early Exit) ===
+
+  /**
+   * Rewrite a single sentence to break cadence uniformity.
+   * Returns the rewritten sentence or null if the rewrite fails quality checks.
+   */
+  async rewriteForCadenceDisruption(targetSentence, prevSentence, nextSentence) {
+    if (!this.isConfigured()) return null;
+
+    try {
+      const response = await fetch(`${OPENAI_API_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            {
+              role: 'system',
+              content: `You are rewriting a single sentence to break an overly consistent literary cadence. The surrounding prose is polished and rhythmic. Make THIS sentence slightly more direct and workmanlike, like a journalist writing quickly, not a novelist crafting carefully.
+
+Rules:
+- Preserve ALL factual content and meaning
+- Keep similar length (within 20%)
+- Do NOT make it worse, just make it DIFFERENT
+- No em-dashes (U+2014, U+2013, --, ---)
+- Return ONLY the rewritten sentence, nothing else.`
+            },
+            {
+              role: 'user',
+              content: `PREVIOUS: ${prevSentence || '(start of paragraph)'}\nREWRITE THIS: ${targetSentence}\nNEXT: ${nextSentence || '(end of paragraph)'}`
+            }
+          ],
+          max_tokens: 300,
+          temperature: 0.6
+        })
+      });
+
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      const rewritten = (data.choices[0].message.content || '').trim();
+
+      // Quality floor checks
+      if (!rewritten || rewritten.length < 5) return null;
+      if (/[\u2014\u2013]|---|--/.test(rewritten)) return null;
+
+      const origLen = targetSentence.split(/\s+/).length;
+      const newLen = rewritten.split(/\s+/).length;
+      if (Math.abs(newLen - origLen) / origLen > 0.20) return null;
+
+      return rewritten;
+    } catch (err) {
+      console.warn('Cadence disruption rewrite failed:', err.message);
+      return null;
+    }
+  }
+
   // === COMBINED VERDICT LOGIC ===
 
   getCombinedVerdict(claudeScore, gptScore) {
