@@ -1214,6 +1214,10 @@ class App {
       'pipeline-v4': 5, 'gen-v4': 15, 'judge-v4': 30,
       'autofix-v4': 40, 'verify-v4': 50,
       'polish-v4': 60,
+      // Genesis 4.0 early exit pipeline phases
+      'parallel-score-complete': 55,
+      'exit-gate': 100,
+      'rescore-complete': 85,
       // Footnotes / Index
       'footnotes': 95, 'footnotes-complete': 97,
       'index': 98, 'index-complete': 100
@@ -1275,10 +1279,70 @@ class App {
       'verify-v4': 'Verifying output...',
       'polish-v4': 'Polishing prose...',
       'footnotes': 'Generating footnotes...',
-      'footnotes-complete': 'Footnotes ready.'
+      'footnotes-complete': 'Footnotes ready.',
+      // Genesis 4.0 early exit pipeline phases
+      'parallel-score-complete': `Parallel scoring: Quality ${data.quality || '?'}/100 | Detection ${data.detection || '?'}%`,
+      'exit-gate': data.gate ? `Exit: ${data.gate} (Q:${data.quality || '?'} D:${data.detection || '?'}%)` : 'Exit gate evaluated.',
+      'rescore-complete': `Rescore: Quality ${data.quality || '?'}/100 | Detection ${data.detection || '?'}%`
     };
 
-    // Cross-model score display
+    // Genesis 4.0 parallel score display
+    if (phase === 'parallel-score-complete' && (data.claudeScore || data.gptDetection)) {
+      const crossModelPanel = document.getElementById('ma-cross-model-panel') || document.getElementById('iterative-cross-model-panel');
+      if (crossModelPanel) {
+        const q = data.quality || 0;
+        const d = data.detection || 0;
+        const gpt = data.gptDetection;
+        const gateColor = (q >= 95 && d <= 30) ? '#059669' : (q >= 90 && d <= 40) ? '#2563EB' : '#D97706';
+        const gateLabel = (q >= 95 && d <= 30) ? 'ALPHA (fast pass)' : (q >= 90 && d <= 40) ? 'BETA (good pass)' : 'Needs micro-fix';
+        let dimHtml = '';
+        if (gpt && gpt.dimensions && gpt.dimensions.length > 0) {
+          const flagged = gpt.dimensions.filter(d => d.score >= 6).map(d => `${d.name}: ${d.score}/10`);
+          if (flagged.length > 0) dimHtml = `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">Flagged: ${flagged.join(', ')}</div>`;
+        }
+        crossModelPanel.innerHTML = `
+          <div style="padding:10px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:8px;">
+            <div style="font-weight:600;margin-bottom:6px;">Parallel Scoring (Claude + GPT Detection)</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:0.8rem;">
+              <span>Claude Quality: ${q}/100</span>
+              <span>GPT Detection: ${d}%</span>
+            </div>
+            ${dimHtml}
+            <div style="margin-top:6px;font-weight:600;color:${gateColor};">
+              Exit Gate: ${gateLabel}
+            </div>
+          </div>`;
+        crossModelPanel.style.display = 'block';
+      }
+    }
+
+    // Exit gate display
+    if (phase === 'exit-gate' && data.gate) {
+      const crossModelPanel = document.getElementById('ma-cross-model-panel') || document.getElementById('iterative-cross-model-panel');
+      if (crossModelPanel) {
+        const pathLabels = {
+          'ALPHA': 'Fast pass — excellent on first try',
+          'BETA': 'Good pass — clean enough to ship',
+          'GAMMA': 'Quick fix — one targeted correction',
+          'DELTA': 'Fixed — passed after micro-fixes',
+          'DELTA_LAST': 'Marginal — one extra fix applied',
+          'HUMAN_REVIEW': 'Needs review — detection too high'
+        };
+        const pathColors = {
+          'ALPHA': '#059669', 'BETA': '#059669', 'GAMMA': '#059669',
+          'DELTA': '#059669', 'DELTA_LAST': '#D97706', 'HUMAN_REVIEW': '#DC2626'
+        };
+        const label = pathLabels[data.gate] || data.gate;
+        const color = pathColors[data.gate] || '#6B7280';
+        crossModelPanel.innerHTML += `
+          <div style="padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:4px;">
+            <div style="font-weight:600;color:${color};">${label}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">Quality: ${data.quality || '?'}/100 | Detection: ${data.detection || '?'}%</div>
+          </div>`;
+      }
+    }
+
+    // Cross-model score display (legacy)
     if (phase === 'cross-model-complete' && data.gptScore) {
       const crossModelPanel = document.getElementById('ma-cross-model-panel') || document.getElementById('iterative-cross-model-panel');
       if (crossModelPanel) {
@@ -1876,7 +1940,8 @@ class App {
     // Genesis 4 toggle: check project settings
     const genesis4Enabled = project.genesis4Enabled === true;
     const genesis4DeepMode = project.genesis4DeepMode === true;
-    this.orchestrator.configure({ agentCount, chapterAgentsEnabled, genesis4Enabled, genesis4DeepMode });
+    const cadenceDisruptionEnabled = project.cadenceDisruptionEnabled !== false;
+    this.orchestrator.configure({ agentCount, chapterAgentsEnabled, genesis4Enabled, genesis4DeepMode, cadenceDisruptionEnabled });
 
     // Close panels and show pipeline overlay
     this._showContinueBar(false);
@@ -4299,6 +4364,10 @@ class App {
     if (agentDisplayEl) agentDisplayEl.textContent = agentCountVal;
     const chapterAgentsEl = document.getElementById('bs-chapter-agents');
     if (chapterAgentsEl) chapterAgentsEl.value = project.chapterAgentsEnabled === false ? 'disabled' : 'enabled';
+
+    // Cadence Disruption toggle
+    const cadenceEl = document.getElementById('bs-cadence-disruption');
+    if (cadenceEl) cadenceEl.value = project.cadenceDisruptionEnabled === false ? 'disabled' : 'enabled';
 
     // Populate AI Instructions
     const aiInstructionsEl = document.getElementById('generate-ai-instructions');
@@ -9632,12 +9701,13 @@ class App {
         this._updateChunkOptions();
       }
       // Auto-save agent settings immediately on change
-      if (e.target.id === 'bs-agent-count' || e.target.id === 'bs-chapter-agents') {
+      if (e.target.id === 'bs-agent-count' || e.target.id === 'bs-chapter-agents' || e.target.id === 'bs-cadence-disruption') {
         if (this.state.currentProjectId) {
           const agentCount = parseInt(document.getElementById('bs-agent-count')?.value) || 5;
           const chapterAgentsEnabled = document.getElementById('bs-chapter-agents')?.value !== 'disabled';
-          await this.fs.updateProject(this.state.currentProjectId, { agentCount, chapterAgentsEnabled });
-          this._currentProject = { ...this._currentProject, agentCount, chapterAgentsEnabled };
+          const cadenceDisruptionEnabled = document.getElementById('bs-cadence-disruption')?.value !== 'disabled';
+          await this.fs.updateProject(this.state.currentProjectId, { agentCount, chapterAgentsEnabled, cadenceDisruptionEnabled });
+          this._currentProject = { ...this._currentProject, agentCount, chapterAgentsEnabled, cadenceDisruptionEnabled };
         }
       }
       if (e.target.id === 'structure-template-select') {
