@@ -5297,7 +5297,11 @@ class App {
     }
 
     // Populate the new illustration dashboard
-    await this._renderIllustrationDashboard();
+    try {
+      await this._renderIllustrationDashboard();
+    } catch (dashErr) {
+      console.error('[Illustrations] Dashboard render failed:', dashErr);
+    }
     this._updateIllustrationCostTracker();
 
     // ── Bind Quick Action buttons (re-bind each time tab opens for robustness) ──
@@ -5340,6 +5344,14 @@ class App {
     if (btnGenerateAll) {
       btnGenerateAll.onclick = () => {
         this._startIllustrationGeneration();
+      };
+    }
+
+    // ── Upload Reference button ──
+    const btnUploadRef = document.getElementById('btn-ill-upload-reference');
+    if (btnUploadRef) {
+      btnUploadRef.onclick = () => {
+        this._openReferenceImageUpload();
       };
     }
 
@@ -6439,6 +6451,9 @@ class App {
       if (!hasScenes && chapterScenes.length === 0) {
         html += `<button class="btn btn-sm ill-extract-btn" data-ch-id="${ch.id}">Extract Scenes</button>`;
       }
+      if (hasScenes || chapterScenes.length > 0) {
+        html += `<button class="btn btn-sm ill-clear-chapter-btn" data-ch-id="${ch.id}" style="color:#e53e3e;border-color:#e53e3e;" title="Delete all illustrations for this chapter">Clear All</button>`;
+      }
       html += `</div></div>`;
 
       if (chapterScenes.length === 0 && !hasScenes) {
@@ -6461,7 +6476,8 @@ class App {
             const variant = variants[vi];
             const tier = variant.tier || 'preview';
             const isSelected = ill.selectedVariant === vi;
-            html += `<div class="ill-thumb ${isSelected ? 'selected' : ''}" data-ill-id="${ill.id}" data-variant="${vi}" style="width:80px;text-align:center;cursor:pointer;border:2px solid ${isSelected ? 'var(--accent-primary)' : 'transparent'};border-radius:4px;padding:2px;">
+            html += `<div class="ill-thumb ${isSelected ? 'selected' : ''}" data-ill-id="${ill.id}" data-variant="${vi}" style="width:80px;text-align:center;cursor:pointer;border:2px solid ${isSelected ? 'var(--accent-primary)' : 'transparent'};border-radius:4px;padding:2px;position:relative;">
+              <button class="ill-delete-variant-btn" data-ill-id="${ill.id}" data-variant="${vi}" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:#e53e3e;color:#fff;border:none;font-size:0.65rem;line-height:18px;padding:0;cursor:pointer;z-index:2;" title="Delete this variant">&times;</button>
               <img src="${variant.imageData}" alt="v${vi + 1}" loading="lazy" style="width:100%;border-radius:2px;">
               <div style="font-size:0.6rem;color:var(--text-muted);">${variant.providerName || variant.provider || 'Unknown'}</div>
               <span class="quality-badge" style="display:inline-block;padding:1px 4px;border-radius:2px;font-size:0.55rem;color:#fff;background:${tier === 'print' ? '#059669' : tier === 'standard' ? '#2563EB' : '#6B7280'};">${tier === 'print' ? 'Print' : tier === 'standard' ? 'Std' : 'Preview'} ${variant.width || '?'}px</span>
@@ -6496,7 +6512,8 @@ class App {
 
         for (let vi = 0; vi < variants.length; vi++) {
           const variant = variants[vi];
-          html += `<div class="ill-thumb" data-ill-id="${ill.id}" data-variant="${vi}" style="width:80px;text-align:center;cursor:pointer;border:2px solid transparent;border-radius:4px;padding:2px;">
+          html += `<div class="ill-thumb" data-ill-id="${ill.id}" data-variant="${vi}" style="width:80px;text-align:center;cursor:pointer;border:2px solid transparent;border-radius:4px;padding:2px;position:relative;">
+            <button class="ill-delete-variant-btn" data-ill-id="${ill.id}" data-variant="${vi}" style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:#e53e3e;color:#fff;border:none;font-size:0.65rem;line-height:18px;padding:0;cursor:pointer;z-index:2;" title="Delete this variant">&times;</button>
             <img src="${variant.imageData}" alt="v${vi + 1}" loading="lazy" style="width:100%;border-radius:2px;">
             <div style="font-size:0.6rem;color:var(--text-muted);">${variant.providerName || variant.provider || ''}</div>
           </div>`;
@@ -6512,6 +6529,64 @@ class App {
 
     // Update the export panel visibility
     this._updateIllustrationExportPanel();
+  }
+
+  /**
+   * Open a file picker to upload reference images for illustrations.
+   * Uploaded images are stored in the project's illustration config as base64.
+   */
+  _openReferenceImageUpload() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+
+    input.onchange = async () => {
+      const files = Array.from(input.files || []);
+      document.body.removeChild(input);
+      if (files.length === 0) return;
+
+      const config = this._currentProject?.illustrationConfig || this._defaultIllustrationConfig();
+      if (!config.referenceImages) config.referenceImages = [];
+
+      let loaded = 0;
+      for (const file of files) {
+        if (!file.type.startsWith('image/')) continue;
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`Skipping "${file.name}" — exceeds 10 MB limit.`);
+          continue;
+        }
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          config.referenceImages.push({
+            name: file.name,
+            data: dataUrl,
+            uploadedAt: new Date().toISOString()
+          });
+          loaded++;
+        } catch (err) {
+          console.error('Failed to read reference image:', err);
+        }
+      }
+
+      if (loaded > 0) {
+        // Save to project
+        if (this._currentProject) this._currentProject.illustrationConfig = config;
+        await this.fs.updateProject(this.state.currentProjectId, { illustrationConfig: config });
+        alert(`${loaded} reference image${loaded > 1 ? 's' : ''} uploaded successfully.\n\nThese will be used as style/character references during illustration generation.`);
+        // Refresh the illustrations tab
+        await this._populateIllustrationsTab(this._currentProject);
+      }
+    };
+
+    input.click();
   }
 
   /**
@@ -9923,8 +9998,58 @@ class App {
       this._startIllustrationGeneration();
     });
 
+    // Upload Reference
+    document.getElementById('btn-ill-upload-reference')?.addEventListener('click', () => {
+      this._openReferenceImageUpload();
+    });
+
     // Delegated events on the dashboard
     document.getElementById('ill-chapter-scene-list')?.addEventListener('click', async (e) => {
+      // ── Delete a single variant ──
+      if (e.target.classList.contains('ill-delete-variant-btn')) {
+        e.stopPropagation();
+        const illId = e.target.dataset.illId;
+        const vi = parseInt(e.target.dataset.variant);
+        if (!illId || isNaN(vi)) return;
+        if (!confirm('Delete this image variant?')) return;
+        const variants = this._illustrationVariants?.[illId];
+        if (variants) {
+          variants.splice(vi, 1);
+          if (variants.length === 0) {
+            delete this._illustrationVariants[illId];
+            // Also remove the illustration data entry
+            if (this._illustrationData) {
+              this._illustrationData = this._illustrationData.filter(ill => ill.id !== illId);
+            }
+          }
+        }
+        await this._renderIllustrationDashboard();
+        return;
+      }
+
+      // ── Clear all illustrations for a chapter ──
+      if (e.target.classList.contains('ill-clear-chapter-btn')) {
+        const chId = e.target.dataset.chId;
+        if (!chId) return;
+        if (!confirm('Delete all illustrations and scenes for this chapter? This cannot be undone.')) return;
+        // Remove scenes
+        if (this._illustrationScenes?.[chId]) {
+          delete this._illustrationScenes[chId];
+        }
+        // Remove illustration data and variants for this chapter
+        if (this._illustrationData) {
+          const chapterIlls = this._illustrationData.filter(ill => ill.chapterId === chId);
+          for (const ill of chapterIlls) {
+            if (this._illustrationVariants?.[ill.id]) {
+              delete this._illustrationVariants[ill.id];
+            }
+          }
+          this._illustrationData = this._illustrationData.filter(ill => ill.chapterId !== chId);
+        }
+        await this._renderIllustrationDashboard();
+        return;
+      }
+
       // Extract scenes for a single chapter
       if (e.target.classList.contains('ill-extract-btn')) {
         const chId = e.target.dataset.chId;
