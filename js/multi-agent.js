@@ -1736,6 +1736,91 @@ Output valid JSON only:
     return { overallStatus, results, allConflicts, structuralFlags };
   }
 
+  /**
+   * Generate resolution options for NO-GO conflicts.
+   * Produces multiple rewritten versions of the prose that fix the detected conflicts
+   * while preserving style, voice, and non-conflicting content.
+   *
+   * @param {string} originalProse - The prose that failed GO/NO-GO
+   * @param {Array} conflicts - Array of conflict objects from runGoNoGo()
+   * @param {Object} context - Pipeline context (genre, voice, etc.)
+   * @returns {Promise<Array>} Array of resolution options, each with {summary, prose, conflictsFixed}
+   */
+  async generateResolutions(originalProse, conflicts, context = {}) {
+    if (!conflicts || conflicts.length === 0) return [];
+
+    this._emit('go-nogo-resolution', 'Generating resolution options for detected conflicts...');
+
+    const conflictDescriptions = conflicts.map((c, i) =>
+      `Conflict ${i + 1} [${c.category}/${c.severity}] (from "${c.chapterTitle || 'unknown chapter'}"):\n` +
+      `  Established: ${c.established}\n` +
+      `  Contradicted: ${c.contradicted}\n` +
+      `  Suggestion: ${c.suggestion}`
+    ).join('\n\n');
+
+    const systemPrompt = `You are a continuity repair specialist. You must rewrite prose to fix specific contradictions while preserving the author's voice, style, and all non-conflicting content.
+
+You will be given:
+1. Original prose that has continuity conflicts
+2. A list of specific conflicts with what was established vs. what contradicts it
+
+Generate exactly 3 resolution options. Each option should fix ALL the conflicts but use a DIFFERENT approach:
+
+Option 1 — MINIMAL: Change as few words/sentences as possible. Surgical fixes only.
+Option 2 — MODERATE: Rework the conflicting passages more broadly, integrating fixes naturally.
+Option 3 — CREATIVE: Find an inventive narrative solution (e.g., a character corrects themselves, a new detail explains the apparent contradiction, unreliable narrator, etc.)
+
+${context.genre ? `Genre: ${context.genre}` : ''}
+${context.voice ? `Voice: ${context.voice}` : ''}
+
+CRITICAL RULES:
+- EVERY option must fix ALL listed conflicts. No partial fixes.
+- Preserve the original prose length (within ~10%).
+- Maintain the same narrative voice and style.
+- Do NOT add meta-commentary or notes in the prose itself.
+- The prose should read naturally — a reader should not notice a "fix" was applied.
+
+Output valid JSON only:
+{
+  "resolutions": [
+    {
+      "approach": "minimal|moderate|creative",
+      "summary": "<1-2 sentence description of what was changed and why>",
+      "conflictsFixed": [<list of conflict numbers fixed, e.g. [1, 2, 3]>],
+      "prose": "<the complete rewritten prose>"
+    }
+  ]
+}`;
+
+    const userPrompt = `ORIGINAL PROSE:\n"""\n${originalProse.slice(0, 12000)}\n"""\n\nCONFLICTS TO RESOLVE:\n${conflictDescriptions}`;
+
+    try {
+      const text = await this._callApi(systemPrompt, userPrompt, {
+        maxTokens: 16384,
+        temperature: 0.7
+      });
+
+      const parsed = this._parseJson(text);
+
+      if (!parsed.resolutions || !Array.isArray(parsed.resolutions)) {
+        throw new Error('Invalid resolution response format');
+      }
+
+      // Validate each resolution has prose
+      const valid = parsed.resolutions.filter(r => r.prose && r.prose.length > 50);
+
+      this._emit('go-nogo-resolution',
+        `Generated ${valid.length} resolution option${valid.length !== 1 ? 's' : ''}.`,
+        { count: valid.length }
+      );
+
+      return valid;
+    } catch (err) {
+      this._emit('go-nogo-resolution', `Resolution generation failed: ${err.message}`);
+      throw err;
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════
   //  FULL PIPELINE: Orchestrate all phases (v2: Chimera)
   // ═══════════════════════════════════════════════════════════

@@ -1487,8 +1487,17 @@
           </div>
         </div>
 
-        <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;">
+        <!-- Resolution Options (shown after Find Resolutions) -->
+        <div id="go-nogo-resolutions" style="display:none;margin-top:16px;">
+          <h4 style="font-size:0.85rem;color:var(--accent-primary);margin-bottom:8px;">Resolution Options</h4>
+          <div id="go-nogo-resolution-list" class="go-nogo-resolution-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;flex-wrap:wrap;">
           <button class="btn btn-primary" id="btn-go-nogo-accept" style="min-width:140px;">Accept Prose</button>
+          <button class="btn btn-primary" id="btn-go-nogo-find-resolutions" style="min-width:160px;display:none;">Find Resolutions</button>
           <button class="btn" id="btn-go-nogo-reject" style="min-width:140px;display:none;">Reject &amp; Regenerate</button>
           <button class="btn" id="btn-go-nogo-override" style="min-width:140px;display:none;">Override NO-GO</button>
         </div>

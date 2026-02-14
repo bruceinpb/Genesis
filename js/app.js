@@ -1757,7 +1757,7 @@ class App {
   /**
    * Show the GO/NO-GO overlay with results.
    */
-  _showGoNoGoOverlay(goNoGoResult, onAccept, onReject, onOverride) {
+  _showGoNoGoOverlay(goNoGoResult, onAccept, onReject, onOverride, onResolutionSelected) {
     const overlay = document.getElementById('go-nogo-overlay');
     if (!overlay) return;
 
@@ -1770,6 +1770,13 @@ class App {
     const acceptBtn = document.getElementById('btn-go-nogo-accept');
     const rejectBtn = document.getElementById('btn-go-nogo-reject');
     const overrideBtn = document.getElementById('btn-go-nogo-override');
+    const findResBtn = document.getElementById('btn-go-nogo-find-resolutions');
+    const resolutionsSection = document.getElementById('go-nogo-resolutions');
+    const resolutionList = document.getElementById('go-nogo-resolution-list');
+
+    // Reset resolution section
+    if (resolutionsSection) resolutionsSection.style.display = 'none';
+    if (resolutionList) resolutionList.innerHTML = '';
 
     // Build chapter rows
     if (resultsEl) {
@@ -1816,6 +1823,12 @@ class App {
       acceptBtn.style.display = isGo ? '' : 'none';
       acceptBtn.onclick = () => { overlay.classList.remove('visible'); if (onAccept) onAccept(); };
     }
+    if (findResBtn) {
+      findResBtn.style.display = isGo ? 'none' : '';
+      findResBtn.onclick = () => {
+        this._findAndShowResolutions(goNoGoResult, overlay, onResolutionSelected);
+      };
+    }
     if (rejectBtn) {
       rejectBtn.style.display = isGo ? 'none' : '';
       rejectBtn.onclick = () => { overlay.classList.remove('visible'); if (onReject) onReject(); };
@@ -1826,6 +1839,135 @@ class App {
     }
 
     overlay.classList.add('visible');
+  }
+
+  /**
+   * Find resolutions for NO-GO conflicts and display them in the overlay.
+   */
+  async _findAndShowResolutions(goNoGoResult, overlay, onResolutionSelected) {
+    const findResBtn = document.getElementById('btn-go-nogo-find-resolutions');
+    const resolutionsSection = document.getElementById('go-nogo-resolutions');
+    const resolutionList = document.getElementById('go-nogo-resolution-list');
+
+    if (!resolutionsSection || !resolutionList) return;
+
+    // Disable button and show loading state
+    if (findResBtn) {
+      findResBtn.disabled = true;
+      findResBtn.textContent = 'Finding Resolutions...';
+    }
+
+    // Collect all conflicts with chapter titles
+    const allConflicts = [];
+    for (const r of goNoGoResult.results) {
+      for (const c of (r.conflicts || [])) {
+        allConflicts.push({ ...c, chapterTitle: r.chapterTitle });
+      }
+    }
+
+    try {
+      // Get the current prose from the pipeline result stored on the overlay
+      const prose = this._pendingGoNoGoProse;
+      if (!prose) throw new Error('No prose available for resolution.');
+
+      const context = {
+        genre: this._currentProject?.genre || '',
+        voice: this._currentProject?.voice || ''
+      };
+
+      const resolutions = await this.orchestrator.generateResolutions(prose, allConflicts, context);
+
+      if (!resolutions || resolutions.length === 0) {
+        resolutionList.innerHTML = '<div class="go-nogo-resolution-empty">No resolutions could be generated. Try Reject &amp; Regenerate instead.</div>';
+        resolutionsSection.style.display = 'block';
+        return;
+      }
+
+      // Display resolution options
+      this._showResolutionPicker(resolutions, resolutionList, overlay, onResolutionSelected);
+      resolutionsSection.style.display = 'block';
+
+      // Scroll the resolution section into view
+      resolutionsSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    } catch (err) {
+      console.error('Resolution generation failed:', err);
+      resolutionList.innerHTML = `<div class="go-nogo-resolution-empty">Resolution generation failed: ${err.message}</div>`;
+      resolutionsSection.style.display = 'block';
+    } finally {
+      if (findResBtn) {
+        findResBtn.disabled = false;
+        findResBtn.textContent = 'Find Resolutions';
+      }
+    }
+  }
+
+  /**
+   * Render resolution options in the picker and handle selection.
+   */
+  _showResolutionPicker(resolutions, listEl, overlay, onResolutionSelected) {
+    listEl.innerHTML = '';
+
+    const approachLabels = {
+      minimal: 'Minimal Fix',
+      moderate: 'Moderate Rewrite',
+      creative: 'Creative Solution'
+    };
+
+    const approachIcons = {
+      minimal: '&#x1F527;',  // wrench
+      moderate: '&#x1F504;', // arrows
+      creative: '&#x1F4A1;'  // lightbulb
+    };
+
+    for (let i = 0; i < resolutions.length; i++) {
+      const res = resolutions[i];
+      const approach = res.approach || ['minimal', 'moderate', 'creative'][i] || 'moderate';
+      const label = approachLabels[approach] || approach;
+      const icon = approachIcons[approach] || '';
+
+      const card = document.createElement('div');
+      card.className = 'go-nogo-resolution-card';
+      card.innerHTML = `
+        <div class="resolution-header">
+          <span class="resolution-icon">${icon}</span>
+          <span class="resolution-approach">${label}</span>
+          <span class="resolution-badge">${(res.conflictsFixed || []).length} conflict${(res.conflictsFixed || []).length !== 1 ? 's' : ''} fixed</span>
+        </div>
+        <div class="resolution-summary">${res.summary}</div>
+        <div class="resolution-actions">
+          <button class="btn resolution-preview-btn" data-idx="${i}">Preview</button>
+          <button class="btn btn-primary resolution-select-btn" data-idx="${i}">Use This Resolution</button>
+        </div>
+      `;
+
+      // Preview button — toggle prose preview
+      const previewBtn = card.querySelector('.resolution-preview-btn');
+      previewBtn.addEventListener('click', () => {
+        let previewEl = card.querySelector('.resolution-prose-preview');
+        if (previewEl) {
+          previewEl.remove();
+          previewBtn.textContent = 'Preview';
+          return;
+        }
+        previewEl = document.createElement('div');
+        previewEl.className = 'resolution-prose-preview';
+        // Show first 800 chars with ellipsis if longer
+        const previewText = res.prose.length > 800 ? res.prose.slice(0, 800) + '...' : res.prose;
+        previewEl.textContent = previewText;
+        card.appendChild(previewEl);
+        previewBtn.textContent = 'Hide Preview';
+      });
+
+      // Select button — use this resolution
+      const selectBtn = card.querySelector('.resolution-select-btn');
+      selectBtn.addEventListener('click', () => {
+        overlay.classList.remove('visible');
+        if (onResolutionSelected) onResolutionSelected(res.prose);
+      });
+
+      listEl.appendChild(card);
+    }
   }
 
   /**
@@ -2012,22 +2154,26 @@ class App {
       const goResult = result.goNoGoResult;
 
       if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
+        // Store prose so resolution generator can access it
+        this._pendingGoNoGoProse = result.prose;
         // Show GO/NO-GO overlay and wait for user decision
         await new Promise((resolve) => {
           this._showGoNoGoOverlay(goResult,
             // Accept (override)
-            async () => { await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
+            async () => { this._pendingGoNoGoProse = null; await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
             // Reject
-            () => { resolve(); },
+            () => { this._pendingGoNoGoProse = null; resolve(); },
             // Override
-            async () => { await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); }
+            async () => { this._pendingGoNoGoProse = null; await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); resolve(); },
+            // Resolution selected — insert the resolved prose
+            async (resolvedProse) => { this._pendingGoNoGoProse = null; await this._insertMultiAgentProse(resolvedProse, existingContent, chapterTitle); resolve(); }
           );
         });
       } else if (goResult && goResult.overallStatus === 'GO' && !goResult.skipped) {
         // Show brief GO confirmation, then insert
         this._showGoNoGoOverlay(goResult,
           async () => { await this._insertMultiAgentProse(result.prose, existingContent, chapterTitle); },
-          null, null
+          null, null, null
         );
       } else {
         // No GO/NO-GO (skipped) — insert directly
@@ -2285,14 +2431,22 @@ class App {
           let acceptProse = true;
 
           if (goResult && !goResult.skipped && goResult.overallStatus === 'NO-GO') {
+            // Store prose so resolution generator can access it
+            this._pendingGoNoGoProse = result.prose;
             // Show GO/NO-GO overlay and wait for user decision
-            acceptProse = await new Promise((resolve) => {
+            const resolvedResult = await new Promise((resolve) => {
               this._showGoNoGoOverlay(goResult,
-                () => { resolve(true); },   // Accept
-                () => { resolve(false); },  // Reject
-                () => { resolve(true); }    // Override
+                () => { resolve({ accept: true }); },   // Accept
+                () => { resolve({ accept: false }); },  // Reject
+                () => { resolve({ accept: true }); },   // Override
+                (resolvedProse) => { resolve({ accept: true, prose: resolvedProse }); } // Resolution selected
               );
             });
+            this._pendingGoNoGoProse = null;
+            acceptProse = resolvedResult.accept;
+            if (resolvedResult.prose) {
+              result.prose = resolvedResult.prose;
+            }
           }
 
           if (acceptProse && result.prose) {
