@@ -2857,7 +2857,7 @@ Output valid JSON only:
     let lastError = null;
     for (const model of models) {
       try {
-        const url = `https://api-inference.huggingface.co/models/${model}`;
+        const url = `https://router.huggingface.co/hf-inference/models/${model}`;
         console.log(`Trying HF model via puter.net.fetch: ${model}`);
 
         let response = await puter.net.fetch(url, {
@@ -2949,7 +2949,7 @@ Output valid JSON only:
   }
 
   async _callHuggingFaceViaProxy(model, prompt, hfToken) {
-    const targetUrl = `https://api-inference.huggingface.co/models/${model}`;
+    const targetUrl = `https://router.huggingface.co/hf-inference/models/${model}`;
 
     // Try multiple CORS proxy URL formats
     const proxyUrls = [
@@ -3638,7 +3638,7 @@ Generate an image prompt for this scene.`;
       throw new Error('Puter.js net.fetch not available');
     }
 
-    const url = `https://api-inference.huggingface.co/models/${model}`;
+    const url = `https://router.huggingface.co/hf-inference/models/${model}`;
     let response = await puter.net.fetch(url, {
       method: 'POST',
       headers: {
