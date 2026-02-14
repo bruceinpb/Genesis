@@ -392,6 +392,68 @@ ${project.coverImage ? `<div class="cover-page">
   }
 
   /**
+   * Print the full manuscript using the browser's print dialog.
+   * Builds a temporary print-only container with all chapters, triggers
+   * window.print(), then removes the container.
+   */
+  async printBook(projectId) {
+    const project = await this.fs.getProject(projectId);
+    const allChapters = await this.fs.getProjectChapters(projectId);
+    const chapters = allChapters
+      .filter(ch => !ch.isTranslation)
+      .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
+
+    if (chapters.length === 0) {
+      alert('No chapters found to print.');
+      return;
+    }
+
+    // Build the print container
+    const container = document.createElement('div');
+    container.id = 'print-book-container';
+
+    // Title page
+    const totalWords = chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0);
+    const titlePage = document.createElement('div');
+    titlePage.className = 'print-title-page';
+    titlePage.innerHTML =
+      `<h1>${this._escapeHtml(project.title)}</h1>` +
+      `<div class="print-byline">by ${this._escapeHtml(project.owner || '[Author Name]')}</div>` +
+      `<div class="print-wordcount">Approximately ${Math.round(totalWords / 1000) * 1000} words</div>`;
+    container.appendChild(titlePage);
+
+    // Each chapter
+    for (let i = 0; i < chapters.length; i++) {
+      const chapter = chapters[i];
+      const chapterDiv = document.createElement('div');
+      chapterDiv.className = 'print-chapter';
+
+      const heading = document.createElement('div');
+      heading.className = 'print-chapter-heading';
+      heading.innerHTML = `<h2>${this._escapeHtml(chapter.title || 'Chapter ' + (i + 1))}</h2>`;
+      chapterDiv.appendChild(heading);
+
+      const content = document.createElement('div');
+      content.className = 'print-chapter-content';
+      const cleanedContent = this._stripLeadingHeading(chapter.content || '');
+      content.innerHTML = this._sanitizeContent(cleanedContent);
+      chapterDiv.appendChild(content);
+
+      container.appendChild(chapterDiv);
+    }
+
+    // Append to body, print, then remove
+    document.body.appendChild(container);
+
+    // Use a small delay to let the DOM render before printing
+    await new Promise(resolve => setTimeout(resolve, 100));
+    window.print();
+
+    // Clean up after print dialog closes
+    document.body.removeChild(container);
+  }
+
+  /**
    * Set illustration data for export. Called by app.js before export.
    * @param {Array} illustrations - Array of { chapterId, illustrationIndex, imageData, prompt, altText, caption, size, insertAfter }
    */

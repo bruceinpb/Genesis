@@ -10221,6 +10221,12 @@ class App {
       this.exporter.download(result);
     });
 
+    // --- Print all chapters ---
+    document.getElementById('btn-print-book')?.addEventListener('click', async () => {
+      if (!this.state.currentProjectId) return;
+      await this.exporter.printBook(this.state.currentProjectId);
+    });
+
     // --- Welcome screen buttons ---
     document.addEventListener('click', async (e) => {
       if (e.target.id === 'btn-new-project' || e.target.closest('#btn-new-project')) {

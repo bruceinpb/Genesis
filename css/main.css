@@ -2191,14 +2191,31 @@ select.form-input {
   }
 }
 
+/* Print book container — hidden on screen, visible only when printing */
+#print-book-container {
+  display: none;
+}
+
 /* Print styles for manuscript export */
 @media print {
+  /* When the print-book-container exists, hide the app and show the container */
+  #print-book-container {
+    display: block !important;
+  }
+
+  /* Hide the entire app UI when printing the full book */
+  body:has(#print-book-container) #app {
+    display: none !important;
+  }
+
   body {
     background: white;
     color: black;
     position: static;
     overflow: visible;
     height: auto;
+    margin: 0;
+    padding: 0;
   }
 
   #app {
@@ -2231,6 +2248,63 @@ select.form-input {
     text-align: center;
     font-size: 14pt;
     margin-top: 3in;
+  }
+
+  /* Print book styles */
+  #print-book-container {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12pt;
+    line-height: 2;
+    color: black;
+    background: white;
+  }
+
+  .print-title-page {
+    text-align: center;
+    padding-top: 33%;
+    page-break-after: always;
+  }
+
+  .print-title-page h1 {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14pt;
+    text-transform: uppercase;
+    margin-bottom: 24pt;
+  }
+
+  .print-title-page .print-byline {
+    font-size: 12pt;
+  }
+
+  .print-title-page .print-wordcount {
+    margin-top: 48pt;
+    font-size: 12pt;
+  }
+
+  .print-chapter {
+    page-break-before: always;
+  }
+
+  .print-chapter-heading {
+    padding-top: 33%;
+    text-align: center;
+    margin-bottom: 48pt;
+  }
+
+  .print-chapter-heading h2 {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14pt;
+    text-transform: uppercase;
+    font-weight: bold;
+  }
+
+  .print-chapter-content p {
+    text-indent: 0.5in;
+    margin: 0;
+  }
+
+  .print-chapter-content p:first-of-type {
+    text-indent: 0;
   }
 }
 
