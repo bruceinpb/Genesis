@@ -839,11 +839,23 @@
           <!-- ═══ Quick Actions ═══ -->
           <div class="analysis-section">
             <h3>Quick Actions</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn btn-sm" id="btn-ill-auto-extract">&#128270; Auto-Extract Scenes</button>
-              <button class="btn btn-sm" id="btn-ill-upload-reference">&#11014; Upload Reference</button>
-              <button class="btn btn-sm" id="btn-ill-generate-all-previews">&#127912; Generate All Previews</button>
-              <button class="btn btn-sm" id="btn-ill-style-settings">&#9881; Style Settings</button>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+              <button class="btn" id="btn-ill-auto-extract" style="display:flex;align-items:center;gap:8px;padding:10px 14px;text-align:left;border:1px solid var(--border);background:var(--bg-secondary);">
+                <span style="font-size:1.3rem;">&#128270;</span>
+                <span><strong style="display:block;font-size:0.85rem;">Auto-Extract Scenes</strong><span style="font-size:0.7rem;color:var(--text-muted);">Analyze prose &rarr; identify key scenes</span></span>
+              </button>
+              <button class="btn" id="btn-ill-upload-reference" style="display:flex;align-items:center;gap:8px;padding:10px 14px;text-align:left;border:1px solid var(--border);background:var(--bg-secondary);">
+                <span style="font-size:1.3rem;">&#11014;</span>
+                <span><strong style="display:block;font-size:0.85rem;">Upload Reference</strong><span style="font-size:0.7rem;color:var(--text-muted);">Add style or character reference images</span></span>
+              </button>
+              <button class="btn" id="btn-ill-generate-all-previews" style="display:flex;align-items:center;gap:8px;padding:10px 14px;text-align:left;border:1px solid var(--border);background:var(--bg-secondary);">
+                <span style="font-size:1.3rem;">&#127912;</span>
+                <span><strong style="display:block;font-size:0.85rem;">Generate All Previews</strong><span style="font-size:0.7rem;color:var(--text-muted);">Create preview images for all scenes</span></span>
+              </button>
+              <button class="btn" id="btn-ill-style-settings" style="display:flex;align-items:center;gap:8px;padding:10px 14px;text-align:left;border:1px solid var(--border);background:var(--bg-secondary);">
+                <span style="font-size:1.3rem;">&#9881;</span>
+                <span><strong style="display:block;font-size:0.85rem;">Style Settings</strong><span style="font-size:0.7rem;color:var(--text-muted);">Set illustration style, providers &amp; options</span></span>
+              </button>
             </div>
           </div>
 
@@ -1137,7 +1149,7 @@
 
           <!-- ═══ Tiered Generation Actions ═══ -->
           <div class="analysis-section" style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-primary" id="btn-generate-illustrations" style="flex:1;">Generate Illustrations</button>
+            <button class="btn btn-primary" id="btn-generate-illustrations" style="flex:1;">Generate All Image Prompts &amp; Illustrations</button>
           </div>
           <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
             Previews are free (HuggingFace). Print-quality upgrades via OpenAI: ~$0.20/image.

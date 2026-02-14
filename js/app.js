@@ -6098,7 +6098,13 @@ class App {
 
     const summary = document.getElementById('ill-review-summary');
     if (summary) {
-      summary.textContent = `${totalCount} illustrations, ${approvedCount} approved. Total cost: $0.00`;
+      // Calculate real cost from all variants
+      let totalCost = 0;
+      for (const ill of (this._illustrationData || [])) {
+        const variants = this._illustrationVariants?.[ill.id] || [];
+        for (const v of variants) totalCost += (v.cost || 0);
+      }
+      summary.textContent = `${totalCount} illustrations, ${approvedCount} approved. Total cost: $${totalCost.toFixed(2)}`;
     }
   }
 
@@ -6301,8 +6307,27 @@ class App {
 
     const totalImages = (this._illustrationData || []).length;
     const approvedImages = (this._illustrationData || []).filter(ill => ill.approved).length;
+
+    // Count configured images from chapter selection
+    const illConfig = project.illustrationConfig || {};
+    const chapterConfig = illConfig.chapters || {};
+    let configuredImageCount = 0;
+    for (const ch of realChapters) {
+      const chConf = chapterConfig[ch.id];
+      if (chConf?.enabled && chConf.count > 0) {
+        configuredImageCount += chConf.count;
+      }
+    }
+
     if (summaryEl) {
-      summaryEl.innerHTML = `Book: "${project.title}" | ${realChapters.length} chapters | ${totalImages} images${approvedImages > 0 ? ` | ${approvedImages} approved` : ''}`;
+      let summaryParts = [`Book: "${project.title}"`, `${realChapters.length} chapters`];
+      if (configuredImageCount > 0) {
+        summaryParts.push(`${configuredImageCount} images configured`);
+      }
+      if (totalImages > 0) {
+        summaryParts.push(`${totalImages} generated${approvedImages > 0 ? ` (${approvedImages} approved)` : ''}`);
+      }
+      summaryEl.innerHTML = summaryParts.join(' | ');
     }
 
     // Show/hide OpenAI provider option based on config
@@ -7324,6 +7349,11 @@ class App {
 
       if (scoreDelta <= 1 && this._rewriteIteration >= 2) {
         review._convergenceWarning = true;
+      }
+
+      // After 3+ attempts with no improvement, hide fix buttons entirely
+      if (this._rewriteIteration >= 3 && scoreDelta <= 0) {
+        review._hardConvergence = true;
       }
 
       // If score dropped, automatically revert to the previous version
@@ -8595,6 +8625,12 @@ class App {
       rewriteSeriousBtn.style.display = hasHighIssues ? '' : 'none';
     }
 
+    // Hide fix buttons entirely after hard convergence
+    if (review._hardConvergence) {
+      if (rewriteBtn) rewriteBtn.style.display = 'none';
+      if (rewriteSeriousBtn) rewriteSeriousBtn.style.display = 'none';
+    }
+
     const overlay = document.getElementById('prose-review-overlay');
     if (overlay) overlay.classList.add('visible');
   }
@@ -8783,6 +8819,164 @@ class App {
         }
       }
     );
+  }
+
+  /**
+   * Surgical patch-based fix: generates find/replace pairs for flagged issues,
+   * then splices them into the original text without regenerating the full prose.
+   * Falls back to full rewrite if patching fails.
+   */
+  async _applyPatchFixes(severityFilter) {
+    if (!this._lastProseReview || !this._lastGeneratedText) return;
+
+    const review = this._lastProseReview;
+    const problems = [];
+
+    // Collect issues — same logic as _rewriteProblems
+    if (review.aiPatterns) {
+      for (const p of review.aiPatterns) {
+        problems.push({
+          text: p.examples?.[0] || '',
+          description: `AI Pattern: ${p.pattern}`,
+          impact: p.estimatedImpact || 3,
+          severity: 'high',
+          category: 'ai-pattern'
+        });
+      }
+    }
+    if (review.issues) {
+      for (const issue of review.issues) {
+        if (issue.severity === 'low') continue;
+        if (severityFilter === 'high' && issue.severity !== 'high') continue;
+        problems.push({
+          text: issue.text || '',
+          description: issue.problem || '',
+          impact: issue.estimatedImpact || 1,
+          severity: issue.severity,
+          category: issue.category || 'other'
+        });
+      }
+    }
+
+    problems.sort((a, b) => b.impact - a.impact);
+    const cappedProblems = problems.slice(0, 10);
+
+    const formattedProblems = cappedProblems.map(p => {
+      if (p.text) return `FIND: "${p.text}" → PROBLEM: ${p.description} [${p.severity}, ~${p.impact} pts]`;
+      return `${p.description} [${p.severity}, ~${p.impact} pts]`;
+    });
+
+    if (formattedProblems.length === 0) return;
+
+    // Track state for revert
+    this._rewriteIteration = (this._rewriteIteration || 0) + 1;
+    const previousScore = review.score;
+    const previousSubscores = review.subscores;
+    const previousIssueCount = (review.issues?.length || 0) + (review.aiPatterns?.length || 0);
+    this._previousRewriteText = this._lastGeneratedText;
+    this._previousRewriteScore = previousScore;
+    this._previousRewriteIssueCount = previousIssueCount;
+
+    // Close review modal, show progress
+    document.getElementById('prose-review-overlay')?.classList.remove('visible');
+    this._showContinueBar(false);
+    this._setGenerateStatus(true);
+
+    const project = this._currentProject;
+    const characters = this._lastGenSettings?.useCharacters
+      ? await this.localStorage.getProjectCharacters(this.state.currentProjectId)
+      : [];
+
+    try {
+      await this.generator.generatePatchFixes(
+        {
+          originalProse: this._lastGeneratedText,
+          problems: formattedProblems,
+          chapterTitle: '',
+          characters,
+          aiInstructions: project?.aiInstructions || '',
+          genre: project?.genre || '',
+          voice: project?.voice || '',
+          errorPatternsPrompt: this._cachedErrorPatternsPrompt || ''
+        },
+        {
+          onPatches: async (patches) => {
+            let patchedText = this._lastGeneratedText;
+            let appliedCount = 0;
+            let skippedCount = 0;
+            const failedFinds = [];
+
+            for (const patch of patches) {
+              if (!patch.find || patch.replace === null || patch.replace === undefined) {
+                skippedCount++;
+                continue;
+              }
+              // Verify exact match exists in the prose
+              const idx = patchedText.indexOf(patch.find);
+              if (idx === -1) {
+                failedFinds.push(patch.find.slice(0, 50));
+                continue;
+              }
+              // Verify uniqueness — the find string should appear exactly once
+              const secondIdx = patchedText.indexOf(patch.find, idx + 1);
+              if (secondIdx !== -1) {
+                // Ambiguous match — skip to avoid corrupting the wrong passage
+                failedFinds.push(`[ambiguous] ${patch.find.slice(0, 50)}`);
+                continue;
+              }
+              // Apply the patch
+              patchedText = patchedText.substring(0, idx) + patch.replace + patchedText.substring(idx + patch.find.length);
+              appliedCount++;
+            }
+
+            console.log(`[PatchFix] Applied ${appliedCount}, skipped ${skippedCount}, failed ${failedFinds.length}`);
+            if (failedFinds.length > 0) {
+              console.warn('[PatchFix] Failed to find:', failedFinds);
+            }
+
+            if (appliedCount === 0) {
+              // No patches could be applied — fall back to full rewrite
+              console.warn('[PatchFix] No patches applied, falling back to full rewrite');
+              this._setGenerateStatus(false);
+              await this._rewriteProblems(null, severityFilter);
+              return;
+            }
+
+            // Update the editor
+            const baseContent = this._preGenerationContent || '';
+            const editorEl = this.editor.element;
+            const paragraphs = patchedText.split('\n\n');
+            const newHtml = paragraphs.map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+            editorEl.innerHTML = (baseContent.trim() ? baseContent : '') + newHtml;
+
+            // Save
+            this._lastGeneratedText = patchedText;
+            if (this.state.currentChapterId) {
+              try {
+                await this.fs.updateChapter(this.state.currentChapterId, { content: this.editor.getContent() });
+              } catch (_) {}
+              this._updateLocalWordCounts(this.editor.getContent());
+            }
+
+            this._setGenerateStatus(false);
+            this._showContinueBar(true);
+
+            // Re-score
+            await this._scoreProseAfterRewrite(patchedText, previousScore, previousIssueCount, previousSubscores);
+          },
+          onError: (err) => {
+            console.error('[PatchFix] Error:', err.message);
+            this._setGenerateStatus(false);
+            // Fall back to full rewrite
+            this._rewriteProblems(null, severityFilter);
+          }
+        }
+      );
+    } catch (err) {
+      console.error('[PatchFix] Outer error:', err);
+      this._setGenerateStatus(false);
+      this._rewriteProblems(null, severityFilter);
+    }
   }
 
   _openProseRethinkModal() {
@@ -9605,6 +9799,171 @@ class App {
         return;
       }
 
+      // === Generate Preview for a single scene ===
+      if (e.target.classList.contains('ill-gen-preview-btn')) {
+        const chId = e.target.dataset.chId;
+        const si = parseInt(e.target.dataset.sceneIndex);
+        if (!chId || isNaN(si)) return;
+
+        const scene = this._illustrationScenes?.[chId]?.[si];
+        if (!scene) {
+          alert('No scene data available. Click "Extract Scenes" first.');
+          return;
+        }
+        if (!this.generator.hasApiKey()) {
+          alert('Set your Anthropic API key in Settings first.');
+          return;
+        }
+
+        // Disable button and show progress
+        const btn = e.target;
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Generating prompt...';
+
+        try {
+          const config = this._readIllustrationConfig();
+          const promptConfig = {
+            ...config,
+            illustrationStyle: config.globalStyle,
+            colorMode: config.globalColorMode,
+          };
+
+          // Step 1: Generate the image prompt from scene data
+          const promptResult = await this.generator.generateIllustrationPrompt(scene, promptConfig);
+
+          if (!promptResult?.prompt) {
+            throw new Error('Prompt generation returned empty result');
+          }
+
+          // Step 2: Create illustration metadata entry
+          const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+          const ch = chapters.find(c => c.id === chId);
+          const illId = `ill_${chId}_scene${si}_${Date.now()}`;
+
+          const illEntry = {
+            id: illId,
+            chapterId: chId,
+            chapterNumber: ch?.chapterNumber || 0,
+            chapterTitle: ch?.title || '',
+            illustrationIndex: si,
+            sceneIndex: si,
+            source: 'auto',
+            scene: scene,
+            prompt: promptResult.prompt,
+            negativePrompt: promptResult.negativePrompt || '',
+            altText: promptResult.altText || '',
+            caption: promptResult.caption || '',
+            compositionNotes: promptResult.compositionNotes || '',
+            state: 'prompt_approved',
+            style: config.globalStyle,
+          };
+
+          this._illustrationData = this._illustrationData || [];
+          this._illustrationData.push(illEntry);
+
+          // Step 3: Generate a single preview image
+          btn.textContent = 'Generating image...';
+
+          const pools = this._buildProviderPools(config);
+          if (pools.length === 0) {
+            throw new Error('No image providers configured. Open Style Settings to enable providers.');
+          }
+
+          // Use the highest-priority available provider
+          const pool = pools[0];
+          const queue = new IllustrationQueue(this.generator, pools, this.openaiClient);
+          const job = {
+            illustrationId: illId,
+            variantIndex: 0,
+            prompt: promptResult.prompt,
+            negativePrompt: promptResult.negativePrompt || '',
+            config: { size: config.defaultSize || 'inline_full', style: config.globalStyle },
+            preferredProvider: pool.name,
+            retryCount: 0,
+            maxRetries: 2,
+          };
+          const result = await queue._executeJob(job, pool);
+
+          // Store the variant
+          this._illustrationVariants = this._illustrationVariants || {};
+          this._illustrationVariants[illId] = [{
+            imageData: result.imageData,
+            provider: result.provider || pool.name,
+            providerName: result.providerName || pool.name,
+            tier: result.tier || 'preview',
+            width: result.width || 512,
+            height: result.height || 512,
+            cost: result.cost || 0,
+          }];
+
+          // Save to Firestore
+          await this.fs.saveIllustration(this.state.currentProjectId, {
+            ...illEntry,
+            state: 'image_ready',
+          });
+
+          // Re-render the dashboard to show the new image
+          await this._renderIllustrationDashboard();
+          this._updateIllustrationCostTracker();
+          this._updateIllustrationWorkflowStep(2);
+
+        } catch (err) {
+          console.error('[GeneratePreview] Failed:', err);
+          alert('Preview generation failed: ' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+        return;
+      }
+
+      // === Edit Prompt for a single scene ===
+      if (e.target.classList.contains('ill-edit-prompt-btn')) {
+        const chId = e.target.dataset.chId;
+        const si = parseInt(e.target.dataset.sceneIndex);
+        if (!chId || isNaN(si)) return;
+
+        const scene = this._illustrationScenes?.[chId]?.[si];
+        if (!scene) {
+          alert('No scene data. Extract scenes first.');
+          return;
+        }
+
+        // Find existing illustration data for this scene
+        const existingIll = (this._illustrationData || []).find(
+          ill => ill.chapterId === chId && ill.sceneIndex === si
+        );
+
+        const currentPrompt = existingIll?.prompt || '';
+
+        const newPrompt = prompt('Edit image prompt:', currentPrompt);
+        if (newPrompt === null) return; // Cancelled
+
+        if (existingIll) {
+          existingIll.prompt = newPrompt;
+          existingIll.state = 'prompt_approved';
+        } else {
+          // Create a new illustration entry with the user prompt
+          const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+          const ch = chapters.find(c => c.id === chId);
+          this._illustrationData = this._illustrationData || [];
+          this._illustrationData.push({
+            id: `ill_${chId}_scene${si}_${Date.now()}`,
+            chapterId: chId,
+            chapterNumber: ch?.chapterNumber || 0,
+            illustrationIndex: si,
+            sceneIndex: si,
+            source: 'auto',
+            scene: scene,
+            prompt: newPrompt,
+            negativePrompt: '',
+            state: 'prompt_approved',
+          });
+        }
+        return;
+      }
+
       // Thumbnail click for variant selection
       const thumb = e.target.closest('.ill-thumb');
       if (thumb && thumb.dataset.illId) {
@@ -10118,10 +10477,10 @@ class App {
         document.getElementById('prose-review-overlay')?.classList.remove('visible');
       }
       if (e.target.id === 'btn-prose-review-rewrite') {
-        await this._rewriteProblems(null, 'all');
+        await this._applyPatchFixes('all');
       }
       if (e.target.id === 'btn-prose-review-rewrite-serious') {
-        await this._rewriteProblems(null, 'high');
+        await this._applyPatchFixes('high');
       }
       if (e.target.id === 'btn-prose-review-rethink') {
         this._openProseRethinkModal();
