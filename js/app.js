@@ -13381,15 +13381,7 @@ If there are NO items to localize, return an empty array: []`;
     btn.disabled = true;
 
     try {
-      // ── 1. Validate ──
-      const content = this.editor?.getContent() || '';
-      const plainText = this._htmlToPlainText(content);
-
-      if (!plainText || plainText.length < 50) {
-        alert('No prose in the current chapter to translate. Write or generate prose first.');
-        return;
-      }
-
+      // ── 1. Validate API key ──
       const apiKey = this.generator?.apiKey;
       if (!apiKey) {
         alert('No Anthropic API key found. Please set your API key in settings.');
@@ -13397,17 +13389,61 @@ If there are NO items to localize, return an empty array: []`;
       }
 
       const projectId = this.state.currentProjectId;
-      const chapterId = this.state.currentChapterId;
-
-      if (!projectId || !chapterId) {
-        alert('No chapter selected. Please select a chapter first.');
+      if (!projectId) {
+        alert('No project open. Please open a project first.');
         return;
       }
 
-      // Get chapter info from Firestore
-      const chapter = await this.fs.getChapter(chapterId);
-      const chapterTitle = chapter?.title || 'Untitled Chapter';
-      const chapterNumber = chapter?.chapterNumber || 1;
+      // ── 1b. Determine which chapters to translate ──
+      // Use selected chapters from navigator checkboxes; fall back to current chapter
+      const selectedIds = [...this._navSelectedIds].filter(id => !id.startsWith('fm-') && !id.startsWith('bm-'));
+
+      // Load all project chapters to resolve selected IDs and filter out translations
+      const allChapters = await this.fs.getProjectChapters(projectId);
+      const chapterMap = new Map(allChapters.map(ch => [ch.id, ch]));
+
+      let chaptersToTranslate = [];
+      if (selectedIds.length > 0) {
+        // Use selected chapters, but filter out translation chapters
+        chaptersToTranslate = selectedIds
+          .map(id => chapterMap.get(id))
+          .filter(ch => ch && ch.status !== 'translation');
+      } else if (this.state.currentChapterId) {
+        // Fall back to the currently active chapter
+        const currentCh = chapterMap.get(this.state.currentChapterId);
+        if (currentCh && currentCh.status !== 'translation') {
+          chaptersToTranslate = [currentCh];
+        }
+      }
+
+      if (chaptersToTranslate.length === 0) {
+        alert('No prose chapters selected to translate. Select chapters using the navigator checkboxes, or open a chapter with prose.');
+        return;
+      }
+
+      // Sort by chapter number for orderly processing
+      chaptersToTranslate.sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
+
+      // Save current editor content before we start so we have the latest prose
+      if (this.state.currentChapterId && this.editor) {
+        await this._saveCurrentChapter();
+      }
+
+      // Validate that at least one chapter has prose content
+      const chaptersWithProse = [];
+      for (const ch of chaptersToTranslate) {
+        // Re-fetch to get latest content (especially for the current editor chapter we just saved)
+        const freshCh = await this.fs.getChapter(ch.id);
+        const plain = this._htmlToPlainText(freshCh?.content || '');
+        if (plain && plain.length >= 50) {
+          chaptersWithProse.push({ ...freshCh, plainText: plain });
+        }
+      }
+
+      if (chaptersWithProse.length === 0) {
+        alert('No selected chapters have enough prose to translate (minimum 50 characters). Write or generate prose first.');
+        return;
+      }
 
       // ── 2. Language config ──
       const langConfig = {
@@ -13419,49 +13455,69 @@ If there are NO items to localize, return an empty array: []`;
         japanese:   { name: 'Japanese',   native: '\u65E5\u672C\u8A9E',      code: 'ja', flag: '\uD83C\uDDEF\uD83C\uDDF5', chapterWord: '\u7B2C'       }
       };
 
-      const results = {};
-      let completed = 0;
+      // Track results per chapter per language: { chapterId: { lang: result } }
+      const allResults = {};
+      const totalSteps = chaptersWithProse.length * languages.length;
+      let stepsDone = 0;
 
-      // ── Show progress overlay (created dynamically for reliability) ──
-      let prog = this._showProgressOverlay('Translating\u2026', `0 of ${languages.length} language(s)`, 'Starting\u2026');
+      // ── Show progress overlay ──
+      let prog = this._showProgressOverlay(
+        'Translating\u2026',
+        `${chaptersWithProse.length} chapter(s) \u00d7 ${languages.length} language(s)`,
+        'Starting\u2026'
+      );
 
-      // ── 3. Translate each language (with localization analysis) ──
-      for (const lang of languages) {
-        completed++;
-        const lc = langConfig[lang];
-        const pct = ((completed - 1) / languages.length) * 100;
+      // ── 3. For each chapter, translate into each language ──
+      for (let chIdx = 0; chIdx < chaptersWithProse.length; chIdx++) {
+        const ch = chaptersWithProse[chIdx];
+        const chapterId = ch.id;
+        const chapterTitle = ch.title || 'Untitled Chapter';
+        const chapterNumber = ch.chapterNumber || 1;
+        const plainText = ch.plainText;
 
-        // ═══ PHASE 1: LOCALIZATION ANALYSIS ═══
-        btn.textContent = `Analyzing for ${lc.flag} ${lc.name} localization\u2026`;
-        prog.update(`${lc.flag} ${lc.name}`, `Language ${completed} of ${languages.length}`, pct, 'Analyzing for cultural localization\u2026');
-        const locItems = await this._analyzeForLocalization(plainText, lang, lc);
+        allResults[chapterId] = {};
 
-        // ═══ PHASE 2: HUMAN REVIEW (if items found) ═══
-        let localizationInstructions = '';
-        if (locItems.length > 0) {
-          prog.remove();  // Remove overlay from DOM so user can interact with review modal
-          const review = await this._showLocalizationReview(locItems, lc);
-          // Re-create overlay after review completes
-          prog = this._showProgressOverlay(
-            `${lc.flag} ${lc.name}`,
-            `Language ${completed} of ${languages.length}`,
-            'Preparing translation\u2026'
+        for (const lang of languages) {
+          stepsDone++;
+          const lc = langConfig[lang];
+          const pct = ((stepsDone - 1) / totalSteps) * 100;
+          const chLabel = `Ch ${chapterNumber}: "${chapterTitle}"`;
+
+          // ═══ PHASE 1: LOCALIZATION ANALYSIS ═══
+          btn.textContent = `${lc.flag} Analyzing Ch ${chapterNumber}\u2026`;
+          prog.update(
+            `${lc.flag} ${lc.name} \u2014 ${chLabel}`,
+            `Step ${stepsDone} of ${totalSteps}`,
+            pct,
+            'Analyzing for cultural localization\u2026'
           );
-          prog.update(null, null, pct, 'Preparing translation\u2026');
+          const locItems = await this._analyzeForLocalization(plainText, lang, lc);
 
-          if (!review.skipped && review.approved.length > 0) {
-            localizationInstructions = `\n\nCULTURAL LOCALIZATIONS (approved by author \u2014 apply these changes during translation):\n`;
-            for (const item of review.approved) {
-              localizationInstructions += `- Replace "${item.original}" with "${item.replacement}" [${item.category}]\n`;
+          // ═══ PHASE 2: HUMAN REVIEW (if items found) ═══
+          let localizationInstructions = '';
+          if (locItems.length > 0) {
+            prog.remove();
+            const review = await this._showLocalizationReview(locItems, lc);
+            prog = this._showProgressOverlay(
+              `${lc.flag} ${lc.name} \u2014 ${chLabel}`,
+              `Step ${stepsDone} of ${totalSteps}`,
+              'Preparing translation\u2026'
+            );
+            prog.update(null, null, pct, 'Preparing translation\u2026');
+
+            if (!review.skipped && review.approved.length > 0) {
+              localizationInstructions = `\n\nCULTURAL LOCALIZATIONS (approved by author \u2014 apply these changes during translation):\n`;
+              for (const item of review.approved) {
+                localizationInstructions += `- Replace "${item.original}" with "${item.replacement}" [${item.category}]\n`;
+              }
             }
           }
-        }
 
-        // ═══ PHASE 3: TRANSLATE WITH LOCALIZATIONS ═══
-        btn.textContent = `Translating ${completed}/${languages.length}: ${lc.flag} ${lc.name}\u2026`;
-        prog.update(null, null, null, 'Translating prose\u2026');
+          // ═══ PHASE 3: TRANSLATE WITH LOCALIZATIONS ═══
+          btn.textContent = `${lc.flag} Translating Ch ${chapterNumber} (${stepsDone}/${totalSteps})\u2026`;
+          prog.update(null, null, null, 'Translating prose\u2026');
 
-        const systemPrompt = `You are an expert literary translator specializing in ${lc.name} (${lc.native}). Your translations read as if originally written by a skilled native-speaker novelist.
+          const systemPrompt = `You are an expert literary translator specializing in ${lc.name} (${lc.native}). Your translations read as if originally written by a skilled native-speaker novelist.
 
 RULES:
 - Preserve the author's narrative voice, tone, rhythm, and literary style
@@ -13476,128 +13532,129 @@ ${lang === 'japanese' ? '\nUse standard modern Japanese (\u6A19\u6E96\u8A9E). Ap
 ${lang === 'spanish' ? '\nUse neutral Latin American Spanish.' : ''}
 ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstructions}`;
 
-        try {
-          // ── 3a. Translate the prose ──
-          const proseResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify({
-              model: this.generator.model || 'claude-sonnet-4-20250514',
-              max_tokens: 8192,
-              system: systemPrompt,
-              messages: [{
-                role: 'user',
-                content: `Translate the following prose into ${lc.name}:\n\n${plainText}`
-              }]
-            })
-          });
+          try {
+            // ── 3a. Translate the prose ──
+            const proseResponse = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true'
+              },
+              body: JSON.stringify({
+                model: this.generator.model || 'claude-sonnet-4-20250514',
+                max_tokens: 8192,
+                system: systemPrompt,
+                messages: [{
+                  role: 'user',
+                  content: `Translate the following prose into ${lc.name}:\n\n${plainText}`
+                }]
+              })
+            });
 
-          if (!proseResponse.ok) {
-            const errData = await proseResponse.json().catch(() => ({}));
-            throw new Error(`API ${proseResponse.status}: ${errData?.error?.message || proseResponse.statusText}`);
-          }
+            if (!proseResponse.ok) {
+              const errData = await proseResponse.json().catch(() => ({}));
+              throw new Error(`API ${proseResponse.status}: ${errData?.error?.message || proseResponse.statusText}`);
+            }
 
-          const proseData = await proseResponse.json();
-          const translatedProse = proseData.content
-            ?.filter(b => b.type === 'text')
-            .map(b => b.text)
-            .join('\n') || '';
-
-          if (translatedProse.trim().length < 20) {
-            throw new Error('Translation too short or empty');
-          }
-
-          // ── 3b. Translate the chapter title ──
-          prog.update(null, null, null, 'Translating chapter title\u2026');
-          const titleResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify({
-              model: this.generator.model || 'claude-sonnet-4-20250514',
-              max_tokens: 200,
-              messages: [{
-                role: 'user',
-                content: `Translate this chapter title into ${lc.name}. Return ONLY the translated title, nothing else.\n\nTitle: "${chapterTitle}"`
-              }]
-            })
-          });
-
-          let translatedTitle = chapterTitle;
-          if (titleResponse.ok) {
-            const titleData = await titleResponse.json();
-            const rawTitle = titleData.content
+            const proseData = await proseResponse.json();
+            const translatedProse = proseData.content
               ?.filter(b => b.type === 'text')
               .map(b => b.text)
-              .join('') || '';
-            const cleanedTitle = rawTitle.replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, '').trim();
-            if (cleanedTitle) translatedTitle = cleanedTitle;
+              .join('\n') || '';
+
+            if (translatedProse.trim().length < 20) {
+              throw new Error('Translation too short or empty');
+            }
+
+            // ── 3b. Translate the chapter title ──
+            prog.update(null, null, null, 'Translating chapter title\u2026');
+            const titleResponse = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true'
+              },
+              body: JSON.stringify({
+                model: this.generator.model || 'claude-sonnet-4-20250514',
+                max_tokens: 200,
+                messages: [{
+                  role: 'user',
+                  content: `Translate this chapter title into ${lc.name}. Return ONLY the translated title, nothing else.\n\nTitle: "${chapterTitle}"`
+                }]
+              })
+            });
+
+            let translatedTitle = chapterTitle;
+            if (titleResponse.ok) {
+              const titleData = await titleResponse.json();
+              const rawTitle = titleData.content
+                ?.filter(b => b.type === 'text')
+                .map(b => b.text)
+                .join('') || '';
+              const cleanedTitle = rawTitle.replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, '').trim();
+              if (cleanedTitle) translatedTitle = cleanedTitle;
+            }
+
+            // ── 3c. Build the translated chapter name with flag indicator ──
+            const translatedChapterName = `${lc.flag} ${translatedTitle}`;
+
+            // ── 3d. Create a new chapter in Firestore for the translation ──
+            prog.update(null, null, null, 'Saving translation\u2026');
+            const translationChapterData = await this.fs.createChapter({
+              projectId: projectId,
+              chapterNumber: chapterNumber,
+              title: translatedChapterName,
+              content: translatedProse,
+              status: 'translation'
+            });
+
+            // Update the chapter with translation metadata and recalculate word count
+            await this.fs.updateChapter(translationChapterData.id, {
+              content: translatedProse,
+              isTranslation: true,
+              sourceChapterId: chapterId,
+              sourceChapterTitle: chapterTitle,
+              language: lang,
+              languageCode: lc.code,
+              languageName: lc.name,
+              languageFlag: lc.flag,
+              localizations: localizationInstructions || null,
+              translatedAt: new Date().toISOString()
+            });
+
+            // Also save to translations collection for backward compat
+            const translationDocId = `${chapterId}_${lc.code}`;
+            await this.fs.saveTranslation(translationDocId, {
+              language: lang,
+              languageCode: lc.code,
+              languageName: lc.name,
+              content: translatedProse,
+              sourceWordCount: plainText.split(/\s+/).length,
+              translatedAt: new Date().toISOString(),
+              chapterId: chapterId,
+              projectId: projectId,
+              chapterTitle: chapterTitle,
+              translationChapterId: translationChapterData.id
+            });
+
+            allResults[chapterId][lang] = {
+              success: true,
+              translatedProse,
+              translatedTitle: translatedChapterName,
+              translationChapterId: translationChapterData.id,
+              langConfig: lc
+            };
+
+            console.log(`${lc.flag} ${lc.name} translation saved for Ch ${chapterNumber}: ${translatedChapterName}`);
+
+          } catch (langErr) {
+            console.error(`${lc.name} translation of Ch ${chapterNumber} failed:`, langErr);
+            allResults[chapterId][lang] = { success: false, error: langErr.message };
           }
-
-          // ── 3c. Build the translated chapter name with flag indicator ──
-          const translatedChapterName = `${lc.flag} ${translatedTitle}`;
-
-          // ── 3d. Create a new chapter in Firestore for the translation ──
-          prog.update(null, null, null, 'Saving translation\u2026');
-          const translationChapterData = await this.fs.createChapter({
-            projectId: projectId,
-            chapterNumber: chapterNumber,
-            title: translatedChapterName,
-            content: translatedProse,
-            status: 'translation'
-          });
-
-          // Update the chapter with translation metadata and recalculate word count
-          await this.fs.updateChapter(translationChapterData.id, {
-            content: translatedProse,
-            isTranslation: true,
-            sourceChapterId: chapterId,
-            sourceChapterTitle: chapterTitle,
-            language: lang,
-            languageCode: lc.code,
-            languageName: lc.name,
-            languageFlag: lc.flag,
-            localizations: localizationInstructions || null,
-            translatedAt: new Date().toISOString()
-          });
-
-          // Also save to translations collection for backward compat
-          const translationDocId = `${chapterId}_${lc.code}`;
-          await this.fs.saveTranslation(translationDocId, {
-            language: lang,
-            languageCode: lc.code,
-            languageName: lc.name,
-            content: translatedProse,
-            sourceWordCount: plainText.split(/\s+/).length,
-            translatedAt: new Date().toISOString(),
-            chapterId: chapterId,
-            projectId: projectId,
-            chapterTitle: chapterTitle,
-            translationChapterId: translationChapterData.id
-          });
-
-          results[lang] = {
-            success: true,
-            translatedProse,
-            translatedTitle: translatedChapterName,
-            translationChapterId: translationChapterData.id,
-            langConfig: lc
-          };
-
-          console.log(`${lc.flag} ${lc.name} translation saved as chapter: ${translatedChapterName}`);
-
-        } catch (langErr) {
-          console.error(`${lc.name} translation failed:`, langErr);
-          results[lang] = { success: false, error: langErr.message };
         }
       }
 
@@ -13617,21 +13674,33 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
       // ── 4b. Populate export buttons immediately (don't wait for Setup Book panel) ──
       await this._populateExportButtons();
 
-      // ── 5. Open side-by-side view with the first successful translation ──
-      const firstSuccess = Object.entries(results).find(([, r]) => r.success);
-      if (firstSuccess) {
-        this._openTranslationSplitView(plainText, chapterTitle, results, langConfig);
+      // ── 5. Open side-by-side view for the last chapter translated ──
+      // Use the last chapter's results for the split view (most natural for single-chapter;
+      // for multi-chapter the user can navigate via the chapter list)
+      const lastCh = chaptersWithProse[chaptersWithProse.length - 1];
+      const lastResults = allResults[lastCh.id] || {};
+      const firstSuccess = Object.entries(lastResults).find(([, r]) => r.success);
+      if (firstSuccess && chaptersWithProse.length === 1) {
+        this._openTranslationSplitView(lastCh.plainText, lastCh.title || 'Untitled', lastResults, langConfig);
       }
 
       // ── 6. Show summary ──
-      const successCount = Object.values(results).filter(r => r.success).length;
-      const failCount = languages.length - successCount;
-      let summary = `Translation complete!\n\n${successCount} language(s) translated and saved as new chapters.`;
-      if (failCount > 0) {
-        summary += `\n${failCount} failed:`;
-        for (const [lang, r] of Object.entries(results)) {
-          if (!r.success) summary += `\n   \u2022 ${langConfig[lang].name}: ${r.error}`;
+      let totalSuccess = 0;
+      let totalFail = 0;
+      let failDetails = '';
+      for (const ch of chaptersWithProse) {
+        const chResults = allResults[ch.id] || {};
+        for (const [lang, r] of Object.entries(chResults)) {
+          if (r.success) totalSuccess++;
+          else {
+            totalFail++;
+            failDetails += `\n   \u2022 Ch ${ch.chapterNumber || '?'} ${langConfig[lang]?.name || lang}: ${r.error}`;
+          }
         }
+      }
+      let summary = `Translation complete!\n\n${chaptersWithProse.length} chapter(s) \u00d7 ${languages.length} language(s):\n${totalSuccess} succeeded`;
+      if (totalFail > 0) {
+        summary += `, ${totalFail} failed:${failDetails}`;
       }
       alert(summary);
 
