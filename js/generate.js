@@ -51,6 +51,60 @@ class ProseGenerator {
     return !!this.apiKey;
   }
 
+  /**
+   * Deterministic post-generation scrub.
+   * Removes em dashes, citation markers, and AI-tell phrases from prose.
+   */
+  static scrubProseOutput(text) {
+    if (!text) return text;
+    let cleaned = text;
+
+    // Replace em dashes with commas
+    cleaned = cleaned.replace(/\s*\u2014\s*/g, ', ');
+    cleaned = cleaned.replace(/\s*\u2013\s*/g, ', ');
+    cleaned = cleaned.replace(/\s*---\s*/g, ', ');
+    cleaned = cleaned.replace(/\s*--\s*/g, ', ');
+
+    // Remove fabricated citations: [1], [2], etc.
+    cleaned = cleaned.replace(/\s*\[\d+\]\s*/g, ' ');
+
+    // Remove "According to [historian/scholar/expert]..." patterns
+    cleaned = cleaned.replace(/According to \w+ \w+,?\s*/gi, '');
+
+    // Clean up artifacts
+    cleaned = cleaned.replace(/,\s*,/g, ',');
+    cleaned = cleaned.replace(/,\s*\./g, '.');
+    cleaned = cleaned.replace(/,\s*!/g, '!');
+    cleaned = cleaned.replace(/,\s*\?/g, '?');
+    cleaned = cleaned.replace(/  +/g, ' ');
+    cleaned = cleaned.replace(/ ,\s+,\s+/g, ', ');
+
+    return cleaned.trim();
+  }
+
+  /**
+   * Deterministic verification of prose compliance.
+   * Checks for em dashes, citation markers, and banned phrases.
+   * Returns { pass: boolean, violations: string[] }
+   */
+  static verifyProseCompliance(text) {
+    const violations = [];
+
+    if (text.includes('\u2014')) violations.push('Em dash (\u2014) found');
+    if (text.includes('\u2013')) violations.push('En dash (\u2013) found');
+    if (/\[\d+\]/.test(text)) violations.push('Citation markers ([N]) found');
+    if (/a testament to/i.test(text)) violations.push('AI-tell: "a testament to"');
+    if (/it's worth noting/i.test(text)) violations.push('AI-tell: "it\'s worth noting"');
+    if (/the landscape of/i.test(text)) violations.push('AI-tell: "the landscape of"');
+    if (/delve into/i.test(text)) violations.push('AI-tell: "delve into"');
+    if (/tapestry of/i.test(text)) violations.push('AI-tell: "tapestry of"');
+    if (/crucible of/i.test(text)) violations.push('AI-tell: "crucible of"');
+    if (/in the realm of/i.test(text)) violations.push('AI-tell: "in the realm of"');
+    if (/navigate the complexities/i.test(text)) violations.push('AI-tell: "navigate the complexities"');
+
+    return { pass: violations.length === 0, violations };
+  }
+
   cancel() {
     if (this.abortController) {
       this.abortController.abort();
@@ -716,7 +770,12 @@ CRITICAL: If score < ${threshold}, "improvedProse" MUST contain the COMPLETE rew
     const isFirstPass = iterationNum === 1;
     const isFinalPass = iterationNum >= maxIterations;
 
-    const systemPrompt = `You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You will perform a precise 3-step process:
+    const systemPrompt = `ABSOLUTE FORMATTING RULES (NON-NEGOTIABLE — apply to ALL output including microFixedProse):
+1. NEVER use em dashes (\u2014) or en dashes (\u2013) or triple hyphens (---) ANYWHERE in your output. Use commas, colons, semicolons, periods, or parentheses instead. ANY em dash in your output is a CRITICAL FAILURE.
+2. NEVER fabricate citations, footnotes, reference numbers [1], or scholarly apparatus.
+3. NEVER use these phrases: "a testament to", "it's worth noting", "the landscape of", "in the realm of", "delve into", "navigate the complexities", "a tapestry of", "the crucible of".
+
+You are a senior literary editor at The New York Times with 40 years of experience reviewing fiction. You will perform a precise 3-step process:
 
 STEP 1: SCORE the prose as-is (the "before" score)
 STEP 2: Apply exactly ONE surgical micro-fix to the single highest-impact issue
@@ -1083,7 +1142,12 @@ OUTPUT FORMAT (strict — return ONLY this JSON, no other text):
 
     const poetryInstruction = poetryGuidance[poetryLevel || 3];
 
-    let prompt = `You are a world-class fiction author. Your prose has been compared to the best living novelists. You write with precision, authority, and an unmistakable human voice.
+    let prompt = `ABSOLUTE FORMATTING RULES (NON-NEGOTIABLE — violations cause immediate rejection):
+1. NEVER use em dashes (\u2014) or en dashes (\u2013) or triple hyphens (---) ANYWHERE. Use commas, colons, semicolons, periods, or parentheses instead. ANY em dash is a CRITICAL FAILURE.
+2. NEVER fabricate citations, footnotes, or reference numbers like [1], [2], [3].
+3. NEVER use: "a testament to", "it's worth noting", "the landscape of", "delve into", "tapestry of", "crucible of", "in the realm of", "navigate the complexities".
+
+You are a world-class fiction author. Your prose has been compared to the best living novelists. You write with precision, authority, and an unmistakable human voice.
 
 === PROSE DENSITY ===
 ${poetryInstruction}
