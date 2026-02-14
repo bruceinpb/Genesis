@@ -5298,6 +5298,49 @@ class App {
     await this._renderIllustrationDashboard();
     this._updateIllustrationCostTracker();
 
+    // ── Bind Quick Action buttons (re-bind each time tab opens for robustness) ──
+    const btnStyleSettings = document.getElementById('btn-ill-style-settings');
+    if (btnStyleSettings) {
+      btnStyleSettings.onclick = () => {
+        const panel = document.getElementById('ill-style-settings-panel');
+        if (panel) panel.style.display = panel.style.display === 'none' ? '' : 'none';
+      };
+    }
+
+    const btnAutoExtract = document.getElementById('btn-ill-auto-extract');
+    if (btnAutoExtract) {
+      btnAutoExtract.onclick = async () => {
+        if (!this.generator.hasApiKey()) { alert('Set your Anthropic API key first.'); return; }
+        this._showIllustrationStatus('Extracting scenes from all chapters...');
+        this._updateIllustrationWorkflowStep(1);
+        try {
+          const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
+          this._illustrationScenes = this._illustrationScenes || {};
+          for (const ch of chapters.filter(c => !c.isTranslation)) {
+            if (!ch.content) continue;
+            const prose = ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (prose.length < 200) continue;
+            this._showIllustrationStatus(`Extracting scenes from Chapter ${ch.chapterNumber}...`);
+            const illConfig = this._currentProject?.illustrationConfig || this._defaultIllustrationConfig();
+            const scenes = await this.generator.extractScenesFromProse(prose, 2, illConfig);
+            this._illustrationScenes[ch.id] = scenes;
+          }
+          this._hideIllustrationStatus();
+          await this._renderIllustrationDashboard();
+          this._updateIllustrationWorkflowStep(2);
+        } catch (err) {
+          this._showIllustrationError('Scene extraction failed: ' + err.message);
+        }
+      };
+    }
+
+    const btnGenerateAll = document.getElementById('btn-ill-generate-all-previews');
+    if (btnGenerateAll) {
+      btnGenerateAll.onclick = () => {
+        this._startIllustrationGeneration();
+      };
+    }
+
     // Show OpenAI provider option if configured
     const openaiProvOption = document.getElementById('ill-prov-openai-option');
     if (openaiProvOption) {
