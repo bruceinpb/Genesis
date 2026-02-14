@@ -5272,39 +5272,54 @@ class App {
       if (slSection) slSection.style.display = 'none';
     }
 
-    // Chapter list
-    await this._populateIllustrationChapterList(project, config);
-
-    // Character descriptions
-    this._renderIllustrationDescriptions('ill-character-list', config.characterDescriptions || {}, 'character');
-
-    // Setting descriptions
-    this._renderIllustrationDescriptions('ill-setting-list', config.settingDescriptions || {}, 'setting');
-
-    // Reset progress/prompt containers
-    const promptReview = document.getElementById('ill-prompt-review-container');
-    if (promptReview) promptReview.style.display = 'none';
-    const progressPanel = document.getElementById('ill-progress-panel');
-    if (progressPanel) progressPanel.style.display = 'none';
-
-    // Show image review if we have saved illustrations with valid image data
-    const hasImages = Object.keys(this._illustrationVariants || {}).length > 0;
-    const imageReview = document.getElementById('ill-image-review-container');
-    if (hasImages) {
-      this._showImageReview();
-    } else if (imageReview) {
-      imageReview.style.display = 'none';
-    }
-
-    // Populate the new illustration dashboard
+    // ── Async population (wrapped in try/catch so button binding always runs) ──
     try {
-      await this._renderIllustrationDashboard();
-    } catch (dashErr) {
-      console.error('[Illustrations] Dashboard render failed:', dashErr);
-    }
-    this._updateIllustrationCostTracker();
+      // Chapter list
+      await this._populateIllustrationChapterList(project, config);
 
-    // ── Bind Quick Action buttons (re-bind each time tab opens for robustness) ──
+      // Character descriptions
+      this._renderIllustrationDescriptions('ill-character-list', config.characterDescriptions || {}, 'character');
+
+      // Setting descriptions
+      this._renderIllustrationDescriptions('ill-setting-list', config.settingDescriptions || {}, 'setting');
+
+      // Reset progress/prompt containers
+      const promptReview = document.getElementById('ill-prompt-review-container');
+      if (promptReview) promptReview.style.display = 'none';
+      const progressPanel = document.getElementById('ill-progress-panel');
+      if (progressPanel) progressPanel.style.display = 'none';
+
+      // Show image review if we have saved illustrations with valid image data
+      const hasImages = Object.keys(this._illustrationVariants || {}).length > 0;
+      const imageReview = document.getElementById('ill-image-review-container');
+      if (hasImages) {
+        this._showImageReview();
+      } else if (imageReview) {
+        imageReview.style.display = 'none';
+      }
+
+      // Populate the new illustration dashboard
+      try {
+        await this._renderIllustrationDashboard();
+      } catch (dashErr) {
+        console.error('[Illustrations] Dashboard render failed:', dashErr);
+      }
+      this._updateIllustrationCostTracker();
+    } catch (populateErr) {
+      console.error('[Illustrations] Tab population error (buttons will still bind):', populateErr);
+    }
+
+    // ── Bind Quick Action buttons ──
+    // ALWAYS runs even if population above failed.
+    // Uses onclick (not addEventListener) to prevent duplicate handler firing.
+    this._bindIllustrationQuickActions(config);
+  }
+
+  /**
+   * Bind Quick Action button handlers for the Illustrations tab.
+   * Separated to guarantee these always execute regardless of population errors.
+   */
+  _bindIllustrationQuickActions(config) {
     const btnStyleSettings = document.getElementById('btn-ill-style-settings');
     if (btnStyleSettings) {
       btnStyleSettings.onclick = () => {
@@ -5316,35 +5331,53 @@ class App {
     const btnAutoExtract = document.getElementById('btn-ill-auto-extract');
     if (btnAutoExtract) {
       btnAutoExtract.onclick = async () => {
-        if (!this.generator.hasApiKey()) { alert('Set your Anthropic API key first.'); return; }
+        console.log('[Illustrations] Auto-Extract Scenes clicked');
+        if (!this.generator?.hasApiKey()) { alert('Set your Anthropic API key first.'); return; }
         this._showIllustrationStatus('Extracting scenes from all chapters...');
         this._updateIllustrationWorkflowStep(1);
         try {
           const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
           this._illustrationScenes = this._illustrationScenes || {};
+          let extractedCount = 0;
           for (const ch of chapters.filter(c => !c.isTranslation)) {
-            if (!ch.content) continue;
+            if (!ch.content) { console.log(`[Illustrations] Chapter ${ch.chapterNumber}: no content, skipping`); continue; }
             const prose = ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            if (prose.length < 200) continue;
+            if (prose.length < 200) { console.log(`[Illustrations] Chapter ${ch.chapterNumber}: prose too short (${prose.length} chars), skipping`); continue; }
             this._showIllustrationStatus(`Extracting scenes from Chapter ${ch.chapterNumber}...`);
             const illConfig = this._currentProject?.illustrationConfig || this._defaultIllustrationConfig();
             const scenes = await this.generator.extractScenesFromProse(prose, 2, illConfig);
             this._illustrationScenes[ch.id] = scenes;
+            extractedCount++;
           }
           this._hideIllustrationStatus();
-          await this._renderIllustrationDashboard();
-          this._updateIllustrationWorkflowStep(2);
+          if (extractedCount === 0) {
+            this._showIllustrationError('No chapters with sufficient prose found. Chapters need at least 200 characters of content.');
+          } else {
+            await this._renderIllustrationDashboard();
+            this._updateIllustrationWorkflowStep(2);
+          }
         } catch (err) {
+          console.error('[Illustrations] Auto-extract error:', err);
           this._showIllustrationError('Scene extraction failed: ' + err.message);
         }
       };
+    } else {
+      console.warn('[Illustrations] btn-ill-auto-extract element not found');
     }
 
     const btnGenerateAll = document.getElementById('btn-ill-generate-all-previews');
     if (btnGenerateAll) {
-      btnGenerateAll.onclick = () => {
-        this._startIllustrationGeneration();
+      btnGenerateAll.onclick = async () => {
+        console.log('[Illustrations] Generate All Previews clicked');
+        try {
+          await this._startIllustrationGeneration();
+        } catch (err) {
+          console.error('[Illustrations] Generate all previews error:', err);
+          this._showIllustrationError('Generation failed: ' + err.message);
+        }
       };
+    } else {
+      console.warn('[Illustrations] btn-ill-generate-all-previews element not found');
     }
 
     // ── Upload Reference button ──
@@ -5369,7 +5402,7 @@ class App {
     }
 
     // Update HF token from config if available
-    if (config.hfToken) {
+    if (config?.hfToken) {
       this._hfToken = config.hfToken;
     }
   }
@@ -9960,48 +9993,10 @@ class App {
       if (e.target.id === 'ill-lightbox-overlay') this._closeLightbox();
     });
 
-    // --- New Illustration Dashboard Events ---
-
-    // Style Settings toggle
-    document.getElementById('btn-ill-style-settings')?.addEventListener('click', () => {
-      const panel = document.getElementById('ill-style-settings-panel');
-      if (panel) panel.style.display = panel.style.display === 'none' ? '' : 'none';
-    });
-
-    // Auto-Extract Scenes
-    document.getElementById('btn-ill-auto-extract')?.addEventListener('click', async () => {
-      if (!this.generator.hasApiKey()) { alert('Set your Anthropic API key first.'); return; }
-      this._showIllustrationStatus('Extracting scenes from all chapters...');
-      this._updateIllustrationWorkflowStep(1);
-      try {
-        const chapters = await this.fs.getProjectChapters(this.state.currentProjectId);
-        this._illustrationScenes = this._illustrationScenes || {};
-        for (const ch of chapters.filter(c => !c.isTranslation)) {
-          if (!ch.content) continue;
-          const prose = ch.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          if (prose.length < 200) continue;
-          this._showIllustrationStatus(`Extracting scenes from Chapter ${ch.chapterNumber}...`);
-          const config = this._currentProject?.illustrationConfig || this._defaultIllustrationConfig();
-          const scenes = await this.generator.extractScenesFromProse(prose, 2, config);
-          this._illustrationScenes[ch.id] = scenes;
-        }
-        this._hideIllustrationStatus();
-        await this._renderIllustrationDashboard();
-        this._updateIllustrationWorkflowStep(2);
-      } catch (err) {
-        this._showIllustrationError('Scene extraction failed: ' + err.message);
-      }
-    });
-
-    // Generate All Previews
-    document.getElementById('btn-ill-generate-all-previews')?.addEventListener('click', () => {
-      this._startIllustrationGeneration();
-    });
-
-    // Upload Reference
-    document.getElementById('btn-ill-upload-reference')?.addEventListener('click', () => {
-      this._openReferenceImageUpload();
-    });
+    // --- Illustration Dashboard Events ---
+    // NOTE: Quick Action button handlers (Auto-Extract, Generate All, Style Settings, Upload Reference)
+    // are bound via .onclick in _bindIllustrationQuickActions() which is called from _populateIllustrationsTab().
+    // They are NOT duplicated here to prevent double-execution on click.
 
     // Delegated events on the dashboard
     document.getElementById('ill-chapter-scene-list')?.addEventListener('click', async (e) => {
