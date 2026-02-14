@@ -1294,12 +1294,18 @@
         <div class="analysis-section">
           <h3>Print</h3>
           <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
-            Print your complete manuscript with all chapters formatted for your printer.
+            Print your manuscript with illustrations. Use chapter checkboxes in the navigator to select specific chapters.
           </p>
-          <button class="btn" id="btn-print-book" style="width:100%;">
-            Print All Chapters
-            <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, all chapters</span>
-          </button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn" id="btn-print-book" style="flex:1;min-width:200px;">
+              Print All Chapters
+              <br><span style="font-size:0.75rem;color:var(--text-muted);">Courier 12pt, double-spaced, all chapters</span>
+            </button>
+            <button class="btn" id="btn-print-selected" style="flex:1;min-width:200px;">
+              Print Selected Chapters
+              <br><span style="font-size:0.75rem;color:var(--text-muted);">Only checked chapters from navigator</span>
+            </button>
+          </div>
         </div>
       </div>
 

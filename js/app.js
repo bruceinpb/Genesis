@@ -5129,6 +5129,8 @@ class App {
           scene: ill.scene || null,
           overrideSize: ill.overrideSize || '',
           state: ill.state || 'review',
+          approved: ill.approved === true,
+          selectedVariantIndex: ill.selectedVariantIndex || 0,
         });
 
         // Rebuild _illustrationVariants entries (image data)
@@ -6106,7 +6108,6 @@ class App {
     container.style.display = '';
 
     let html = '';
-    let approvedCount = 0;
     let totalCount = 0;
 
     for (const ill of (this._illustrationData || [])) {
@@ -6114,13 +6115,18 @@ class App {
       if (variants.length === 0) continue;
       totalCount++;
 
-      html += `<div class="ill-review-card" data-ill-id="${ill.id}">
+      const isApproved = ill.approved === true;
+      const selectedIdx = ill.selectedVariantIndex || 0;
+      const borderStyle = isApproved ? 'border-color:#34C759;' : '';
+
+      html += `<div class="ill-review-card" data-ill-id="${ill.id}" style="${borderStyle}">
         <h4>Chapter ${ill.chapterNumber}: Illustration ${ill.illustrationIndex + 1}</h4>
         <div class="ill-variant-grid">`;
 
       for (let v = 0; v < variants.length; v++) {
         const variant = variants[v];
-        html += `<div class="ill-variant-card ${v === 0 ? 'selected' : ''}" data-ill-id="${ill.id}" data-variant-index="${v}">
+        const isSelected = isApproved ? (v === selectedIdx) : (v === 0);
+        html += `<div class="ill-variant-card ${isSelected ? 'selected' : ''}" data-ill-id="${ill.id}" data-variant-index="${v}">
           <img src="${variant.imageData}" alt="Variant ${v + 1}" loading="lazy">
           <div class="ill-variant-label">via ${variant.providerName || variant.provider}</div>
         </div>`;
@@ -6128,7 +6134,7 @@ class App {
 
       html += `</div>
         <div class="ill-review-actions">
-          <button class="btn btn-sm btn-primary ill-approve-img" data-ill-id="${ill.id}">Approve Selected</button>
+          <button class="btn btn-sm btn-primary ill-approve-img" data-ill-id="${ill.id}" ${isApproved ? 'disabled' : ''}>${isApproved ? '✓ Approved' : 'Approve Selected'}</button>
           <button class="btn btn-sm btn-secondary ill-regen-img" data-ill-id="${ill.id}">Regenerate All</button>
           <button class="btn btn-sm ill-download-img" data-ill-id="${ill.id}">Download Selected</button>
           <button class="btn btn-sm ill-lock-style-btn" data-ill-id="${ill.id}">Lock Style</button>
@@ -6138,17 +6144,29 @@ class App {
     }
 
     list.innerHTML = html;
+    this._updateImageReviewSummary();
+  }
 
+  /**
+   * Update the image review summary text with current counts.
+   */
+  _updateImageReviewSummary() {
     const summary = document.getElementById('ill-review-summary');
-    if (summary) {
-      // Calculate real cost from all variants
-      let totalCost = 0;
-      for (const ill of (this._illustrationData || [])) {
-        const variants = this._illustrationVariants?.[ill.id] || [];
-        for (const v of variants) totalCost += (v.cost || 0);
-      }
-      summary.textContent = `${totalCount} illustrations, ${approvedCount} approved. Total cost: $${totalCost.toFixed(2)}`;
+    if (!summary) return;
+
+    let totalCount = 0;
+    let approvedCount = 0;
+    let totalCost = 0;
+
+    for (const ill of (this._illustrationData || [])) {
+      const variants = this._illustrationVariants?.[ill.id] || [];
+      if (variants.length === 0) continue;
+      totalCount++;
+      if (ill.approved) approvedCount++;
+      for (const v of variants) totalCost += (v.cost || 0);
     }
+
+    summary.textContent = `${totalCount} illustrations, ${approvedCount} approved. Total cost: $${totalCost.toFixed(2)}`;
   }
 
   /**
@@ -6157,14 +6175,22 @@ class App {
   _selectVariant(illId, variantIndex) {
     const cards = document.querySelectorAll(`.ill-variant-card[data-ill-id="${illId}"]`);
     cards.forEach(c => c.classList.toggle('selected', parseInt(c.dataset.variantIndex) === variantIndex));
+    // Also update in-memory data so export works even after tab switch
+    const ill = (this._illustrationData || []).find(i => i.id === illId);
+    if (ill) ill.selectedVariantIndex = variantIndex;
   }
 
   /**
    * Get selected variant index for an illustration.
    */
   _getSelectedVariant(illId) {
+    // Try DOM first (when illustration review UI is visible)
     const sel = document.querySelector(`.ill-variant-card.selected[data-ill-id="${illId}"]`);
-    return sel ? parseInt(sel.dataset.variantIndex) : 0;
+    if (sel) return parseInt(sel.dataset.variantIndex);
+    // Fall back to in-memory data (for export when tab has changed)
+    const ill = (this._illustrationData || []).find(i => i.id === illId);
+    if (ill && typeof ill.selectedVariantIndex === 'number') return ill.selectedVariantIndex;
+    return 0;
   }
 
   /**
@@ -9687,7 +9713,7 @@ class App {
     });
 
     // Image review delegated clicks
-    document.getElementById('ill-image-review-list')?.addEventListener('click', (e) => {
+    document.getElementById('ill-image-review-list')?.addEventListener('click', async (e) => {
       // Variant selection
       const variantCard = e.target.closest('.ill-variant-card');
       if (variantCard) {
@@ -9704,8 +9730,42 @@ class App {
       }
 
       if (e.target.classList.contains('ill-approve-img')) {
+        const illId = e.target.dataset.illId;
         const card = e.target.closest('.ill-review-card');
-        if (card) card.style.borderColor = '#34C759';
+        const ill = (this._illustrationData || []).find(i => i.id === illId);
+        if (ill) {
+          const variantIdx = this._getSelectedVariant(illId);
+          ill.approved = true;
+          ill.selectedVariantIndex = variantIdx;
+          ill.state = 'approved';
+          // Visual feedback
+          if (card) {
+            card.style.borderColor = '#34C759';
+            e.target.textContent = '✓ Approved';
+            e.target.disabled = true;
+          }
+          // Save to Firestore
+          try {
+            await this.fs.saveIllustration(this.state.currentProjectId, {
+              id: illId,
+              chapterId: ill.chapterId,
+              chapterNumber: ill.chapterNumber,
+              illustrationIndex: ill.illustrationIndex,
+              prompt: ill.prompt,
+              altText: ill.altText || '',
+              caption: ill.caption || '',
+              scene: ill.scene || null,
+              approved: true,
+              selectedVariantIndex: variantIdx,
+              state: 'approved',
+              variants: this._illustrationVariants?.[illId] || [],
+            });
+          } catch (saveErr) {
+            console.warn('Failed to save approval to Firestore:', saveErr);
+          }
+          // Update summary count
+          this._updateImageReviewSummary();
+        }
       }
       if (e.target.classList.contains('ill-download-img')) {
         this._downloadIllustrationImage(e.target.dataset.illId);
@@ -9714,9 +9774,18 @@ class App {
         this._lockStyleFromIllustration(e.target.dataset.illId);
       }
       if (e.target.classList.contains('ill-delete-img')) {
+        const illId = e.target.dataset.illId;
         const card = e.target.closest('.ill-review-card');
         if (card) card.remove();
-        this._illustrationData = (this._illustrationData || []).filter(i => i.id !== e.target.dataset.illId);
+        this._illustrationData = (this._illustrationData || []).filter(i => i.id !== illId);
+        delete this._illustrationVariants?.[illId];
+        // Remove from Firestore
+        try {
+          await this.fs.deleteIllustration(this.state.currentProjectId, illId);
+        } catch (err) {
+          console.warn('Failed to delete illustration from Firestore:', err);
+        }
+        this._updateImageReviewSummary();
       }
     });
 
@@ -10224,7 +10293,25 @@ class App {
     // --- Print all chapters ---
     document.getElementById('btn-print-book')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
+      // Prepare illustrations for printing
+      await this._prepareIllustrationsForExport();
       await this.exporter.printBook(this.state.currentProjectId);
+    });
+
+    // --- Print selected chapters ---
+    document.getElementById('btn-print-selected')?.addEventListener('click', async () => {
+      if (!this.state.currentProjectId) return;
+      // Get selected chapter IDs from chapter navigator checkboxes
+      const selectedIds = [];
+      document.querySelectorAll('.chapter-checkbox:checked').forEach(cb => {
+        if (cb.dataset.chapterId) selectedIds.push(cb.dataset.chapterId);
+      });
+      if (selectedIds.length === 0) {
+        alert('No chapters selected. Use the chapter checkboxes to select chapters to print.');
+        return;
+      }
+      await this._prepareIllustrationsForExport();
+      await this.exporter.printBook(this.state.currentProjectId, selectedIds);
     });
 
     // --- Welcome screen buttons ---

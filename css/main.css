@@ -2306,6 +2306,23 @@ select.form-input {
   .print-chapter-content p:first-of-type {
     text-indent: 0;
   }
+
+  .print-illustration {
+    text-align: center;
+    margin: 24pt 0;
+    page-break-inside: avoid;
+  }
+
+  .print-illustration img {
+    max-width: 100%;
+    max-height: 6in;
+  }
+
+  .print-illustration figcaption {
+    font-style: italic;
+    font-size: 10pt;
+    margin-top: 6pt;
+  }
 }
 
 /* ============================================

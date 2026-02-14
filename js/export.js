@@ -396,12 +396,17 @@ ${project.coverImage ? `<div class="cover-page">
    * Builds a temporary print-only container with all chapters, triggers
    * window.print(), then removes the container.
    */
-  async printBook(projectId) {
+  async printBook(projectId, chapterFilter = null) {
     const project = await this.fs.getProject(projectId);
     const allChapters = await this.fs.getProjectChapters(projectId);
-    const chapters = allChapters
+    let chapters = allChapters
       .filter(ch => !ch.isTranslation)
       .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
+
+    // If chapterFilter is provided, only print those chapter IDs
+    if (chapterFilter && chapterFilter.length > 0) {
+      chapters = chapters.filter(ch => chapterFilter.includes(ch.id));
+    }
 
     if (chapters.length === 0) {
       alert('No chapters found to print.');
@@ -422,6 +427,9 @@ ${project.coverImage ? `<div class="cover-page">
       `<div class="print-wordcount">Approximately ${Math.round(totalWords / 1000) * 1000} words</div>`;
     container.appendChild(titlePage);
 
+    // Collect illustration data if available
+    const illustrations = this._illustrations || [];
+
     // Each chapter
     for (let i = 0; i < chapters.length; i++) {
       const chapter = chapters[i];
@@ -433,24 +441,70 @@ ${project.coverImage ? `<div class="cover-page">
       heading.innerHTML = `<h2>${this._escapeHtml(chapter.title || 'Chapter ' + (i + 1))}</h2>`;
       chapterDiv.appendChild(heading);
 
+      // Add chapter illustrations at top (before content)
+      const chapterIlls = illustrations
+        .filter(ill => ill.chapterId === chapter.id && ill.imageData)
+        .sort((a, b) => (a.insertAfter || 0) - (b.insertAfter || 0));
+
       const content = document.createElement('div');
       content.className = 'print-chapter-content';
       const cleanedContent = this._stripLeadingHeading(chapter.content || '');
-      content.innerHTML = this._sanitizeContent(cleanedContent);
-      chapterDiv.appendChild(content);
+      const sanitizedContent = this._sanitizeContent(cleanedContent);
 
+      if (chapterIlls.length > 0) {
+        // Insert illustrations at their intended positions within the content
+        const paragraphs = this._contentToParagraphs(sanitizedContent);
+        for (let pi = 0; pi < paragraphs.length; pi++) {
+          const p = document.createElement('p');
+          p.textContent = paragraphs[pi];
+          content.appendChild(p);
+          // Check if any illustrations should be inserted after this paragraph
+          for (const ill of chapterIlls) {
+            if ((ill.insertAfter || 0) === pi) {
+              const figure = document.createElement('figure');
+              figure.className = 'print-illustration';
+              figure.style.cssText = 'text-align:center;margin:24pt 0;page-break-inside:avoid;';
+              const img = document.createElement('img');
+              img.src = ill.imageData;
+              img.alt = ill.altText || ill.caption || 'Illustration';
+              img.style.cssText = 'max-width:100%;max-height:6in;';
+              figure.appendChild(img);
+              if (ill.caption) {
+                const cap = document.createElement('figcaption');
+                cap.style.cssText = 'font-style:italic;font-size:10pt;margin-top:6pt;';
+                cap.textContent = ill.caption;
+                figure.appendChild(cap);
+              }
+              content.appendChild(figure);
+            }
+          }
+        }
+      } else {
+        content.innerHTML = sanitizedContent;
+      }
+
+      chapterDiv.appendChild(content);
       container.appendChild(chapterDiv);
     }
 
-    // Append to body, print, then remove
+    // Append to body
     document.body.appendChild(container);
 
-    // Use a small delay to let the DOM render before printing
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Use afterprint event for cleanup (works correctly on iPad Safari)
+    const cleanup = () => {
+      window.removeEventListener('afterprint', cleanup);
+      if (document.body.contains(container)) {
+        document.body.removeChild(container);
+      }
+    };
+    window.addEventListener('afterprint', cleanup);
+
+    // Allow DOM to render before printing
+    await new Promise(resolve => setTimeout(resolve, 200));
     window.print();
 
-    // Clean up after print dialog closes
-    document.body.removeChild(container);
+    // Fallback cleanup after 60 seconds if afterprint doesn't fire (some browsers)
+    setTimeout(cleanup, 60000);
   }
 
   /**
