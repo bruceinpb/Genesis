@@ -2201,10 +2201,15 @@ select.form-input {
   /* When the print-book-container exists, hide the app and show the container */
   #print-book-container {
     display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    height: auto !important;
+    width: 100% !important;
   }
 
   /* Hide the entire app UI when printing the full book */
-  body:has(#print-book-container) #app {
+  body:has(#print-book-container) #app,
+  #app[style*="display: none"] {
     display: none !important;
   }
 

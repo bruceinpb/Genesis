@@ -487,7 +487,12 @@ ${project.coverImage ? `<div class="cover-page">
       container.appendChild(chapterDiv);
     }
 
-    // Append to body
+    // Append to body and make visible for rendering
+    // iPad Safari sometimes fails to print all chapters when relying solely on @media print.
+    // Force visibility by setting inline styles before printing.
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.style.display = 'none';
+    container.style.display = 'block';
     document.body.appendChild(container);
 
     // Use afterprint event for cleanup (works correctly on iPad Safari)
@@ -496,11 +501,18 @@ ${project.coverImage ? `<div class="cover-page">
       if (document.body.contains(container)) {
         document.body.removeChild(container);
       }
+      if (appEl) appEl.style.display = '';
     };
     window.addEventListener('afterprint', cleanup);
 
-    // Allow DOM to render before printing
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Allow DOM to fully render before printing — use rAF + generous timeout for iPad
+    await new Promise(resolve => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(resolve, 600);
+        });
+      });
+    });
     window.print();
 
     // Fallback cleanup after 60 seconds if afterprint doesn't fire (some browsers)

@@ -5135,11 +5135,11 @@ class App {
 
         // Rebuild _illustrationVariants entries (image data)
         if (ill.variants && ill.variants.length > 0) {
-          // Only include variants that have actual base64 data URLs (not blob URLs or truncated)
+          // Include variants with valid image data (data URLs or blob URLs)
           const validVariants = ill.variants.filter(v =>
             v.imageData &&
-            v.imageData.startsWith('data:') &&
-            v.imageData.length > 200
+            (v.imageData.startsWith('data:') || v.imageData.startsWith('blob:') || v.imageData.startsWith('http')) &&
+            v.imageData.length > 50
           );
           if (validVariants.length > 0) {
             this._illustrationVariants[ill.id] = validVariants;
@@ -6170,6 +6170,26 @@ class App {
   }
 
   /**
+   * Update just the dashboard summary text (called after approval/delete without full re-render).
+   */
+  _updateDashboardSummary() {
+    const summaryEl = document.getElementById('ill-dashboard-summary');
+    if (!summaryEl) return;
+
+    const totalImages = (this._illustrationData || []).length;
+    const approvedImages = (this._illustrationData || []).filter(ill => ill.approved).length;
+
+    // Parse and update the summary text — replace/add the generated/approved part
+    let text = summaryEl.innerHTML || '';
+    // Remove old generated stats if present
+    text = text.replace(/\s*\|\s*\d+ generated(\s*\(\d+ approved\))?/, '');
+    if (totalImages > 0) {
+      text += ` | ${totalImages} generated${approvedImages > 0 ? ` (${approvedImages} approved)` : ''}`;
+    }
+    summaryEl.innerHTML = text;
+  }
+
+  /**
    * Handle variant selection click.
    */
   _selectVariant(illId, variantIndex) {
@@ -6650,13 +6670,32 @@ class App {
       const variantIdx = this._getSelectedVariant(ill.id);
       const variants = this._illustrationVariants?.[ill.id] || [];
       const variant = variants[variantIdx] || variants[0];
-      if (!variant) continue;
+      if (!variant || !variant.imageData) {
+        console.warn(`[Export] Skipping illustration ${ill.id}: no variant image data`);
+        continue;
+      }
+
+      // Convert blob URLs to data URLs for export
+      let imageData = variant.imageData;
+      if (imageData.startsWith('blob:')) {
+        try {
+          imageData = await this._convertToDataUrl(imageData);
+        } catch (convErr) {
+          console.warn(`[Export] Failed to convert blob URL for ${ill.id}:`, convErr);
+          continue;
+        }
+      }
+
+      if (!imageData || imageData.length < 100) {
+        console.warn(`[Export] Skipping illustration ${ill.id}: invalid image data`);
+        continue;
+      }
 
       exportIlls.push({
         chapterId: ill.chapterId,
         chapterNumber: ill.chapterNumber,
         illustrationIndex: ill.illustrationIndex,
-        imageData: variant.imageData,
+        imageData: imageData,
         prompt: ill.prompt,
         altText: ill.altText || '',
         caption: ill.caption || '',
@@ -6667,7 +6706,7 @@ class App {
       });
     }
 
-    console.log(`[Export] Prepared ${exportIlls.length} illustrations for export`);
+    console.log(`[Export] Prepared ${exportIlls.length} illustrations for export (from ${(this._illustrationData || []).length} total)`);
     this.exporter.setIllustrationData(exportIlls);
   }
 
@@ -9729,9 +9768,11 @@ class App {
         return;
       }
 
-      if (e.target.classList.contains('ill-approve-img')) {
-        const illId = e.target.dataset.illId;
-        const card = e.target.closest('.ill-review-card');
+      // Approve button — use closest() for robustness in case of nested elements
+      const approveBtn = e.target.classList.contains('ill-approve-img') ? e.target : e.target.closest?.('.ill-approve-img');
+      if (approveBtn) {
+        const illId = approveBtn.dataset.illId;
+        const card = approveBtn.closest('.ill-review-card');
         const ill = (this._illustrationData || []).find(i => i.id === illId);
         if (ill) {
           const variantIdx = this._getSelectedVariant(illId);
@@ -9741,8 +9782,8 @@ class App {
           // Visual feedback
           if (card) {
             card.style.borderColor = '#34C759';
-            e.target.textContent = '✓ Approved';
-            e.target.disabled = true;
+            approveBtn.textContent = '✓ Approved';
+            approveBtn.disabled = true;
           }
           // Save to Firestore
           try {
@@ -9763,9 +9804,11 @@ class App {
           } catch (saveErr) {
             console.warn('Failed to save approval to Firestore:', saveErr);
           }
-          // Update summary count
+          // Update both review summary and dashboard summary
           this._updateImageReviewSummary();
+          this._updateDashboardSummary();
         }
+        return;
       }
       if (e.target.classList.contains('ill-download-img')) {
         this._downloadIllustrationImage(e.target.dataset.illId);
@@ -9786,6 +9829,7 @@ class App {
           console.warn('Failed to delete illustration from Firestore:', err);
         }
         this._updateImageReviewSummary();
+        this._updateDashboardSummary();
       }
     });
 
@@ -10301,13 +10345,22 @@ class App {
     // --- Print selected chapters ---
     document.getElementById('btn-print-selected')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
-      // Get selected chapter IDs from chapter navigator checkboxes
+      // Get selected chapter IDs from navigator checkboxes (both old and new systems)
       const selectedIds = [];
+      // New navigator system
+      document.querySelectorAll('.nav-item-checkbox:checked').forEach(cb => {
+        const navItem = cb.closest('.nav-item');
+        const navId = navItem?.dataset?.navId;
+        if (navId) selectedIds.push(navId);
+      });
+      // Old sidebar system (fallback)
       document.querySelectorAll('.chapter-checkbox:checked').forEach(cb => {
-        if (cb.dataset.chapterId) selectedIds.push(cb.dataset.chapterId);
+        if (cb.dataset.chapterId && !selectedIds.includes(cb.dataset.chapterId)) {
+          selectedIds.push(cb.dataset.chapterId);
+        }
       });
       if (selectedIds.length === 0) {
-        alert('No chapters selected. Use the chapter checkboxes to select chapters to print.');
+        alert('No chapters selected. Use the chapter checkboxes in the navigator sidebar to select chapters to print.');
         return;
       }
       await this._prepareIllustrationsForExport();
@@ -11199,14 +11252,26 @@ class App {
   }
 
   async _deleteSelectedChapters() {
-    const checked = document.querySelectorAll('.chapter-checkbox:checked');
-    if (checked.length === 0) return;
+    // Check both old sidebar checkboxes and new navigator checkboxes
+    const oldChecked = document.querySelectorAll('.chapter-checkbox:checked');
+    const navChecked = document.querySelectorAll('.nav-item-checkbox:checked');
+    
+    const idsToDelete = [];
+    oldChecked.forEach(cb => {
+      if (cb.dataset.chapterId) idsToDelete.push(cb.dataset.chapterId);
+    });
+    navChecked.forEach(cb => {
+      const navItem = cb.closest('.nav-item');
+      const navId = navItem?.dataset?.navId;
+      if (navId && !idsToDelete.includes(navId)) idsToDelete.push(navId);
+    });
+    
+    if (idsToDelete.length === 0) return;
 
-    const count = checked.length;
+    const count = idsToDelete.length;
     if (!confirm(`Delete ${count} selected chapter${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
 
     try {
-      const idsToDelete = Array.from(checked).map(cb => cb.dataset.chapterId);
       await this._deleteChaptersAndCleanup(idsToDelete);
     } catch (err) {
       console.error('Failed to delete selected chapters:', err);
