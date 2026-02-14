@@ -4653,6 +4653,114 @@ select.form-input {
   margin-top: 2px;
 }
 
+/* Resolution Picker */
+.go-nogo-resolution-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.go-nogo-resolution-card {
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent-primary);
+  cursor: default;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.go-nogo-resolution-card:hover {
+  background: var(--bg-tertiary, rgba(255,255,255,0.03));
+}
+
+.resolution-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.resolution-icon {
+  font-size: 1rem;
+}
+
+.resolution-approach {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.resolution-badge {
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(52, 199, 89, 0.15);
+  color: #34C759;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.resolution-summary {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.resolution-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.resolution-actions .btn {
+  font-size: 0.75rem;
+  padding: 4px 12px;
+  min-width: auto;
+}
+
+.resolution-prose-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-serif, Georgia, serif);
+}
+
+.go-nogo-resolution-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+#btn-go-nogo-find-resolutions {
+  background: linear-gradient(135deg, #0a84ff, #5e5ce6);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+#btn-go-nogo-find-resolutions:hover {
+  background: linear-gradient(135deg, #2196f3, #7c4dff);
+}
+
+#btn-go-nogo-find-resolutions:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 /* ============================================
    Multi-Chapter Outline Styles
    ============================================ */
