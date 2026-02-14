@@ -7,7 +7,7 @@
  *  - Everything else  → cache-first with background refresh (icons, CSS, manifest)
  */
 
-const CACHE_NAME = 'genesis2-v54';
+const CACHE_NAME = 'genesis2-v55';
 
 // Use relative paths so caching works whether hosted at root or a subdirectory
 // (e.g. GitHub Pages at /Genesis/)
@@ -31,6 +31,10 @@ const ASSET_PATHS = [
   './js/genres.js',
   './js/multi-agent.js',
   './js/author-palette.js',
+  './js/error-database.js',
+  './js/ghost-author.js',
+  './js/openai.js',
+  './js/verification.js',
   './icons/icon-192.svg',
   './icons/icon-512.svg'
 ];
