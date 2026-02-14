@@ -1198,6 +1198,15 @@
           <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
             Export chapters as a formatted DOCX file for Vellum import.
           </p>
+          <div id="docx-illustration-options" style="margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);">
+            <div style="font-size:0.85rem;font-weight:600;margin-bottom:6px;">Image Layout in DOCX</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;margin-bottom:4px;">
+              <input type="radio" name="docx-ill-layout" value="inline" checked> Inline (images between paragraphs)
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;">
+              <input type="radio" name="docx-ill-layout" value="full_page"> Full Page (image on its own page, prose on facing page)
+            </label>
+          </div>
           <button class="btn" id="btn-export-original-docx" style="width:100%;margin-bottom:8px;">
             &#128196; Export Original (English)
           </button>

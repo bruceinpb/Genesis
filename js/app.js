@@ -5382,6 +5382,7 @@ class App {
           id: ill.id,
           chapterId: ill.chapterId,
           chapterNumber: ill.chapterNumber,
+          chapterTitle: ill.chapterTitle || '',
           illustrationIndex: ill.illustrationIndex,
           source: ill.source,
           scene: ill.scene,
@@ -5617,6 +5618,7 @@ class App {
             id: illId,
             chapterId: illMeta?.chapterId || '',
             chapterNumber: illMeta?.chapterNumber || 0,
+            chapterTitle: illMeta?.chapterTitle || '',
             illustrationIndex: illMeta?.illustrationIndex || 0,
             prompt: illMeta?.prompt || '',
             altText: illMeta?.altText || '',
@@ -5671,8 +5673,12 @@ class App {
         return;
       }
 
-      // Show image review
+      // Show image review (all chapters)
       this._showImageReview();
+
+      // Refresh illustration dashboard to show all chapters
+      await this._renderIllustrationDashboard();
+      this._updateIllustrationCostTracker();
 
       // Refresh chapter gallery if a chapter is currently loaded
       if (this.state.currentChapterId) {
@@ -5701,11 +5707,23 @@ class App {
     let html = '';
     let approvedCount = 0;
     let totalCount = 0;
+    let currentChapterNum = null;
 
-    for (const ill of (this._illustrationData || [])) {
+    // Sort illustrations by chapter number, then by illustration index
+    const sortedIlls = [...(this._illustrationData || [])]
+      .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0) || (a.illustrationIndex || 0) - (b.illustrationIndex || 0));
+
+    for (const ill of sortedIlls) {
       const variants = this._illustrationVariants?.[ill.id] || [];
       if (variants.length === 0) continue;
       totalCount++;
+
+      // Add chapter separator header when chapter changes
+      if (ill.chapterNumber !== currentChapterNum) {
+        currentChapterNum = ill.chapterNumber;
+        const chTitle = ill.chapterTitle || `Chapter ${ill.chapterNumber}`;
+        html += `<div style="font-size:1rem;font-weight:700;padding:12px 0 6px;border-bottom:2px solid var(--accent-primary);margin-bottom:8px;">Chapter ${ill.chapterNumber}: ${this._escapeHtml(chTitle)}</div>`;
+      }
 
       html += `<div class="ill-review-card" data-ill-id="${ill.id}">
         <h4>Chapter ${ill.chapterNumber}: Illustration ${ill.illustrationIndex + 1}</h4>
@@ -5730,11 +5748,18 @@ class App {
       </div>`;
     }
 
+    if (totalCount === 0) {
+      html = '<p style="color:var(--text-muted);font-size:0.85rem;">No images generated yet. Select chapters and generate illustrations above.</p>';
+    }
+
     list.innerHTML = html;
+
+    // Count chapters with images
+    const chaptersWithImages = new Set(sortedIlls.filter(ill => (this._illustrationVariants?.[ill.id] || []).length > 0).map(ill => ill.chapterNumber));
 
     const summary = document.getElementById('ill-review-summary');
     if (summary) {
-      summary.textContent = `${totalCount} illustrations, ${approvedCount} approved. Total cost: $0.00`;
+      summary.textContent = `${totalCount} illustrations across ${chaptersWithImages.size} chapter(s), ${approvedCount} approved. Total cost: $0.00`;
     }
   }
 
@@ -9363,6 +9388,10 @@ class App {
 
     // --- Export original manuscript DOCX ---
     document.getElementById('btn-export-original-docx')?.addEventListener('click', async () => {
+      // Read illustration layout preference from radio buttons
+      const layoutRadio = document.querySelector('input[name="docx-ill-layout"]:checked');
+      this._docxIllustrationLayout = layoutRadio ? layoutRadio.value : 'inline';
+      this._prepareIllustrationsForExport();
       await this._exportFullManuscriptDocx(null);
     });
 
@@ -13053,7 +13082,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
 
       const {
         Document, Packer, Paragraph, TextRun, PageBreak,
-        HeadingLevel, AlignmentType, ImageRun
+        HeadingLevel, AlignmentType, ImageRun, SectionType
       } = docx;
 
       // Fetch all chapters for this project
@@ -13114,6 +13143,24 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
         }
       }
 
+      // Read illustration layout preference
+      const illLayoutDocx = this._docxIllustrationLayout || 'inline';
+      const includeIllustrationsInDocx = document.getElementById('ill-export-docx')?.checked !== false;
+
+      // Build illustration map from exporter data
+      const illustrationsByChapter = {};
+      if (includeIllustrationsInDocx && this.exporter?._illustrations) {
+        for (const ill of this.exporter._illustrations) {
+          if (!ill.imageData) continue;
+          if (!illustrationsByChapter[ill.chapterId]) illustrationsByChapter[ill.chapterId] = [];
+          illustrationsByChapter[ill.chapterId].push(ill);
+        }
+        // Sort each chapter's illustrations by insertAfter
+        for (const chId of Object.keys(illustrationsByChapter)) {
+          illustrationsByChapter[chId].sort((a, b) => (a.insertAfter || 0) - (b.insertAfter || 0));
+        }
+      }
+
       for (let i = 0; i < chaptersToExport.length; i++) {
         const chapter = chaptersToExport[i];
         const chapterTitle = (chapter.title || `Chapter ${i + 1}`)
@@ -13159,6 +13206,17 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
           }
         }
 
+        // Build illustration insert map for this chapter: paragraphIndex -> [illustrations]
+        const chapterIlls = illustrationsByChapter[chapter.id] || [];
+        const illInsertMap = {};
+        for (const ill of chapterIlls) {
+          const idx = ill.insertAfter || 0;
+          if (!illInsertMap[idx]) illInsertMap[idx] = [];
+          illInsertMap[idx].push(ill);
+        }
+
+        let bodyParaIndex = 0; // tracks actual paragraph index (excluding skipped/empty)
+
         for (let pi = 0; pi < paragraphs.length; pi++) {
           const para = paragraphs[pi];
           if (para.type === 'empty') continue;
@@ -13174,6 +13232,7 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
                 size: 24
               })]
             }));
+            bodyParaIndex++;
             continue;
           }
 
@@ -13195,6 +13254,102 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
             spacing: { before: 0, after: 200, line: 276 },
             children: textRuns
           }));
+
+          // Insert illustrations after this paragraph if any are mapped here
+          const illsAtIndex = illInsertMap[bodyParaIndex];
+          if (illsAtIndex && illsAtIndex.length > 0) {
+            for (const ill of illsAtIndex) {
+              try {
+                const imgData = await this._dataUrlToUint8Array(ill.imageData);
+                if (!imgData) continue;
+                const dims = await this._getImageDimensions(ill.imageData);
+
+                if (illLayoutDocx === 'full_page') {
+                  // Full-page layout: page break, full-page image, then continue prose on next page
+                  children.push(new Paragraph({ children: [new PageBreak()] }));
+
+                  // Calculate dimensions to fill page (6.5 x 9 inch content area)
+                  const maxWPx = 468; // 6.5 * 72
+                  const maxHPx = 648; // 9 * 72
+                  let w = maxWPx;
+                  let h = maxHPx;
+                  if (dims) {
+                    const scale = Math.min(maxWPx / dims.width, maxHPx / dims.height);
+                    w = Math.round(dims.width * scale);
+                    h = Math.round(dims.height * scale);
+                  }
+
+                  children.push(new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 0, after: 0 },
+                    children: [new ImageRun({
+                      data: imgData,
+                      transformation: { width: w, height: h },
+                      type: ill.imageData.includes('image/png') ? 'png' : 'jpg'
+                    })]
+                  }));
+
+                  // Add caption if present
+                  if (ill.caption) {
+                    children.push(new Paragraph({
+                      alignment: AlignmentType.CENTER,
+                      spacing: { before: 100, after: 0 },
+                      children: [new TextRun({
+                        text: ill.caption,
+                        font: 'Times New Roman',
+                        size: 18,
+                        italics: true,
+                        color: '666666'
+                      })]
+                    }));
+                  }
+
+                  // Page break so prose continues on facing page
+                  children.push(new Paragraph({ children: [new PageBreak()] }));
+                } else {
+                  // Inline layout: image centered between paragraphs
+                  const maxW = 400; // ~5.5 inches at 72dpi
+                  const maxH = 400;
+                  let w = maxW;
+                  let h = maxH;
+                  if (dims) {
+                    const scale = Math.min(maxW / dims.width, maxH / dims.height);
+                    w = Math.round(dims.width * scale);
+                    h = Math.round(dims.height * scale);
+                  }
+
+                  children.push(new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 200, after: 100 },
+                    children: [new ImageRun({
+                      data: imgData,
+                      transformation: { width: w, height: h },
+                      type: ill.imageData.includes('image/png') ? 'png' : 'jpg'
+                    })]
+                  }));
+
+                  // Add caption if present
+                  if (ill.caption) {
+                    children.push(new Paragraph({
+                      alignment: AlignmentType.CENTER,
+                      spacing: { before: 50, after: 200 },
+                      children: [new TextRun({
+                        text: ill.caption,
+                        font: 'Times New Roman',
+                        size: 18,
+                        italics: true,
+                        color: '666666'
+                      })]
+                    }));
+                  }
+                }
+              } catch (imgErr) {
+                console.warn('Failed to embed illustration in DOCX:', imgErr);
+              }
+            }
+          }
+
+          bodyParaIndex++;
         }
       }
 
@@ -13717,6 +13872,9 @@ Return the index as plain text, one entry per line, alphabetically sorted.`
       btn.style.cssText = 'width:100%;';
       btn.textContent = `${info.flag} Export ${info.name} Translation`;
       btn.addEventListener('click', async () => {
+        const layoutRadio = document.querySelector('input[name="docx-ill-layout"]:checked');
+        this._docxIllustrationLayout = layoutRadio ? layoutRadio.value : 'inline';
+        this._prepareIllustrationsForExport();
         await this._exportFullManuscriptDocx(code);
       });
       container.appendChild(btn);
