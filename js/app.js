@@ -1177,39 +1177,105 @@ class App {
     }
 
     // Update pipeline progress bars in both overlays
+    // Covers all pipeline variants: Multi-Agent, Genesis 3.0, and Genesis 4.0
     const progressMap = {
+      // === Multi-Agent Pipeline ===
       'generating': 10, 'agent-started': 15, 'agent-done': 25,
-      'generation-complete': 30, 'judging': 40, 'judging-complete': 55,
-      'fixing': 60, 'fixing-complete': 70, 'editing': 75, 'editing-complete': 82,
-      'cross-model-scoring': 83, 'cross-model-complete': 87, 'cross-model-error': 87,
-      'digests': 88, 'digest-building': 90, 'digests-complete': 92,
+      'generation-complete': 30,
+      // Phase 2: Chimera Selection / Judging
+      'judging': 35, 'chimera': 38, 'chimera-dedup': 40, 'chimera-complete': 42,
+      'judging-complete': 45,
+      // Phase 2.5: Voice Unification
+      'voice-unify': 47, 'voice-unify-complete': 50,
+      // Phase 3: Transition Smoothing
+      'smoothing': 52, 'smoothing-complete': 55,
+      // Phase 3.5: Adversarial Audit
+      'adversarial': 57, 'adversarial-v3': 57,
+      // Phase 4: Micro-Fix Loop / Dual Gate
+      'fixing': 60, 'microfix': 62, 'microfix-v3': 62, 'microfix-complete': 68,
+      'fixing-complete': 68, 'dual-gate': 70,
+      // Phase 4.5: Roughness Injection
+      'editing': 72, 'roughness': 73, 'roughness-complete': 75,
+      'roughness-v4': 75, 'editing-complete': 75,
+      // Phase 5+: Voice Check / Human Gate
+      'voice-check': 77, 'human-gate': 78,
+      // Cross-Model Scoring
+      'cross-model-scoring': 80, 'cross-model-complete': 83, 'cross-model-error': 83,
+      // Chapter Digests
+      'digests': 85, 'digest-building': 88, 'digests-complete': 90,
+      // GO/NO-GO
       'go-nogo-start': 92, 'go-nogo-polling': 95, 'go-nogo-chapter': 97,
-      'go-nogo-complete': 100
+      'go-nogo-complete': 100,
+      // === Genesis 3.0 Phases ===
+      'gen-single': 15,
+      'sentence-iter': 30, 'sentence-iter-complete': 45,
+      'verification': 50, 'prosecution': 55,
+      // === Genesis 4.0 Phases ===
+      'pipeline-v4': 5, 'gen-v4': 15, 'judge-v4': 30,
+      'autofix-v4': 40, 'verify-v4': 50,
+      'polish-v4': 60,
+      // Footnotes / Index
+      'footnotes': 95, 'footnotes-complete': 97,
+      'index': 98, 'index-complete': 100
     };
     const fillEls = [document.getElementById('ma-pipeline-fill'), document.getElementById('iterative-pipeline-fill')];
     for (const fillEl of fillEls) {
-      if (fillEl && progressMap[phase]) {
+      if (fillEl && progressMap[phase] !== undefined) {
         fillEl.style.width = progressMap[phase] + '%';
       }
     }
 
     // Update phase labels in both overlays
     const phaseLabels = {
+      // Multi-Agent Pipeline
       'generating': 'Deploying writing agents...',
-      'generation-complete': 'All agents complete. Judging...',
+      'generation-complete': 'All agents complete. Selecting best passages...',
+      'chimera': 'Chimera selection in progress...',
+      'chimera-dedup': 'Deduplicating chimera output...',
+      'chimera-complete': 'Chimera assembled.',
       'judging': 'Judge evaluating candidates...',
       'judging-complete': 'Best candidate selected.',
+      'voice-unify': 'Unifying voice across passages...',
+      'voice-unify-complete': 'Voice unified.',
+      'smoothing': 'Smoothing transitions...',
+      'smoothing-complete': 'Transitions smoothed.',
+      'adversarial': 'Running adversarial audit...',
+      'adversarial-v3': 'Running adversarial audit...',
+      'microfix': 'Micro-fix loop running...',
+      'microfix-v3': 'Micro-fix loop running...',
+      'microfix-complete': 'Micro-fixes complete.',
+      'dual-gate': 'Dual quality gate checking...',
       'fixing': 'Collaborating on improvements...',
       'fixing-complete': 'Fix plan ready.',
+      'roughness': 'Injecting natural roughness...',
+      'roughness-complete': 'Roughness injection complete.',
+      'roughness-v4': 'Roughness injection complete.',
       'editing': 'Editor applying fixes...',
       'editing-complete': 'Fixes applied.',
+      'voice-check': 'Checking voice consistency...',
+      'human-gate': 'Awaiting human review...',
       'cross-model-scoring': 'GPT-5.2 cross-model scoring...',
       'cross-model-complete': 'Cross-model scoring complete.',
       'cross-model-error': 'Cross-model scoring unavailable.',
       'digests': 'Building chapter digests...',
       'go-nogo-start': 'GO/NO-GO sequence initiated...',
       'go-nogo-polling': 'Polling chapter agents...',
-      'go-nogo-complete': data.overallStatus === 'GO' ? 'ALL SYSTEMS GO' : 'CONFLICT DETECTED'
+      'go-nogo-complete': data.overallStatus === 'GO' ? 'ALL SYSTEMS GO' : 'CONFLICT DETECTED',
+      // Genesis 3.0
+      'gen-single': 'Generating in single voice...',
+      'sentence-iter': 'Iterating sentences...',
+      'sentence-iter-complete': 'Sentence iteration complete.',
+      'verification': 'Running verification checks...',
+      'prosecution': 'Prosecution scoring...',
+      // Genesis 4.0
+      'pipeline-v4': 'Initializing Genesis 4.0...',
+      'gen-v4': 'Generating prose...',
+      'judge-v4': 'Judging candidates...',
+      'autofix-v4': 'Auto-fixing patterns...',
+      'verify-v4': 'Verifying output...',
+      'polish-v4': 'Polishing prose...',
+      'footnotes': 'Generating footnotes...',
+      'footnotes-complete': 'Footnotes ready.'
     };
 
     // Cross-model score display
