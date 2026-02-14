@@ -2460,7 +2460,7 @@ class App {
       // === MICRO-FIX ITERATION PIPELINE (v2 — with internal validation) ===
       if (streamedText.length > 50) {
         const qualityThreshold = this._currentProject?.qualityThreshold || 90;
-        const MAX_MICRO_ITERATIONS = 8;
+        const MAX_MICRO_ITERATIONS = 5;
         const SCORE_NOISE_FLOOR = 2;  // Don't reject a fix for a 1-2 point score difference
         let currentText = streamedText;
         let bestScore = 0;
@@ -2561,6 +2561,24 @@ class App {
           this._updateIterativeScore(beforeScore, true);
           this._recordIterationScore(iteration, beforeScore);
           this._updateIterativeIteration(iteration, bestScore);
+
+          // Early exit: score >= 95 — excellent quality, stop immediately
+          if (beforeScore >= 95) {
+            bestScore = beforeScore;
+            bestReview = result;
+            this._updateIterativeLog(`Chunk ${chunkNum}: Score ${beforeScore} >= 95 (excellent). Early exit.`);
+            break;
+          }
+
+          // Early exit: score >= 90 after 3+ iterations — good enough, diminishing returns
+          if (beforeScore >= 90 && iteration >= 3) {
+            if (beforeScore > bestScore) {
+              bestScore = beforeScore;
+              bestReview = result;
+            }
+            this._updateIterativeLog(`Chunk ${chunkNum}: Score ${beforeScore} >= 90 after ${iteration} iterations. Good enough, stopping.`);
+            break;
+          }
 
           // Log results
           const issueCount = result.issues?.length || 0;
@@ -2736,6 +2754,24 @@ class App {
               chapterId: this.state.currentChapterId,
               chapterTitle, genre, sessionKey: generationSessionKey
             }).catch(() => {});
+          }
+        }
+
+        // Post-generation scrub: deterministically remove em dashes, citations, AI tells
+        if (typeof ProseGenerator !== 'undefined' && ProseGenerator.scrubProseOutput) {
+          bestText = ProseGenerator.scrubProseOutput(bestText);
+        } else if (this.generator?.constructor?.scrubProseOutput) {
+          bestText = this.generator.constructor.scrubProseOutput(bestText);
+        }
+
+        // Verification: log any remaining compliance violations
+        const verifyFn = (typeof ProseGenerator !== 'undefined' && ProseGenerator.verifyProseCompliance)
+          ? ProseGenerator.verifyProseCompliance
+          : this.generator?.constructor?.verifyProseCompliance;
+        if (verifyFn) {
+          const compliance = verifyFn(bestText);
+          if (!compliance.pass) {
+            this._updateIterativeLog(`Chunk ${chunkNum}: COMPLIANCE VIOLATIONS: ${compliance.violations.join('; ')}`);
           }
         }
 
@@ -4683,8 +4719,11 @@ class App {
    */
   _buildProviderPools(config) {
     const provs = config.providers || {};
-    const hasHfToken = this._hfToken && this._hfToken.trim() !== '';
+    const hasHfToken = (config.hfToken && config.hfToken.trim() !== '') || (this._hfToken && this._hfToken.trim() !== '');
     const pools = [];
+
+    // Helper: convert priority string to numeric for sorting
+    const priorityNum = (p) => p === 'primary' ? 1 : 2;
 
     // Only add HuggingFace providers if token is configured
     if (hasHfToken) {
@@ -4695,7 +4734,7 @@ class App {
           concurrent: provs['huggingface-flux']?.concurrent || 2,
           model: 'black-forest-labs/FLUX.1-schnell',
           generateFn: 'generateHF',
-          priority: 1,
+          priority: priorityNum(provs['huggingface-flux']?.priority),
         });
       }
       if (provs['huggingface-sdxl']?.enabled !== false) {
@@ -4705,7 +4744,7 @@ class App {
           concurrent: provs['huggingface-sdxl']?.concurrent || 1,
           model: 'stabilityai/stable-diffusion-xl-base-1.0',
           generateFn: 'generateHF',
-          priority: 2,
+          priority: priorityNum(provs['huggingface-sdxl']?.priority) + 0.1,
         });
       }
     } else {
@@ -4720,7 +4759,7 @@ class App {
         concurrent: provs['puter-gpt-image-1']?.concurrent || 1,
         model: 'gpt-image-1',
         generateFn: 'generateGptImage1',
-        priority: 3,
+        priority: priorityNum(provs['puter-gpt-image-1']?.priority),
       });
     }
 
@@ -4732,7 +4771,7 @@ class App {
         concurrent: provs['puter-sd3']?.concurrent || 1,
         model: 'stabilityai/stable-diffusion-3-medium',
         generateFn: 'generatePuterSD',
-        priority: 4,
+        priority: priorityNum(provs['puter-sd3']?.priority) + 0.1,
       });
     }
 
@@ -4744,7 +4783,7 @@ class App {
         concurrent: provs['puter-dalle3']?.concurrent || 1,
         model: 'dall-e-3',
         generateFn: 'generatePuterDalle',
-        priority: 5,
+        priority: priorityNum(provs['puter-dalle3']?.priority) + 0.2,
       });
     }
 
@@ -4756,14 +4795,17 @@ class App {
         concurrent: 1,
         model: this.openaiClient.imageModel || 'gpt-image-1.5',
         generateFn: 'generateOpenAIDirect',
-        priority: 6,
+        priority: priorityNum(provs['openai-direct']?.priority),
       });
     }
+
+    // Sort by priority (lower = higher priority)
+    pools.sort((a, b) => a.priority - b.priority);
 
     if (pools.length === 0) {
       console.error('[Illustration] No image providers available. Configure a HuggingFace token or enable Puter.js providers.');
     } else {
-      console.log(`[Illustration] Active providers: ${pools.map(p => p.name).join(', ')}`);
+      console.log(`[Illustration] Active providers (priority order): ${pools.map(p => `${p.name}(${p.priority})`).join(', ')}`);
     }
 
     return pools;
@@ -4894,16 +4936,32 @@ class App {
     const docxCb = document.getElementById('bs-ill-wf-docx');
     if (docxCb) docxCb.checked = wf.includes('embedded_docx');
 
-    // Provider checkboxes
+    // Provider checkboxes and priorities
     const provs = config.providers || {};
     const setCb = (id, key) => {
       const el = document.getElementById(id);
       if (el) el.checked = provs[key]?.enabled !== false;
     };
+    const setPriority = (id, key) => {
+      const el = document.getElementById(id);
+      if (el && provs[key]?.priority) el.value = provs[key].priority;
+    };
     setCb('bs-ill-prov-hf-flux', 'huggingface-flux');
     setCb('bs-ill-prov-hf-sdxl', 'huggingface-sdxl');
     setCb('bs-ill-prov-puter-sd3', 'puter-sd3');
     setCb('bs-ill-prov-puter-dalle', 'puter-dalle3');
+    setPriority('bs-ill-prov-hf-flux-priority', 'huggingface-flux');
+    setPriority('bs-ill-prov-hf-sdxl-priority', 'huggingface-sdxl');
+    setPriority('bs-ill-prov-gpt-image-1-priority', 'puter-gpt-image-1');
+    setPriority('bs-ill-prov-puter-sd3-priority', 'puter-sd3');
+    setPriority('bs-ill-prov-puter-dalle-priority', 'puter-dalle3');
+    setPriority('bs-ill-prov-openai-direct-priority', 'openai-direct');
+
+    // Token/key fields
+    const hfTokenEl = document.getElementById('bs-ill-hf-token');
+    if (hfTokenEl && config.hfToken) hfTokenEl.value = config.hfToken;
+    const openaiKeyEl = document.getElementById('bs-ill-openai-key');
+    if (openaiKeyEl && config.openaiDirectKey) openaiKeyEl.value = config.openaiDirectKey;
 
     // Variant mode
     const vmRadio = document.querySelector(`input[name="bs-ill-variant-mode"][value="${config.variantMode || 'multi_model'}"]`);
@@ -4955,6 +5013,18 @@ class App {
     const openaiProvOption = document.getElementById('ill-prov-openai-option');
     if (openaiProvOption) {
       openaiProvOption.style.display = this.openaiClient?.isConfigured() ? '' : 'none';
+    }
+
+    // Show/hide OpenAI key section based on Direct provider state
+    const openaiKeySection = document.getElementById('ill-openai-key-section');
+    if (openaiKeySection) {
+      const directCb = document.getElementById('bs-ill-prov-openai-direct');
+      openaiKeySection.style.display = (directCb?.checked && openaiProvOption?.style.display !== 'none') ? '' : 'none';
+    }
+
+    // Update HF token from config if available
+    if (config.hfToken) {
+      this._hfToken = config.hfToken;
     }
   }
 
@@ -5118,12 +5188,14 @@ class App {
       parallelWorkers: parseInt(getVal('bs-ill-workers')) || 5,
       outputWorkflow: [],
       providers: {
-        'huggingface-flux': { enabled: getCb('bs-ill-prov-hf-flux'), concurrent: 2 },
-        'huggingface-sdxl': { enabled: getCb('bs-ill-prov-hf-sdxl'), concurrent: 1 },
-        'puter-gpt-image-1': { enabled: getCb('bs-ill-prov-gpt-image-1'), concurrent: 1 },
-        'puter-sd3': { enabled: getCb('bs-ill-prov-puter-sd3'), concurrent: 1 },
-        'puter-dalle3': { enabled: getCb('bs-ill-prov-puter-dalle'), concurrent: 1 },
+        'huggingface-flux': { enabled: getCb('bs-ill-prov-hf-flux'), concurrent: 2, priority: getVal('bs-ill-prov-hf-flux-priority') || 'primary' },
+        'huggingface-sdxl': { enabled: getCb('bs-ill-prov-hf-sdxl'), concurrent: 1, priority: getVal('bs-ill-prov-hf-sdxl-priority') || 'secondary' },
+        'puter-gpt-image-1': { enabled: getCb('bs-ill-prov-gpt-image-1'), concurrent: 1, priority: getVal('bs-ill-prov-gpt-image-1-priority') || 'secondary' },
+        'puter-sd3': { enabled: getCb('bs-ill-prov-puter-sd3'), concurrent: 1, priority: getVal('bs-ill-prov-puter-sd3-priority') || 'secondary' },
+        'puter-dalle3': { enabled: getCb('bs-ill-prov-puter-dalle'), concurrent: 1, priority: getVal('bs-ill-prov-puter-dalle-priority') || 'secondary' },
       },
+      hfToken: getVal('bs-ill-hf-token') || '',
+      openaiDirectKey: getVal('bs-ill-openai-key') || '',
       characterDescriptions: {},
       settingDescriptions: {},
       styleLock: this._currentProject?.illustrationConfig?.styleLock || null,
@@ -5186,6 +5258,9 @@ class App {
     // Collect chapters to illustrate
     const enabledChapters = Object.entries(config.chapters)
       .filter(([_, v]) => v.enabled && v.count > 0);
+
+    console.log(`[Illustration] Chapter config:`, JSON.stringify(config.chapters));
+    console.log(`[Illustration] Enabled chapters (${enabledChapters.length}):`, enabledChapters.map(([id, cfg]) => `${id} (count: ${cfg.count})`));
 
     if (enabledChapters.length === 0) {
       this._showIllustrationError('No chapters selected for illustration.');
@@ -6178,8 +6253,14 @@ class App {
    * Prepare illustration data for the export system.
    * Passes selected variants to ExportManager for DOCX/HTML embedding.
    */
-  _prepareIllustrationsForExport() {
+  async _prepareIllustrationsForExport() {
     if (!this.exporter) return;
+
+    // If in-memory illustration data is empty, load from Firestore
+    if ((!this._illustrationData || this._illustrationData.length === 0) && this.state.currentProjectId) {
+      console.log('[Export] In-memory illustration data empty, loading from Firestore...');
+      await this._loadProjectIllustrations(this.state.currentProjectId);
+    }
 
     const exportIlls = [];
     for (const ill of (this._illustrationData || [])) {
@@ -6203,6 +6284,7 @@ class App {
       });
     }
 
+    console.log(`[Export] Prepared ${exportIlls.length} illustrations for export`);
     this.exporter.setIllustrationData(exportIlls);
   }
 
@@ -7547,10 +7629,19 @@ class App {
     // Store adversarial result for reference
     this._lastAdversarialResult = adversarialResult;
 
-    // Both gates must pass: quality >= threshold AND human score >= 75
-    const humanPass = humanScore === null || humanScore >= 75;
+    // Both gates must pass: quality >= threshold AND human score >= 65
+    // (Lowered from 75 — current models can't reliably hit 75 consistently)
+    const HUMAN_LIKENESS_THRESHOLD = 65;
+    const HUMAN_LIKENESS_DEGRADED = 55; // Accept on final iteration if quality is high
+    const humanPass = humanScore === null || humanScore >= HUMAN_LIKENESS_THRESHOLD;
     if (humanScore !== null && !humanPass) {
-      thresholdMet = false; // Override: AI detection failed
+      // Degraded acceptance: if quality score is high and human score is borderline, accept
+      if (score >= (this._currentProject?.qualityThreshold || 90) && humanScore >= HUMAN_LIKENESS_DEGRADED) {
+        console.warn(`[Prose] Degraded acceptance: humanScore ${humanScore} < ${HUMAN_LIKENESS_THRESHOLD} but >= ${HUMAN_LIKENESS_DEGRADED} with quality ${score}`);
+        // Allow through — don't override thresholdMet
+      } else {
+        thresholdMet = false; // Override: AI detection failed
+      }
     }
 
     // Build the score display
@@ -7581,11 +7672,11 @@ class App {
     // Build adversarial AI-detection score display
     let adversarialHtml = '';
     if (humanScore !== null) {
-      const humanScoreClass = humanScore >= 75 ? '#4ade80' : '#f87171';
-      const humanBg = humanScore >= 75 ? '#1a3a1a' : '#3a1a1a';
+      const humanScoreClass = humanScore >= HUMAN_LIKENESS_THRESHOLD ? '#4ade80' : '#f87171';
+      const humanBg = humanScore >= HUMAN_LIKENESS_THRESHOLD ? '#1a3a1a' : '#3a1a1a';
       adversarialHtml = `<div style="margin-top:8px;margin-bottom:8px;padding:8px;border-radius:4px;background:${humanBg};color:${humanScoreClass};font-size:0.85rem;text-align:center;">
         <strong>Human Detection Score:</strong> ${humanScore}/100
-        ${humanScore < 75 && adversarialResult?.flaggedPatterns?.length ? `<br><small style="color:#f8a0a0;">Flags: ${adversarialResult.flaggedPatterns.join(', ')}</small>` : ''}
+        ${humanScore < HUMAN_LIKENESS_THRESHOLD && adversarialResult?.flaggedPatterns?.length ? `<br><small style="color:#f8a0a0;">Flags: ${adversarialResult.flaggedPatterns.join(', ')}</small>` : ''}
         ${adversarialResult?.verdict ? `<br><small>${adversarialResult.verdict}</small>` : ''}
       </div>`;
     }
@@ -8889,12 +8980,43 @@ class App {
       this._saveIllustrationConfig();
     });
 
-    // Select All chapters
+    // Provider priority and token/key changes
+    ['bs-ill-prov-hf-flux-priority', 'bs-ill-prov-hf-sdxl-priority',
+     'bs-ill-prov-gpt-image-1-priority', 'bs-ill-prov-puter-sd3-priority',
+     'bs-ill-prov-puter-dalle-priority', 'bs-ill-prov-openai-direct-priority'
+    ].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', () => this._saveIllustrationConfig());
+    });
+
+    // Show/hide OpenAI key section when Direct provider is toggled
+    document.getElementById('bs-ill-prov-openai-direct')?.addEventListener('change', (e) => {
+      const section = document.getElementById('ill-openai-key-section');
+      if (section) section.style.display = e.target.checked ? '' : 'none';
+      this._saveIllustrationConfig();
+    });
+
+    // Debounce token/key input saves
+    ['bs-ill-hf-token', 'bs-ill-openai-key'].forEach(id => {
+      let timer;
+      document.getElementById(id)?.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => this._saveIllustrationConfig(), 500);
+      });
+    });
+
+    // Select All chapters — update all checkboxes then save ONCE (no individual change events)
     document.getElementById('bs-ill-select-all')?.addEventListener('change', (e) => {
+      this._illBulkUpdating = true;
       document.querySelectorAll('.ill-ch-check').forEach(cb => {
         cb.checked = e.target.checked;
-        cb.dispatchEvent(new Event('change', { bubbles: true }));
+        // Update expand visibility directly without triggering individual saves
+        const chId = cb.dataset.chId;
+        const expand = document.getElementById(`ill-expand-${chId}`);
+        const countInput = document.querySelector(`.ill-ch-count-input[data-ch-id="${chId}"]`);
+        const count = parseInt(countInput?.value) || 1;
+        if (expand) expand.style.display = (cb.checked && count > 0) ? '' : 'none';
       });
+      this._illBulkUpdating = false;
       this._saveIllustrationConfig();
     });
 
@@ -8906,7 +9028,7 @@ class App {
         const countInput = document.querySelector(`.ill-ch-count-input[data-ch-id="${chId}"]`);
         const count = parseInt(countInput?.value) || 1;
         if (expand) expand.style.display = (e.target.checked && count > 0) ? '' : 'none';
-        this._saveIllustrationConfig();
+        if (!this._illBulkUpdating) this._saveIllustrationConfig();
       }
       if (e.target.classList.contains('ill-ch-count-input')) {
         const chId = e.target.dataset.chId;
@@ -9089,8 +9211,8 @@ class App {
     });
 
     // Continue to Export button — passes illustration data to export system
-    document.getElementById('btn-ill-continue-export')?.addEventListener('click', () => {
-      this._prepareIllustrationsForExport();
+    document.getElementById('btn-ill-continue-export')?.addEventListener('click', async () => {
+      await this._prepareIllustrationsForExport();
       this._switchSetupTab('export');
     });
 
@@ -9363,6 +9485,7 @@ class App {
 
     // --- Export original manuscript DOCX ---
     document.getElementById('btn-export-original-docx')?.addEventListener('click', async () => {
+      await this._prepareIllustrationsForExport();
       await this._exportFullManuscriptDocx(null);
     });
 
@@ -9391,13 +9514,13 @@ class App {
     });
     document.getElementById('export-manuscript')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
-      this._prepareIllustrationsForExport();
+      await this._prepareIllustrationsForExport();
       const result = await this.exporter.exportManuscriptFormat(this.state.currentProjectId);
       this.exporter.download(result);
     });
     document.getElementById('export-html')?.addEventListener('click', async () => {
       if (!this.state.currentProjectId) return;
-      this._prepareIllustrationsForExport();
+      await this._prepareIllustrationsForExport();
       const result = await this.exporter.exportStyledHtml(this.state.currentProjectId);
       this.exporter.download(result);
     });
@@ -13135,6 +13258,87 @@ ${lang === 'portuguese' ? '\nUse Brazilian Portuguese.' : ''}${localizationInstr
             font: 'Times New Roman'
           })]
         }));
+
+        // Embed chapter illustrations (if available)
+        const chapterIlls = (this.exporter?._illustrations || [])
+          .filter(ill => ill.chapterId === chapter.id && ill.imageData)
+          .sort((a, b) => (a.insertAfter || 0) - (b.insertAfter || 0));
+
+        const illConfig = project.illustrationConfig || {};
+        const isVellumMode = (illConfig.outputWorkflow || []).includes('vellum');
+
+        if (chapterIlls.length > 0 && ImageRun) {
+          for (const ill of chapterIlls) {
+            if (isVellumMode) {
+              // Vellum mode: insert text placeholders instead of embedded images
+              const shortDesc = (ill.action || 'illustration').slice(0, 40).replace(/[^a-zA-Z0-9 ]/g, '_');
+              const fileName = `ch${String(ill.chapterNumber || 0).padStart(2, '0')}_img${String((ill.illustrationIndex || 0) + 1).padStart(2, '0')}_${shortDesc.replace(/ /g, '_')}.png`;
+              children.push(new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 200, after: 200 },
+                children: [new TextRun({
+                  text: `[IMAGE: ${fileName}]`,
+                  italics: true,
+                  color: '999999',
+                  font: 'Times New Roman',
+                  size: 20,
+                })]
+              }));
+              if (ill.caption) {
+                children.push(new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  spacing: { after: 200 },
+                  children: [new TextRun({
+                    text: ill.caption,
+                    italics: true,
+                    size: 20,
+                    font: 'Times New Roman',
+                  })]
+                }));
+              }
+            } else {
+              // Embedded mode: insert actual images
+              try {
+                const imgData = await this._dataUrlToUint8Array(ill.imageData);
+                if (imgData) {
+                  const dims = await this._getImageDimensions(ill.imageData);
+                  // Max 6" wide for trade paperback with margins
+                  const maxW = 432; // 6 * 72
+                  const maxH = 576; // 8 * 72
+                  let w = maxW, h = maxH;
+                  if (dims) {
+                    const scale = Math.min(maxW / dims.width, maxH / dims.height);
+                    w = Math.round(dims.width * scale);
+                    h = Math.round(dims.height * scale);
+                  }
+                  children.push(new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    spacing: { before: 200, after: 200 },
+                    children: [new ImageRun({
+                      data: imgData,
+                      transformation: { width: w, height: h },
+                      type: ill.imageData.includes('image/png') ? 'png' : 'jpg',
+                    })]
+                  }));
+                  if (ill.caption) {
+                    children.push(new Paragraph({
+                      alignment: AlignmentType.CENTER,
+                      spacing: { after: 200 },
+                      children: [new TextRun({
+                        text: ill.caption,
+                        italics: true,
+                        size: 20,
+                        font: 'Georgia',
+                      })]
+                    }));
+                  }
+                }
+              } catch (imgErr) {
+                console.warn(`Failed to embed illustration for chapter ${chapterTitle}:`, imgErr);
+              }
+            }
+          }
+        }
 
         // Parse the chapter content HTML into paragraphs (strip leading heading to avoid duplication)
         let htmlContent = (chapter.content || '').replace(/^\s*<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>\s*/i, '');

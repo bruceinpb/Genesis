@@ -243,6 +243,22 @@ ${project.coverImage ? `<div class="cover-page">
     max-height: 100vh;
     object-fit: contain;
   }
+  .chapter-illustration {
+    text-align: center;
+    margin: 1.5em 0;
+    page-break-inside: avoid;
+  }
+  .chapter-illustration img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+  .chapter-illustration figcaption {
+    font-style: italic;
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 0.5em;
+  }
 </style>
 </head>
 <body>

@@ -934,6 +934,26 @@
                 </select>
               </div>
             </div>
+            <div class="setup-form-row">
+              <div class="form-group">
+                <label>Resolution (DPI)</label>
+                <select class="form-input" id="bs-ill-resolution">
+                  <option value="72">72 DPI (Screen)</option>
+                  <option value="150">150 DPI (Draft Print)</option>
+                  <option value="300" selected>300 DPI (Print Quality)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Image Size</label>
+                <select class="form-input" id="bs-ill-size">
+                  <option value="full_page">Full Page</option>
+                  <option value="half_page">Half Page</option>
+                  <option value="quarter_page">Quarter Page</option>
+                  <option value="inline_full" selected>Inline (Text Width)</option>
+                  <option value="vignette">Vignette (Small, Centered)</option>
+                </select>
+              </div>
+            </div>
             <div class="form-group">
               <label>Global Style Prompt <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted);">(optional)</span></label>
               <textarea class="form-input" id="bs-ill-style-prompt" rows="2" placeholder='e.g., "warm palette, soft edges, visible brushstrokes, classic storybook feel"'></textarea>
@@ -942,50 +962,96 @@
             <!-- Provider Priority -->
             <details style="margin-top:8px;">
               <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--accent-primary);">Image Providers</summary>
+              <p style="font-size:0.8rem;color:var(--text-muted);margin:8px 0 4px;">
+                Enable/disable providers and set priority. Primary providers are tried first; secondary as fallback.
+              </p>
               <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                <label class="matter-option">
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;">
                   <input type="checkbox" id="bs-ill-prov-hf-flux" checked>
-                  <div class="matter-info">
-                    <span class="matter-name">HuggingFace FLUX.1-schnell</span>
-                    <span class="matter-desc">Free, fast, good quality (previews)</span>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.85rem;">HuggingFace FLUX.1-schnell</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);">Free, fast, good quality (previews)</div>
                   </div>
-                </label>
-                <label class="matter-option">
+                  <select id="bs-ill-prov-hf-flux-priority" class="form-input" style="width:100px;font-size:0.8rem;padding:2px 4px;">
+                    <option value="primary" selected>Primary</option>
+                    <option value="secondary">Secondary</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;">
                   <input type="checkbox" id="bs-ill-prov-hf-sdxl" checked>
-                  <div class="matter-info">
-                    <span class="matter-name">HuggingFace SDXL</span>
-                    <span class="matter-desc">Free, slightly painterly style</span>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.85rem;">HuggingFace SDXL</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);">Free, slightly painterly style</div>
                   </div>
-                </label>
-                <label class="matter-option">
+                  <select id="bs-ill-prov-hf-sdxl-priority" class="form-input" style="width:100px;font-size:0.8rem;padding:2px 4px;">
+                    <option value="primary">Primary</option>
+                    <option value="secondary" selected>Secondary</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;">
                   <input type="checkbox" id="bs-ill-prov-gpt-image-1" checked>
-                  <div class="matter-info">
-                    <span class="matter-name">GPT Image 1 via Puter.js</span>
-                    <span class="matter-desc">Free, no API key needed</span>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.85rem;">GPT Image 1 via Puter.js</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);">Free, no API key needed</div>
                   </div>
-                </label>
-                <label class="matter-option">
+                  <select id="bs-ill-prov-gpt-image-1-priority" class="form-input" style="width:100px;font-size:0.8rem;padding:2px 4px;">
+                    <option value="primary">Primary</option>
+                    <option value="secondary" selected>Secondary</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;">
                   <input type="checkbox" id="bs-ill-prov-puter-sd3" checked>
-                  <div class="matter-info">
-                    <span class="matter-name">Puter.js SD3</span>
-                    <span class="matter-desc">Free, no API key needed</span>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.85rem;">Puter.js SD3</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);">Free, no API key needed</div>
                   </div>
-                </label>
-                <label class="matter-option">
+                  <select id="bs-ill-prov-puter-sd3-priority" class="form-input" style="width:100px;font-size:0.8rem;padding:2px 4px;">
+                    <option value="primary">Primary</option>
+                    <option value="secondary" selected>Secondary</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;">
                   <input type="checkbox" id="bs-ill-prov-puter-dalle" checked>
-                  <div class="matter-info">
-                    <span class="matter-name">Puter.js DALL-E 3</span>
-                    <span class="matter-desc">Free, strong prompt adherence</span>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.85rem;">Puter.js DALL-E 3</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);">Free, strong prompt adherence</div>
                   </div>
-                </label>
-                <label class="matter-option" id="ill-prov-openai-option" style="display:none;">
+                  <select id="bs-ill-prov-puter-dalle-priority" class="form-input" style="width:100px;font-size:0.8rem;padding:2px 4px;">
+                    <option value="primary">Primary</option>
+                    <option value="secondary" selected>Secondary</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;" id="ill-prov-openai-option" style="display:none;">
                   <input type="checkbox" id="bs-ill-prov-openai-direct" checked>
-                  <div class="matter-info">
-                    <span class="matter-name">OpenAI GPT Image 1.5 (Direct)</span>
-                    <span class="matter-desc">Paid, highest quality, for print/hero images</span>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.85rem;">OpenAI GPT Image 1.5 (Direct)</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);">Paid, highest quality, for print/hero images</div>
                   </div>
-                </label>
+                  <select id="bs-ill-prov-openai-direct-priority" class="form-input" style="width:100px;font-size:0.8rem;padding:2px 4px;">
+                    <option value="primary" selected>Primary</option>
+                    <option value="secondary">Secondary</option>
+                  </select>
+                </div>
               </div>
+
+              <!-- HuggingFace Token -->
+              <div id="ill-hf-token-section" style="margin-top:10px;">
+                <label style="font-size:0.8rem;font-weight:600;display:block;margin-bottom:4px;">HuggingFace API Token</label>
+                <input type="password" id="bs-ill-hf-token" class="form-input" placeholder="hf_..." style="width:100%;">
+                <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">
+                  Optional. Get a free token at <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a>
+                </div>
+              </div>
+
+              <!-- OpenAI API Key (for direct) -->
+              <div id="ill-openai-key-section" style="margin-top:10px;display:none;">
+                <label style="font-size:0.8rem;font-weight:600;display:block;margin-bottom:4px;">OpenAI API Key</label>
+                <input type="password" id="bs-ill-openai-key" class="form-input" placeholder="sk-..." style="width:100%;">
+                <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">
+                  Required for Direct API. Costs ~$0.04/image.
+                </div>
+              </div>
+
               <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
                 <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="same_model"> Same model, different seeds</label>
                 <label class="radio-option"><input type="radio" name="bs-ill-variant-mode" value="multi_model" checked> Different models per variant</label>
@@ -1153,8 +1219,6 @@
           </div>
 
           <!-- Hidden fields for backward compat -->
-          <input type="hidden" id="bs-ill-resolution" value="300">
-          <input type="hidden" id="bs-ill-size" value="inline_full">
           <input type="hidden" id="bs-ill-workers" value="5">
           <input type="hidden" id="bs-ill-wf-vellum" value="true">
           <input type="hidden" id="bs-ill-wf-docx" value="true">
