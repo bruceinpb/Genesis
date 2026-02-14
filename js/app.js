@@ -5138,8 +5138,9 @@ class App {
           // Include variants with valid image data (data URLs or blob URLs)
           const validVariants = ill.variants.filter(v =>
             v.imageData &&
-            (v.imageData.startsWith('data:') || v.imageData.startsWith('blob:') || v.imageData.startsWith('http')) &&
-            v.imageData.length > 50
+            typeof v.imageData === 'string' &&
+            v.imageData.startsWith('data:image/') &&
+            v.imageData.length > 2048
           );
           if (validVariants.length > 0) {
             this._illustrationVariants[ill.id] = validVariants;
@@ -5976,6 +5977,17 @@ class App {
     };
 
     this._illustrationQueue.onImageReady = (illId, result, providerName, variantIndex) => {
+      // Validate image data before storing — reject empty or non-image data URLs
+      const img = result.imageData;
+      if (!img || typeof img !== 'string' || img.length < 2048) {
+        console.warn(`[Illustration] Rejecting invalid image data for ${illId} variant ${variantIndex} from ${providerName} (length: ${img?.length || 0})`);
+        return;
+      }
+      if (!img.startsWith('data:image/')) {
+        console.warn(`[Illustration] Rejecting non-image data URL for ${illId} variant ${variantIndex} from ${providerName}: ${img.slice(0, 40)}`);
+        return;
+      }
+
       // Store variant immediately (synchronous) to avoid race conditions.
       // Historical post-processing is deferred to the compression phase below.
       if (!this._illustrationVariants[illId]) this._illustrationVariants[illId] = [];
@@ -6156,7 +6168,16 @@ class App {
     let totalCount = 0;
 
     for (const ill of (this._illustrationData || [])) {
-      const variants = this._illustrationVariants?.[ill.id] || [];
+      const rawVariants = this._illustrationVariants?.[ill.id] || [];
+      // Filter out variants with invalid/missing image data before rendering
+      const variants = rawVariants.filter(v =>
+        v.imageData && typeof v.imageData === 'string' &&
+        v.imageData.startsWith('data:image/') && v.imageData.length > 2048
+      );
+      // Update in-memory store to remove invalid variants
+      if (variants.length !== rawVariants.length) {
+        this._illustrationVariants[ill.id] = variants;
+      }
       if (variants.length === 0) continue;
       totalCount++;
 
@@ -7055,6 +7076,158 @@ class App {
       this._hideIllustrationStatus();
     } catch (err) {
       this._showIllustrationError('Prompt regeneration failed: ' + err.message);
+    }
+  }
+
+  /**
+   * Regenerate all image variants for a single illustration.
+   */
+  async _regenerateIllustrationImages(illId, triggerBtn) {
+    const ill = (this._illustrationData || []).find(i => i.id === illId);
+    if (!ill || !ill.prompt) {
+      this._showIllustrationError('No prompt found for this illustration. Generate prompts first.');
+      return;
+    }
+
+    const config = this._readIllustrationConfig();
+    const pools = this._buildProviderPools(config);
+
+    if (pools.length === 0) {
+      this._showIllustrationError('No image providers available. Configure a HuggingFace token in Settings, or enable at least one Puter.js provider.');
+      return;
+    }
+
+    // Disable button and show progress
+    if (triggerBtn) {
+      triggerBtn.disabled = true;
+      triggerBtn.textContent = 'Regenerating...';
+    }
+
+    // Clear existing variants for this illustration
+    delete this._illustrationVariants[illId];
+    ill.approved = false;
+    ill.state = 'prompt_approved';
+
+    // Update the review card visually — clear old images
+    const card = document.querySelector(`.ill-review-card[data-ill-id="${illId}"]`);
+    const grid = card?.querySelector('.ill-variant-grid');
+    if (grid) {
+      grid.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;">Regenerating variants...</div>';
+    }
+    // Reset approval visual state
+    if (card) {
+      card.style.borderColor = '';
+      const approveBtn = card.querySelector('.ill-approve-img');
+      if (approveBtn) {
+        approveBtn.textContent = 'Approve Selected';
+        approveBtn.disabled = false;
+      }
+    }
+
+    const queue = new IllustrationQueue(this.generator, pools, this.openaiClient);
+    const newVariants = [];
+
+    queue.onImageReady = (id, result, providerName, variantIndex) => {
+      const img = result.imageData;
+      if (!img || typeof img !== 'string' || img.length < 2048 || !img.startsWith('data:image/')) {
+        console.warn(`[Illustration Regen] Rejecting invalid image for ${id} variant ${variantIndex} from ${providerName}`);
+        return;
+      }
+      newVariants.push({
+        index: variantIndex,
+        imageData: img,
+        model: result.model,
+        provider: result.provider,
+        providerName: providerName,
+      });
+    };
+
+    queue.onError = (id, err, providerName) => {
+      console.warn(`[Illustration Regen] ${providerName} failed for ${id}:`, err.message);
+    };
+
+    try {
+      const queueItem = [{
+        id: illId,
+        prompt: ill.prompt,
+        negativePrompt: ill.negativePrompt || '',
+        variantsRequested: config.variantsPerImage || 3,
+        config: {
+          size: ill.overrideSize || config.defaultSize || 'inline_full',
+          style: ill.overrideStyle || config.globalStyle || 'photorealistic',
+        },
+      }];
+
+      await queue.processQueue(queueItem, config.variantMode);
+
+      // Compress and store
+      const compressedVariants = [];
+      for (const v of newVariants) {
+        let imgData = v.imageData;
+        if (imgData && imgData.length > 250000) {
+          try {
+            imgData = await this._compressImageDataUrl(imgData, 0.6);
+          } catch (_) { /* keep original */ }
+        }
+        compressedVariants.push({ ...v, imageData: imgData });
+      }
+
+      this._illustrationVariants[illId] = compressedVariants;
+
+      // Save to Firestore
+      try {
+        await this.fs.saveIllustration(this.state.currentProjectId, {
+          id: illId,
+          chapterId: ill.chapterId,
+          chapterNumber: ill.chapterNumber,
+          illustrationIndex: ill.illustrationIndex,
+          prompt: ill.prompt,
+          altText: ill.altText || '',
+          caption: ill.caption || '',
+          scene: ill.scene || null,
+          variants: compressedVariants,
+          state: 'review',
+        });
+      } catch (saveErr) {
+        console.warn('Failed to save regenerated illustration to Firestore:', saveErr);
+      }
+
+      // Rebuild the variant grid in the review card
+      if (grid) {
+        if (compressedVariants.length === 0) {
+          grid.innerHTML = '<div style="padding:20px;color:var(--text-danger);text-align:center;">All providers failed. Check console for details.</div>';
+        } else {
+          let html = '';
+          for (let v = 0; v < compressedVariants.length; v++) {
+            const variant = compressedVariants[v];
+            html += `<div class="ill-variant-card ${v === 0 ? 'selected' : ''}" data-ill-id="${illId}" data-variant-index="${v}">
+              <img src="${variant.imageData}" alt="Variant ${v + 1}" loading="lazy">
+              <div class="ill-variant-label">via ${variant.providerName || variant.provider}</div>
+            </div>`;
+          }
+          grid.innerHTML = html;
+        }
+      }
+
+      this._updateImageReviewSummary();
+      this._updateDashboardSummary();
+
+      // Refresh chapter gallery if applicable
+      if (this.state.currentChapterId) {
+        this._renderChapterIllustrations(this.state.currentChapterId);
+      }
+
+    } catch (err) {
+      console.error('Illustration regeneration error:', err);
+      this._showIllustrationError('Regeneration failed: ' + err.message);
+      if (grid) {
+        grid.innerHTML = `<div style="padding:20px;color:var(--text-danger);text-align:center;">Regeneration failed: ${err.message}</div>`;
+      }
+    } finally {
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = 'Regenerate All';
+      }
     }
   }
 
@@ -9938,6 +10111,12 @@ class App {
         }
         this._updateImageReviewSummary();
         this._updateDashboardSummary();
+      }
+
+      // Regenerate All variants for a single illustration
+      if (e.target.classList.contains('ill-regen-img')) {
+        const illId = e.target.dataset.illId;
+        await this._regenerateIllustrationImages(illId, e.target);
       }
     });
 

@@ -3700,17 +3700,30 @@ Generate an image prompt for this scene.`;
     }
 
     const blob = await response.blob();
-    return new Promise((resolve, reject) => {
+
+    // Validate blob has actual image content (puter.net.fetch proxy can return empty/tiny blobs)
+    if (!blob || blob.size < 1024) {
+      throw new Error(`HuggingFace returned invalid image blob (size: ${blob?.size || 0} bytes)`);
+    }
+
+    const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => resolve({
-        imageData: reader.result,
-        model: model,
-        provider: 'huggingface',
-        dimensions: dimensions,
-      });
+      reader.onloadend = () => resolve(reader.result);
       reader.onerror = () => reject(new Error('Failed to read image data'));
       reader.readAsDataURL(blob);
     });
+
+    // Validate the data URL is a real image, not an empty or corrupted result
+    if (!dataUrl || !dataUrl.startsWith('data:image/') || dataUrl.length < 2048) {
+      throw new Error(`HuggingFace image conversion produced invalid data URL (type: ${dataUrl?.slice(0, 30)}, length: ${dataUrl?.length || 0})`);
+    }
+
+    return {
+      imageData: dataUrl,
+      model: model,
+      provider: 'huggingface',
+      dimensions: dimensions,
+    };
   }
 
   /**
