@@ -1812,6 +1812,89 @@ CRITICAL: Previous rewrites have failed to improve the score because they introd
   }
 
   /**
+   * Generate surgical find/replace patches for specific issues.
+   * Returns JSON array of patches instead of regenerating full prose.
+   */
+  async generatePatchFixes({ originalProse, problems, chapterTitle, characters,
+      aiInstructions, genre, voice, errorPatternsPrompt }, { onPatches, onError }) {
+    if (!this.apiKey) {
+      onError(new Error('No API key set.'));
+      return;
+    }
+
+    this.abortController = new AbortController();
+
+    const systemPrompt = `You are a senior literary editor. You receive prose and a numbered list of specific issues to fix.
+
+FOR EACH ISSUE, produce a JSON patch with the exact original text and its replacement.
+
+ABSOLUTE RULES:
+- "find" must be an EXACT substring copied from the original prose (whitespace-exact, punctuation-exact)
+- "find" should be the MINIMUM text needed to locate the problem — typically 1-2 sentences, never a full paragraph
+- "replace" fixes ONLY the stated issue. Change as few words as possible
+- If fixing an issue requires rewriting more than 3 sentences, set "replace" to null (skip it — manual edit needed)
+- NEVER introduce: em dashes (—, –, ---), tricolons (lists of three), PET phrases (throat tightened, heart pounded, breath caught, stomach churned, etc.), AI-telltale words (delicate, intricate, testament, tapestry, symphony, nestled, whispering)
+- The replacement must sound like the same author wrote it — preserve voice, tense, POV
+- Do NOT fix anything that isn't in the issues list
+- Do NOT add new sentences unless replacing a deleted one
+- Each "find" string must appear EXACTLY ONCE in the original prose. If ambiguous, include more surrounding context in the "find" to make it unique
+
+OUTPUT FORMAT — valid JSON array only, no markdown fences, no commentary:
+[
+  {"find": "exact original text", "replace": "fixed text", "issue_index": 0},
+  {"find": "exact original text", "replace": null, "issue_index": 1, "skip_reason": "requires full paragraph rewrite"}
+]`;
+
+    let userPrompt = `=== ORIGINAL PROSE ===\n${originalProse}\n=== END ORIGINAL PROSE ===\n\n`;
+    userPrompt += `=== ISSUES TO FIX (${problems.length} total) ===\n`;
+    problems.forEach((p, i) => { userPrompt += `${i}. ${p}\n`; });
+    userPrompt += `=== END ISSUES ===\n\n`;
+
+    if (aiInstructions) userPrompt += `Author instructions: ${aiInstructions}\n`;
+    if (characters?.length > 0) {
+      userPrompt += `Characters: ${characters.map(c => `${c.name} (${c.role})`).join(', ')}\n`;
+    }
+
+    userPrompt += `\nGenerate a JSON array of patches. One patch per issue. Output ONLY valid JSON.`;
+
+    try {
+      const response = await fetch(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        }),
+        signal: this.abortController.signal
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        onError(new Error(`API error (${response.status}): ${errText}`));
+        return;
+      }
+
+      const data = await response.json();
+      const raw = data.content?.[0]?.text || '';
+
+      // Strip markdown code fences if the model wrapped them
+      const cleaned = raw.replace(/^```(?:json)?\s*\n?/gm, '').replace(/\n?```\s*$/gm, '').trim();
+      const patches = JSON.parse(cleaned);
+      onPatches(patches);
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      onError(new Error('Patch generation failed: ' + e.message));
+    }
+  }
+
+  /**
    * AI self-reflection: Analyze prose and generate a detailed fix list.
    * Asks the AI "How can I improve this prose? What surgical fixes or rewrites
    * are needed to get closer to the threshold?"
